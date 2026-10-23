@@ -3,7 +3,6 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
-#include <IOKit/IOMemoryMap.h>
 #include <libkern/c++/OSSharedPtr.h>
 #include <pexpert/pexpert.h>
 
