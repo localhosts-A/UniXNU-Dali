@@ -101,7 +101,7 @@ jobs:
             UniXNU/out/dali/tree/.cache
             UniXNU/out/dali/tree/build
             UniXNU/out/dali/package
-          key: dali-xnu-macos26-arm64-xcode26.6-${{ steps.pins.outputs.unixnu_commit }}-${{ hashFiles('UniXNU/feeds.toml', 'UniXNU/scripts/build-xnu-4k-baseline.sh', 'UniXNU/scripts/build-corecrypto-14.py', 'UniXNU/scripts/prepare-xnu-source.py', 'UniXNU/scripts/seal-source-crypto-kernel.py', 'UniXNU/scripts/build-darwinboot.sh', 'UniXNU/patches/xnu/*.patch', 'UniXNU/kits/NativePrelink/patches/*.patch', 'UniXNU/drivers/ArmDTPlatform/**', 'UniXNU/drivers/ArmCpu/**', 'UniXNU-Dali/board.toml', 'UniXNU-Dali/configs/dali_defconfig', 'UniXNU-Dali/drivers/**', 'UniXNU-Dali/scripts/build-dali-xnu-platform.py', 'UniXNU-Dali/patches/xnu/*.patch') }}
+          key: dali-xnu-macos26-arm64-xcode26.6-${{ steps.pins.outputs.unixnu_commit }}-${{ hashFiles('UniXNU/feeds.toml', 'UniXNU/scripts/unixnu/feeds.py', 'UniXNU/scripts/unixnu/tree.py', 'UniXNU/scripts/build-xnu-4k-baseline.sh', 'UniXNU/scripts/build-corecrypto-14.py', 'UniXNU/scripts/prepare-xnu-source.py', 'UniXNU/scripts/seal-source-crypto-kernel.py', 'UniXNU/scripts/build-darwinboot.sh', 'UniXNU/patches/xnu/*.patch', 'UniXNU/kits/NativePrelink/patches/*.patch', 'UniXNU/drivers/ArmDTPlatform/**', 'UniXNU/drivers/ArmCpu/**', 'UniXNU-Dali/board.toml', 'UniXNU-Dali/configs/dali_defconfig', 'UniXNU-Dali/drivers/**', 'UniXNU-Dali/scripts/build-dali-xnu-platform.py', 'UniXNU-Dali/patches/xnu/*.patch') }}
 
       - name: Select the Dali source-only profile
         shell: bash
