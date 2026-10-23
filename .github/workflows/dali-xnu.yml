@@ -132,6 +132,17 @@ jobs:
           cd UniXNU
           ./unixnu build kernel --source-only -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
 
+      - name: Show XNU build diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -u
+          for log in "$UNIXNU_OUT"/dali/logs/kernel-bootstrap.log "$UNIXNU_OUT"/dali/logs/archive-*.log "$UNIXNU_OUT"/dali/logs/kernel.log; do
+            [[ -f "$log" ]] || continue
+            printf '\n===== %s (last 100 lines) =====\n' "$log"
+            tail -n 100 "$log"
+          done
+
       - name: Build UniXNU package and locate pinned Mu BaseCore
         shell: bash
         run: |
