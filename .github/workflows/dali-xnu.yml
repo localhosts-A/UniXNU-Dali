@@ -77,6 +77,19 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Test device runner and XNU patch inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -v
+
+      - name: Test UniXNU build driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          python3 -m unittest discover -s tests/unixnu -v
+
       - name: Select Xcode 26.6
         shell: bash
         run: |
