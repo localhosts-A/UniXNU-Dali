@@ -1,0 +1,26 @@
+[board]
+name = "dali"
+soc = "MT6991"
+description = "REDMI K80 Ultra — UEFI bring-up"
+kit = "Dali"
+
+[firmware]
+config = "dali"
+dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
+fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
+patches = ["Resources/MuPatches/Gic-Spurious.patch"]
+packages = [
+  "{uefi}/Platforms/Xiaomi", "{uefi}/Common/Mu", "{uefi}/Common/Mu_OEM_Sample",
+  "{uefi}/Silicon/MediaTek", "{uefi}/Silicon/Silicium", "{uefi}/Silicium-ACPI",
+  "{uefi}/Silicium-ACPI/Platforms/Xiaomi", "{uefi}/Silicium-ACPI/Silicon/MediaTek",
+  "{tree}/package", "{edk2}",
+]
+
+[firmware.defines]
+DEVICE_MODEL = "dali"
+
+[bootimg.image]
+header_version = 4
+# Use scripts/build-firmware.sh for the reviewed legacy-LZ4/custom shim path.
+# The generic UniXNU bootimg command currently assumes gzip and BootShim.S.

@@ -1,0 +1,7 @@
+/out/
+/.cache/
+/local.toml
+__pycache__/
+*.img
+*.dtb
+*.efi

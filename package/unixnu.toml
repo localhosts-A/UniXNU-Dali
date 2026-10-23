@@ -1,0 +1,35 @@
+version = 1
+
+[boot]
+timeout = 5
+default = "hello"
+rotate = 0
+
+[ui]
+title = "UniXNU / REDMI K80 Ultra"
+
+[kits]
+autoload = false
+
+[[driver]]
+path = "Drivers/SampleDriver.efi"
+args = "dali-uefi-stage"
+connect = false
+
+[[entry]]
+id = "hello"
+title = "UEFI payload test (returns to menu)"
+type = "efi"
+path = "Payloads/HelloPayload.efi"
+args = "driver var pause"
+
+[[entry.variable]]
+guid = "F50548AC-B469-47C6-89EA-C1738B812165"
+name = "UniXNUTest"
+value = "dali-uefi-payload"
+
+[[entry]]
+id = "exit"
+title = "Return to firmware diagnostics"
+type = "action"
+action = "exit"
