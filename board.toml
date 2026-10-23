@@ -30,8 +30,8 @@ header_version = 4
 [kernel]
 defconfig = "dali_defconfig"
 archives = [
-  "scripts/build-corecrypto-14.py",
-  "scripts/build-dali-xnu-platform.py",
+  "build-corecrypto-14.py",
+  "build-dali-xnu-platform.py",
 ]
 
 [payload]

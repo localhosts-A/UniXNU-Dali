@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,20 @@ class XnuPatchFormatTests(unittest.TestCase):
         declared_old = int(header.group(1) or 1)
         declared_new = int(header.group(2) or 1)
         self.assertEqual((old_count, new_count), (declared_old, declared_new))
+
+
+class BoardArchiveTests(unittest.TestCase):
+    def test_kernel_archive_scripts_are_tree_script_basenames(self):
+        board = tomllib.loads((ROOT / 'board.toml').read_text())
+        archives = board.get('kernel', {}).get('archives', [])
+        self.assertTrue(archives)
+        for entry in archives:
+            script = Path(entry.split()[0])
+            with self.subTest(script=script):
+                self.assertEqual(len(script.parts), 1)
+                in_device = (ROOT / 'scripts' / script).is_file()
+                in_unixnu = (ROOT.parent / 'UniXNU' / 'scripts' / script).is_file()
+                self.assertTrue(in_device or in_unixnu, f'{script} is not copied into tree/scripts')
 
 
 if __name__ == '__main__':
