@@ -125,6 +125,8 @@ jobs:
 
       - name: Build and validate source-only XNU
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cd UniXNU
