@@ -13,15 +13,19 @@ OUT = ROOT / "build/dali-xnu-platform"
 
 
 def compiler_record():
-    for path in sorted(OBJECTS.rglob("*.o.json")):
-        try:
-            record = json.loads(path.read_text().strip().rstrip(","))
-        except (OSError, ValueError):
-            continue
-        source = str(record.get("file", ""))
-        arguments = record.get("arguments")
-        if source.endswith((".cpp", ".cc", ".cxx")) and isinstance(arguments, list):
-            return path, record
+    # XNU's MakeInc.rule writes C++ dependency records beside .cpo objects,
+    # while C records use .o.json. Prefer the C++ form and keep the latter as
+    # a fallback for toolchains that use a different object suffix.
+    for pattern in ("*.cpo.json", "*.o.json"):
+        for path in sorted(OBJECTS.rglob(pattern)):
+            try:
+                record = json.loads(path.read_text().strip().rstrip(","))
+            except (OSError, ValueError):
+                continue
+            source = str(record.get("file", ""))
+            arguments = record.get("arguments")
+            if source.endswith((".cpp", ".cc", ".cxx")) and isinstance(arguments, list):
+                return path, record
     raise SystemExit("No XNU C++ compile record; the kernel bootstrap pass must run first")
 
 
