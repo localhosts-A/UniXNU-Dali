@@ -44,6 +44,15 @@ class BoardArchiveTests(unittest.TestCase):
                 in_unixnu = (ROOT.parent / 'UniXNU' / 'scripts' / script).is_file()
                 self.assertTrue(in_device or in_unixnu, f'{script} is not copied into tree/scripts')
 
+    def test_corecrypto_plain_archive_precedes_namespaced_archive(self):
+        board = tomllib.loads((ROOT / 'board.toml').read_text())
+        archives = board['kernel']['archives']
+        plain = archives.index('build-corecrypto-14.py')
+        namespaced = archives.index('build-corecrypto-14.py --namespace')
+        platform = archives.index('build-dali-xnu-platform.py')
+        self.assertLess(plain, namespaced)
+        self.assertLess(namespaced, platform)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -31,6 +31,7 @@ header_version = 4
 defconfig = "dali_defconfig"
 archives = [
   "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
   "build-dali-xnu-platform.py",
 ]
 
