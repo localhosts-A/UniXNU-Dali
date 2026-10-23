@@ -1,8 +1,8 @@
 version = 1
 
 [boot]
-timeout = 5
-default = "hello"
+timeout = 3
+default = "xnu"
 rotate = 0
 
 [ui]
@@ -15,6 +15,13 @@ autoload = false
 path = "Drivers/SampleDriver.efi"
 args = "dali-uefi-stage"
 connect = false
+
+[[entry]]
+id = "xnu"
+title = "UniXNU single-core early boot"
+type = "xnu"
+path = "Payloads/kernel.macho"
+args = "-v dali-earlyboot=1"
 
 [[entry]]
 id = "hello"

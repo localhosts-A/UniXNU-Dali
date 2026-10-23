@@ -1,0 +1,9 @@
+# Source-only early boot profile: no IPSW/kernelcache, storage, or userland.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a"
+CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a"

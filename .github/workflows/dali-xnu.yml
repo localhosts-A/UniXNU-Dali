@@ -1,0 +1,192 @@
+name: Dali source XNU
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dali-xnu.yml'
+      - 'board.toml'
+      - 'configs/**'
+      - 'drivers/**'
+      - 'package/**'
+      - 'patches/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'README.md'
+  workflow_dispatch:
+    inputs:
+      auto_fastboot:
+        description: Arm the default one-shot bootloader recovery watchdog
+        type: boolean
+        required: true
+        default: true
+      fastboot_timeout_seconds:
+        description: Host wait deadline for the device to enumerate fastboot (not the device watchdog)
+        type: number
+        required: true
+        default: 120
+      watchdog_timeout_seconds:
+        description: MT6991 single-shot watchdog interval, from 2 to 31 seconds
+        type: number
+        required: true
+        default: 31
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dali-xnu-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      UNIXNU_OUT: ${{ github.workspace }}/UniXNU/out
+      JOBS: '4'
+    steps:
+      - name: Checkout device repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: UniXNU-Dali
+          persist-credentials: false
+
+      - name: Resolve pinned source revisions
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$GITHUB_WORKSPACE/UniXNU-Dali/board.toml" >> "$GITHUB_OUTPUT" <<'PY'
+          import sys, tomllib
+          with open(sys.argv[1], "rb") as source:
+              firmware = tomllib.load(source).get("firmware", {})
+          for key in ("unixnu_commit", "uefi_commit"):
+              value = firmware.get(key, "")
+              if len(value) != 40 or any(ch not in "0123456789abcdef" for ch in value):
+                  raise SystemExit(f"board.toml firmware.{key} must pin a full lowercase commit")
+              print(f"{key}={value}")
+          PY
+
+      - name: Checkout generic UniXNU and pinned drivers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: localhosts-A/UniXNU
+          ref: ${{ steps.pins.outputs.unixnu_commit }}
+          path: UniXNU
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Select Xcode 26.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+          xcodebuild -version | grep -q '^Xcode 26\.6$'
+
+      - name: Install build and QEMU tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install cmake ninja unifdef llvm lld qemu
+          printf '%s\n' "$(brew --prefix llvm)/bin" "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+
+      - name: Restore XNU and EDK build caches
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.0
+        with:
+          path: |
+            UniXNU/out/feeds
+            UniXNU/out/dali/tree/.cache
+            UniXNU/out/dali/tree/build
+            UniXNU/out/dali/package
+          key: dali-xnu-macos26-arm64-xcode26.6-${{ steps.pins.outputs.unixnu_commit }}-${{ hashFiles('UniXNU/feeds.toml', 'UniXNU/scripts/build-xnu-4k-baseline.sh', 'UniXNU/scripts/build-corecrypto-14.py', 'UniXNU/scripts/prepare-xnu-source.py', 'UniXNU/scripts/seal-source-crypto-kernel.py', 'UniXNU/scripts/build-darwinboot.sh', 'UniXNU/patches/xnu/*.patch', 'UniXNU/kits/NativePrelink/patches/*.patch', 'UniXNU/drivers/ArmDTPlatform/**', 'UniXNU/drivers/ArmCpu/**', 'UniXNU-Dali/board.toml', 'UniXNU-Dali/configs/dali_defconfig', 'UniXNU-Dali/drivers/**', 'UniXNU-Dali/scripts/build-dali-xnu-platform.py', 'UniXNU-Dali/patches/xnu/*.patch') }}
+
+      - name: Select the Dali source-only profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu defconfig -D "$GITHUB_WORKSPACE/UniXNU-Dali" dali_defconfig
+
+      - name: Build and validate source-only XNU
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu build kernel --source-only -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
+
+      - name: Build UniXNU package and locate pinned Mu BaseCore
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu build package -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
+          EDK2=$(find "$UNIXNU_OUT/feeds" -maxdepth 1 -type d -name 'mu_basecore-*' -print -quit)
+          test -n "$EDK2"
+          echo "UNIXNU_EDK2=$EDK2" >> "$GITHUB_ENV"
+
+      - name: Build DarwinBoot
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          bash scripts/build-darwinboot.sh
+
+      - name: Test UniXNU to DarwinBoot handoff fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          python3 scripts/test-darwinboot.py \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi"
+
+      - name: Test one-core DarwinBoot to source XNU handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/test-dali-xnu-qemu.py" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
+            --output-dir "$RUNNER_TEMP/dali-xnu-qemu"
+
+      - name: Validate and stage the one-day kernel artifact
+        id: artifact
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_AUTO_FASTBOOT: ${{ inputs.auto_fastboot }}
+          DISPATCH_FASTBOOT_TIMEOUT: ${{ inputs.fastboot_timeout_seconds }}
+          DISPATCH_WATCHDOG_TIMEOUT: ${{ inputs.watchdog_timeout_seconds }}
+        run: |
+          set -euo pipefail
+          auto=true
+          host_timeout=120
+          watchdog_timeout=31
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            auto=${DISPATCH_AUTO_FASTBOOT:-true}
+            host_timeout=${DISPATCH_FASTBOOT_TIMEOUT:-120}
+            watchdog_timeout=${DISPATCH_WATCHDOG_TIMEOUT:-31}
+          fi
+          [[ "$auto" == true || "$auto" == false ]]
+          [[ "$watchdog_timeout" =~ ^[0-9]+$ ]] && (( watchdog_timeout >= 2 && watchdog_timeout <= 31 ))
+          [[ "$host_timeout" =~ ^[0-9]+$ ]] && (( host_timeout >= watchdog_timeout + 30 && host_timeout <= 600 ))
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/make-kernel-artifact.py" \
+            --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
+            --output-dir "$RUNNER_TEMP/public-artifact" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --device-repo "$GITHUB_WORKSPACE/UniXNU-Dali" \
+            --auto-fastboot "$auto" \
+            --fastboot-timeout-seconds "$host_timeout" \
+            --watchdog-timeout-seconds "$watchdog_timeout"
+
+      - name: Upload source-only XNU for one day
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-xnu-source
+          path: |
+            ${{ runner.temp }}/public-artifact/kernel.macho
+            ${{ runner.temp }}/public-artifact/manifest.json
+          if-no-files-found: error
+          retention-days: 1

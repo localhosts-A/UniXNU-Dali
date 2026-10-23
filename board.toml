@@ -1,20 +1,22 @@
 [board]
 name = "dali"
 soc = "MT6991"
-description = "REDMI K80 Ultra — UEFI bring-up"
+description = "REDMI K80 Ultra — single-core XNU early boot"
 kit = "Dali"
 
 [firmware]
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+unixnu_commit = "d7ed6705441c6435dcdd54b01c84f1392cc543bc"
+uefi_commit = "1497a079fc305f49d591fc746b06ad47a9d5949a"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
 packages = [
   "{uefi}/Platforms/Xiaomi", "{uefi}/Common/Mu", "{uefi}/Common/Mu_OEM_Sample",
   "{uefi}/Silicon/MediaTek", "{uefi}/Silicon/Silicium", "{uefi}/Silicium-ACPI",
   "{uefi}/Silicium-ACPI/Platforms/Xiaomi", "{uefi}/Silicium-ACPI/Silicon/MediaTek",
-  "{tree}/package", "{edk2}",
+  "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}",
 ]
 
 [firmware.defines]
@@ -24,3 +26,24 @@ DEVICE_MODEL = "dali"
 header_version = 4
 # Use scripts/build-firmware.sh for the reviewed legacy-LZ4/custom shim path.
 # The generic UniXNU bootimg command currently assumes gzip and BootShim.S.
+
+[kernel]
+defconfig = "dali_defconfig"
+archives = [
+  "scripts/build-corecrypto-14.py",
+  "scripts/build-dali-xnu-platform.py",
+]
+
+[payload]
+volume = "DALI-XNU"
+size_mib = 48
+loader = "firmware"
+title = "Dali single-core XNU early boot"
+dram_size = "0x300000000"
+timeout = 3
+kernel_args = ["-v"]
+
+[payload.adt]
+tool = "scripts/make-dali-adt.py"
+cpu_regs = "0"
+psci_method = "smc"
