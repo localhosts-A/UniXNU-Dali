@@ -82,8 +82,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo xcode-select -s /Applications/Xcode_26.6.app
-          xcodebuild -version
-          xcodebuild -version | grep -q '^Xcode 26\.6$'
+          xcode_version="$(xcodebuild -version)"
+          printf '%s\n' "$xcode_version"
+          grep -Fqx 'Xcode 26.6' <<< "$xcode_version"
 
       - name: Install build and QEMU tools
         shell: bash
