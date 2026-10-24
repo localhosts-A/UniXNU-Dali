@@ -44,7 +44,11 @@ parent searches there and records node progress/timer ticks. Hardware then
 completed memory selection and stopped during MMIO-node validation. The current
 pin validates/stops the inherited LK watchdog before memory scans and timestamps
 each probe; expiry as the cause remains unproven. The owner entered fastboot
-manually in that cycle. No Dali XNU pass has been claimed.
+manually in that cycle. The next hardware cycle reached menu timeout and
+DarwinBoot window allocation, but only printed diagnostics before calling EBS.
+There is no proof yet that EBS returned or that XNU executed. The current pins
+trace EBS core stages and the loader's actual EBS return. No Dali XNU pass has
+been claimed.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
