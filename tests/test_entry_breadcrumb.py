@@ -23,7 +23,8 @@ class EntryBreadcrumbTests(unittest.TestCase):
         rings = [(signature, 0, 0), (signature, 7, 7), (0, 0, 0),
                  (signature, 3, 20), (signature, capacity + 1, capacity + 1),
                  (signature, capacity - 8, capacity - 8),
-                 (signature, capacity - 9, capacity - 9)]
+                 (signature, capacity - 9, capacity - 9),
+                 (signature, capacity - 17, capacity - 17)]
 
         def adt(properties):
             data = struct.pack("<II", len(properties), 0)
@@ -76,9 +77,37 @@ _start:
 3: isb
   ldr x0, =0x48200000
   mov x19, x0
+  mov x20, #0x20
+  mov x21, xzr
+  mov x22, #0x22
+  mov x23, #0x23
+  mov x24, #0x24
+  mov x25, #0x25
+  mov x26, #0x26
   bl breadcrumb
   cmp x0, x19
   cset x0, eq
+  cmp x20, #0x20
+  cset x2, eq
+  and x0, x0, x2
+  cmp x21, #0
+  cset x2, eq
+  and x0, x0, x2
+  cmp x22, #0x22
+  cset x2, eq
+  and x0, x0, x2
+  cmp x23, #0x23
+  cset x2, eq
+  and x0, x0, x2
+  cmp x24, #0x24
+  cset x2, eq
+  and x0, x0, x2
+  cmp x25, #0x25
+  cset x2, eq
+  and x0, x0, x2
+  cmp x26, #0x26
+  cset x2, eq
+  and x0, x0, x2
   ldr x1, =0x48201000
   str x0, [x1]
 1: b 1b
@@ -102,9 +131,13 @@ breadcrumb:
                     struct.pack_into("<III", before, 0, sig, start, size)
                     (work / "ring.bin").write_bytes(before)
                     expected = before.copy()
-                    if dali and sig == signature and start == size and start < capacity - 8:
-                        expected[12 + start:20 + start] = b"DALI:X0\n"
-                        struct.pack_into("<II", expected, 4, start + 8, size + 8)
+                    if dali and sig == signature and start == size:
+                        for stage in range(7):
+                            if start >= capacity - 8:
+                                break
+                            expected[12 + start:20 + start] = f"DALI:X{stage}\n".encode()
+                            start += 8
+                            struct.pack_into("<II", expected, 4, start, start)
                     qmp_path = work / "qmp"
                     qmp_path.unlink(missing_ok=True)
                     command = ["qemu-system-aarch64", "-M", "virt,virtualization=on", "-cpu", "cortex-a76",
@@ -156,4 +189,4 @@ breadcrumb:
                     if dali:
                         self.assertEqual((work / "actual.bin").read_bytes(), expected)
                     self.assertEqual(struct.unpack("<Q", (work / "abi.bin").read_bytes())[0], 1,
-                                     "breadcrumb faulted or changed x0 boot_args")
+                                     "breadcrumb faulted or changed live boot_args/bootstrap registers")

@@ -1,9 +1,46 @@
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
-@@ -457,6 +457,127 @@
+@@ -457,9 +457,139 @@
  	.align 2
  	.globl EXT(start_first_cpu)
  LEXT(start_first_cpu)
++		/* x27/x28 are unused by the native cold bootstrap. x28 stays zero
++		 * on generic machines; it becomes the console PA only after the DT
++		 * guard. Preserve all bootstrap live registers, including x0. These
++		 * markers stop before MMU enable: ramoops is outside bootstrap maps. */
++		.macro dali_early_mark stage
++		cbz x28, 995f
++		ldr w16, [x28]
++		movz w17, #0x4244
++		movk w17, #0x4347, lsl #16
++		cmp w16, w17
++		b.ne 995f
++		ldp w16, w17, [x28, #4]
++		cmp w16, w17
++		b.ne 995f
++		movz w27, #0xffec
++		movk w27, #0x1f, lsl #16
++		cmp w16, w27
++		b.hs 995f
++		add x16, x28, x16
++		add x16, x16, #12
++		movz x17, #0x4144
++		movk x17, #0x494c, lsl #16
++		movk x17, #0x583a, lsl #32
++		movk x17, #(0x0a30 + \stage), lsl #48
++		.rept 8
++		strb w17, [x16], #1
++		lsr x17, x17, #8
++		.endr
++		dmb sy
++		ldr w16, [x28, #4]
++		add w16, w16, #8
++		str w16, [x28, #4]
++		str w16, [x28, #8]
++		dsb sy
++995:
++		.endm
++		mov x28, xzr
 +		/* Dali-only pre-MMU breadcrumb. Preserve x0 (boot_args), use no
 +		 * stack or calls. First bound the physical Apple DT within boot memory
 +		 * and require its root compatible="xiaomi,dali". Generic QEMU RAM does
@@ -91,43 +128,62 @@
 +		subs w13, w13, #1
 +		b.ne 992b
 +		b 991f
-+994:	/* Append only to an intact, non-wrapped Linux console ring. */
-+		movz x16, #0xf000
-+		movk x16, #0xaec0, lsl #16
-+		ldr w17, [x16]
-+		movz w15, #0x4244
-+		movk w15, #0x4347, lsl #16
-+		cmp w17, w15
-+		b.ne 991f
-+		ldp w17, w15, [x16, #4]
-+		cmp w17, w15
-+		b.ne 991f
-+		movz w14, #0xffec
-+		movk w14, #0x1f, lsl #16
-+		cmp w17, w14
-+		b.hs 991f
-+		add x13, x16, #12
-+		add x13, x13, x17
-+		/* Eight bytes: "DALI:X0\\n". This proves cold-entry execution only. */
-+		movz x14, #0x4144
-+		movk x14, #0x494c, lsl #16
-+		movk x14, #0x583a, lsl #32
-+		movk x14, #0x0a30, lsl #48
-+		mov w12, #8
-+990:	strb w14, [x13], #1
-+		lsr x14, x14, #8
-+		subs w12, w12, #1
-+		b.ne 990b
-+		dmb sy
-+		add w17, w17, #8
-+		str w17, [x16, #4]
-+		str w17, [x16, #8]
-+		dsb sy
++994:	movz x28, #0xf000
++		movk x28, #0xaec0, lsl #16
++		dali_early_mark 0
 +991:
 +
  
  	// Unlock the core for debugging
  	msr		OSLAR_EL1, xzr
++		dali_early_mark 1
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+ 
+ 	mov		x20, x0
+@@ -469,6 +599,7 @@
+ 	adrp	x0, EXT(LowExceptionVectorBase)@page
+ 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
+ 	MSR_VBAR_EL1_X0
++		dali_early_mark 2
+ 
+ 
+ 	// Get the kernel memory parameters from the boot args
+@@ -512,6 +643,7 @@
+ 	add		lr, lr, EXT(arm_init)@pageoff
+ 	add		lr, lr, x22							// Convert to KVA
+ 	sub		lr, lr, x23
++		dali_early_mark 3
+ 
+ 	/*
+ 	 * Set up the bootstrap page tables with a single block entry for the V=P
+@@ -615,6 +747,7 @@
+ 	dsb		ish
+ 
+ 
++		dali_early_mark 4
+ 	b		common_start
+ 
+ /*
+@@ -691,6 +824,9 @@
+ #endif /* HAS_FEAT_XS */
+ 	msr		MAIR_EL1, x0
+ 	isb
++		cbnz x21, 996f
++		dali_early_mark 5
++996:
+ 	tlbi	vmalle1
+ 	dsb		ish
+ 
+@@ -750,6 +886,9 @@
+ #endif /* HAS_APPLE_PAC */
+ 
+ 	// Enable caches, MMU, ROP and JOP
++		cbnz x21, 996f
++		dali_early_mark 6
++996:
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
 --- a/osfmk/arm64/genassym.c
 +++ b/osfmk/arm64/genassym.c
 @@ -323,6 +323,8 @@

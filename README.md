@@ -61,12 +61,27 @@ register access.
 The entry checks a bounded Apple DT root `compatible="xiaomi,dali"` before
 touching Dali persistent RAM; the generic 1 GiB QEMU machine skips this probe.
 This early marker does not satisfy the platform/GIC/timer acceptance gate.
-The latest hardware cycle recorded trampoline entry, framebuffer completion and
-cache cleaning, then required the owner to enter fastboot manually. Android and
-all 18 backed partition hashes were restored. That console contains periodic
-binary overlays, so missing records cannot precisely locate the stop. The next
-candidate removes the post-MMU firmware C logging dependency. No Dali XNU pass
-has been claimed.
+The previous hardware cycle had periodic binary overlays in its console. After
+removing the post-MMU firmware C logging dependency, the next cycle recorded
+`DALI:X0`, proving execution of the actual XNU assembly entry. Its console was
+complete and readable (14,659 bytes, no NUL bytes). The owner confirmed the menu
+entry with Power at 5 seconds and entered fastboot manually; automatic menu
+timeout and fastboot recovery were not demonstrated. Android and all 18 backed
+partition hashes were restored. No Dali platform/GIC/timer pass has been claimed.
+
+The next source kernel adds bounded, stack-free entry markers. They preserve the
+live boot arguments and bootstrap registers and stop before MMU enable, because
+the persistent console is outside the initial kernel mappings:
+
+| Marker | Last completed stage |
+| --- | --- |
+| `DALI:X0` | Cold entry and Dali Apple DT identification |
+| `DALI:X1` | Debug OS lock register write |
+| `DALI:X2` | Low exception vector register setup |
+| `DALI:X3` | Boot arguments, stack registers and C entry address prepared |
+| `DALI:X4` | Physical and kernel-virtual bootstrap tables populated |
+| `DALI:X5` | TCR, TTBR and MAIR setup |
+| `DALI:X6` | Ready to enable the MMU; enable itself is not yet proved |
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
