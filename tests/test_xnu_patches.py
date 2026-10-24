@@ -67,5 +67,14 @@ class BoardArchiveTests(unittest.TestCase):
         self.assertIn('build-libpthread-kernel.py', archives)
 
 
+class BootMenuConfigTests(unittest.TestCase):
+    def test_hardware_and_board_menu_keep_visible_auto_xnu_timeout(self):
+        hardware = tomllib.loads((ROOT / 'package/unixnu.toml').read_text())['boot']
+        board = tomllib.loads((ROOT / 'board.toml').read_text())['payload']
+        self.assertEqual(hardware['default'], 'xnu')
+        self.assertGreaterEqual(hardware['timeout'], 10)
+        self.assertEqual(board['timeout'], hardware['timeout'])
+
+
 if __name__ == '__main__':
     unittest.main()

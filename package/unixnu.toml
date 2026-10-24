@@ -1,7 +1,7 @@
 version = 1
 
 [boot]
-timeout = 3
+timeout = 10
 default = "xnu"
 rotate = 0
 

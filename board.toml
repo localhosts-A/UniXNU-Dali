@@ -42,7 +42,7 @@ size_mib = 24
 loader = "firmware"
 title = "Dali single-core XNU early boot"
 dram_size = "0x300000000"
-timeout = 3
+timeout = 10
 kernel_args = ["-v"]
 
 [payload.adt]
