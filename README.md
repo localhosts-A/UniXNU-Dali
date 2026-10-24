@@ -1,6 +1,14 @@
 # UniXNU-Dali
 
-The next milestone is an owned static PID1 on a read-only mockfs RAM root.
+The active milestone is the [unattended diagnostic cycle](docs/unattended-cycle.md):
+source-XNU checkpoints, PSCI cold/warm plus retained ramoops, automatic fastboot,
+and verified original Android recovery. AEE research follows only if needed;
+UFS logging and the Linux USB reader are deferred. Official MiCode base/device/vendor-module
+inputs are pinned in [the source inventory](references/mt6991-linux.toml).
+The RAM-root/PID1 milestone below and full native USB/OTG work are paused.
+No Dali physical UFS writer, Linux reader or complete unattended cycle is qualified.
+
+The paused milestone is an owned static PID1 on a read-only mockfs RAM root.
 The source profile now includes mockfs. Its original BCM2837 development
 configuration has no Image4/AMFI provider, so trust-cache runtime initialization
 stays disabled: enabling it panics before platform start. The one-entry own
@@ -67,8 +75,10 @@ Repositories: [firmware](https://github.com/localhosts-A/UEFI-Dali),
 ADT generator. The source-only kernel build needs macOS/Xcode and is run by the
 `dali-xnu.yml` GitHub Action. The short-lived public artifact contains only the
 unprelinked arm64 kernel Mach-O and its SHA-256 manifest; no IPSW, kernelcache,
-device FDT, boot image, or ramoops logs are uploaded. Auto-fastboot defaults to
-on. Each hardware cycle builds a private payload with a unique XNU log token.
+device FDT, boot image, or ramoops logs are uploaded. The Action now defaults to
+`reset-qualification`, disabling hardware WDT and firmware reset deadlines;
+PID1 requires its separate explicit profile. Each hardware cycle builds a private
+payload with a unique XNU log token and an explicit reset method.
 The MT6991 watchdog interval is at most 31 seconds; the 120-second default is
 the host's fastboot wait deadline. Feeds/BaseTools, source XNU, and EFI package
 caches are separate. The kernel key hashes the checked-out tracked source graph,
@@ -227,18 +237,24 @@ issued SWRST, but CPU execution continued after 100 ms and automatic fastboot
 failed. Android/root and all 18 original hashes were restored. The original
 Android watchdog module also issues SWRST, but Linux registers its
 PSCI restart handler at priority 129 ahead of watchdog priority 128. The following
-SYSTEM_RESET trial then reached fastboot automatically and restored Android/root
+SYSTEM_RESET trial then reached fastboot and restored Android/root
 and all 18 original hashes, but lost all ramoops evidence. It cannot satisfy full
 acceptance. Android reported PSCI 1.1. The current diagnostic queries RESET2
 support before requesting architectural warm reset (type 0, cookie 0); a returned
 call records feature/result status. Warm-reset retention remains unverified.
 
-The architectural warm-reset trial also reached fastboot unattended but lost
+The architectural warm-reset trial also reached fastboot but lost
 ramoops. The next controlled trial uses the original Dali mrdump module's vendor
 AEE reset type `0x80000201` (KE domain reason), with the same native RESET2 function
 and zero cookie. Packaging requires the live FDT's AEE mini/MRDUMP11 handoff;
 the port does not write the mrdump control block or DDR-reserve registers.
 This diagnostic reset is still unqualified for RAM retention and LK dump behavior.
+
+Correction (2026-10-25): the owner recalled short-pressing Power to confirm the
+menu in those cold/warm trials. Both are excluded from fully unattended
+acceptance; the original records are retained with separate corrections. This
+does not establish a held Power forced reset. The current qualification runner
+retests each method without competing watchdogs or physical menu confirmation.
 
 For the current ramoops diagnostic, build with `DALI_AUTO_FASTBOOT=false`.
 This disables the firmware recovery watchdog/deadline and the XNU PSCI request.

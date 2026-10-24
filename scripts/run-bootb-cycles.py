@@ -138,34 +138,44 @@ def adb_online(serial):
     return "device" in adb_states(serial)
 
 
-def fastboot_serial_count(serial):
+def fastboot_serial_count(serial, timeout=10, require_success=False):
     try:
-        output = subprocess.check_output(["fastboot", "devices"], timeout=10, text=True,
+        output = subprocess.check_output(["fastboot", "devices"], timeout=timeout, text=True,
                                          stderr=subprocess.STDOUT)
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        if require_success:
+            raise CycleError(f"fastboot enumeration failed: {error}") from None
         return 0
     return sum(line.split()[:2] == [serial, "fastboot"] for line in output.splitlines() if line.strip())
 
 
-def fastboot_online(serial):
-    return fastboot_serial_count(serial) > 0
+def fastboot_online(serial, timeout=10, require_success=False):
+    return fastboot_serial_count(serial, timeout=timeout, require_success=require_success) > 0
 
 
 def wait_fastboot(serial, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if fastboot_online(serial):
+        try:
+            online = fastboot_online(serial, timeout=min(10, max(0.001, deadline - time.monotonic())), require_success=True)
+        except CycleError:
+            online = False
+        if online and time.monotonic() < deadline:
             return True
-        time.sleep(1)
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
     return False
 
 
 def wait_fastboot_disconnect(serial, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not fastboot_online(serial):
+        try:
+            offline = not fastboot_online(serial, timeout=min(10, max(0.001, deadline - time.monotonic())), require_success=True)
+        except CycleError:
+            offline = False
+        if offline and time.monotonic() < deadline:
             return True
-        time.sleep(0.5)
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
     return False
 
 
@@ -292,7 +302,7 @@ def artifact_directory(args, run_dir):
     return destination
 
 
-def verify_kernel_artifact(directory, unixnu, device_repo):
+def verify_kernel_artifact(directory, unixnu, device_repo, *, reset_qualification=False):
     kernel = directory / "kernel.macho"
     manifest_path = directory / "manifest.json"
     if not kernel.is_file() or not manifest_path.is_file():
@@ -321,7 +331,13 @@ def verify_kernel_artifact(directory, unixnu, device_repo):
     if xnu_source is None or manifest.get("xnu_commit") != xnu_source.get("commit"):
         raise CycleError("source artifact was built from a different pinned XNU source revision")
     recovery = manifest.get("recovery", {})
-    if recovery.get("auto_fastboot") is not True:
+    if reset_qualification:
+        policy = manifest.get('reset_qualification', {})
+        if recovery.get('auto_fastboot') is not False or policy.get('methods') != ['off', 'psci-cold', 'psci-warm', 'aee'] or \
+                policy.get('delay_seconds') != 5 or policy.get('hardware_watchdog_enabled') is not False or \
+                policy.get('firmware_reset_deadline_enabled') is not False:
+            raise CycleError('artifact lacks the reviewed no-watchdog reset qualification contract')
+    elif recovery.get("auto_fastboot") is not True:
         raise CycleError("automatic hardware cycles require auto_fastboot=true in the source artifact")
     try:
         host_timeout = int(recovery.get("fastboot_timeout_seconds", 0))
@@ -412,7 +428,7 @@ def verify_original_boot_b(path, record):
         raise CycleError(f"protected boot_b backup changed or failed checksum: {path}")
 
 
-def restore_android(serial, fastboot_serial, backup, records, timeout):
+def restore_android(serial, fastboot_serial, backup, records, timeout, post_boot=None):
     original_boot_b = backup / "boot_b.img"
     verify_original_boot_b(original_boot_b, records["boot_b"])
     if not fastboot_online(fastboot_serial):
@@ -425,12 +441,14 @@ def restore_android(serial, fastboot_serial, backup, records, timeout):
     if not wait_android(serial, timeout):
         raise CycleError("original boot_b was flashed, but rooted Android did not return before the deadline")
     current_android(serial)
+    if post_boot is not None:
+        post_boot()
     compare_partition_hashes(serial, records)
 
 
-def restore_android_safely(serial, fastboot_serial, backup, records, timeout):
+def restore_android_safely(serial, fastboot_serial, backup, records, timeout, post_boot=None):
     try:
-        restore_android(serial, fastboot_serial, backup, records, timeout)
+        restore_android(serial, fastboot_serial, backup, records, timeout, **({'post_boot': post_boot} if post_boot else {}))
         return
     except CycleError as first_error:
         # A completed restore may have reached Android even if host-side USB
@@ -438,17 +456,19 @@ def restore_android_safely(serial, fastboot_serial, backup, records, timeout):
         if adb_online(serial):
             try:
                 current_android(serial)
+                if post_boot is not None:
+                    post_boot()
                 compare_partition_hashes(serial, records)
                 return
             except CycleError:
                 pass
         try:
             if fastboot_serial_count(fastboot_serial) == 1:
-                restore_android(serial, fastboot_serial, backup, records, timeout)
+                restore_android(serial, fastboot_serial, backup, records, timeout, **({'post_boot': post_boot} if post_boot else {}))
                 return
             if adb_online(serial):
                 request_fastboot_from_android(serial, fastboot_serial, timeout)
-                restore_android(serial, fastboot_serial, backup, records, timeout)
+                restore_android(serial, fastboot_serial, backup, records, timeout, **({'post_boot': post_boot} if post_boot else {}))
                 return
         except CycleError as retry_error:
             raise CycleError(f"original boot_b restore failed: {first_error}; bounded retry failed: {retry_error}") from None
@@ -471,11 +491,16 @@ def collect_cycle(args, cycle_dir, *, require_xnu, run_token=None, watchdog_time
     return result
 
 
-def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *, pid1_inputs=None):
+def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *, pid1_inputs=None, reset_method=None):
     env = dict(os.environ)
     env["DALI_AUTO_FASTBOOT"] = "true" if recovery["auto_fastboot"] else "false"
     env["DALI_WATCHDOG_TIMEOUT_SECONDS"] = str(recovery["device_watchdog_timeout_seconds"])
     env["DALI_RUN_TOKEN"] = token
+    env.pop('DALI_RESET_METHOD', None)
+    if reset_method is not None:
+        if reset_method not in ('off', 'psci-cold', 'psci-warm', 'aee') or recovery['auto_fastboot'] or pid1_inputs is not None:
+            raise CycleError('reset qualification requires a supported method without legacy watchdog or PID1 inputs')
+        env['DALI_RESET_METHOD'] = reset_method
     env["UNIXNU_EDK2"] = env.get("UNIXNU_EDK2", str(args.uefi / "Mu_Basecore"))
     build_command = ["bash", DEVICE_ROOT / "scripts/build-firmware.sh", backup, args.uefi,
                      args.unixnu, kernel, adt_path]
@@ -517,6 +542,10 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *,
             payload_recovery.get("watchdog_timeout_seconds") != recovery["device_watchdog_timeout_seconds"] or
             payload_recovery.get("run_token") != token):
         raise CycleError("candidate recovery configuration differs from the source artifact")
+    if reset_method is not None and (payload_recovery.get('reset_method') != reset_method or
+            payload_recovery.get('reset_delay_seconds') != 5 or payload_recovery.get('watchdog_enabled') is not False or
+            payload_recovery.get('firmware_reset_deadline_enabled') is not False):
+        raise CycleError('candidate reset qualification settings differ from the selected method')
     return image, image_manifest
 
 

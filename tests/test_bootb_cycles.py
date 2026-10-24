@@ -87,6 +87,20 @@ class BackupValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(cycles.CycleError, "backup changed"):
                 cycles.verify_original_boot_b(image, record)
 
+    def test_enumeration_timeout_is_bounded_and_not_a_disconnect(self):
+        for waiter in (cycles.wait_fastboot, cycles.wait_fastboot_disconnect):
+            clock = [0.0]
+            def probe(*args, timeout, **kwargs):
+                self.assertLessEqual(timeout, 0.2)
+                clock[0] += timeout
+                raise cycles.subprocess.TimeoutExpired(args[0], timeout)
+            with self.subTest(waiter=waiter.__name__), \
+                 mock.patch.object(cycles.time, 'monotonic', side_effect=lambda: clock[0]), \
+                 mock.patch.object(cycles.time, 'sleep', side_effect=lambda n: clock.__setitem__(0, clock[0] + n)), \
+                 mock.patch.object(cycles.subprocess, 'check_output', side_effect=probe):
+                self.assertFalse(waiter('dali', 0.2))
+                self.assertAlmostEqual(clock[0], 0.2)
+
 
 if __name__ == "__main__":
     unittest.main()

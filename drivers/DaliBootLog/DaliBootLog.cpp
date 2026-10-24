@@ -9,6 +9,7 @@
 #include <pexpert/pexpert.h>
 #include "DaliRecovery.h"
 #include "DaliManualRecovery.h"
+#include "DaliPsci.h"
 
 #if !defined(DALI_XNU_DARWIN) || !defined(DALI_XNU_BUILD)
 #error "DaliBootLog must be built with the pinned XNU version and build number"
@@ -82,7 +83,19 @@ struct RecoveryContext {
   uint32_t psciFeatures;
   uint32_t psciResult;
   uint32_t resetType;
+  DaliResetMethod method = DaliResetMethod::Aee;
+  bool qualification = false;
+  uint32_t frequency = 0;
+  uint64_t elapsedTicks = 0;
 };
+
+static bool recoveryRecord(void *, const char *, uint32_t, uint32_t);
+
+static uint64_t recoveryTicks(void) {
+  uint64_t ticks;
+  __asm__ volatile ("isb\n\tmrs %0, cntpct_el0" : "=r" (ticks) :: "memory");
+  return ticks;
+}
 
 static __attribute__((noinline)) uint32_t recoveryRead(void *opaque, uint32_t offset)
 {
@@ -95,41 +108,20 @@ static __attribute__((noinline)) uint32_t recoveryRead(void *opaque, uint32_t of
 static __attribute__((noinline)) void recoverySystemReset(void *opaque)
 {
   auto *context = static_cast<RecoveryContext *> (opaque);
-  // The live FDT validates the SMC conduit. RESET2 is optional, so query it
-  // before a vendor AEE diagnostic reset. The type is validated against the
-  // live-FDT handoff and the original Dali mrdump module's KE reset argument.
-  uint64_t daif;
-  register uint64_t x0 __asm__ ("x0") = 0x8400000A; // PSCI_FEATURES
-  register uint64_t x1 __asm__ ("x1") = 0xC4000012; // 64-bit SYSTEM_RESET2
-  register uint64_t x2 __asm__ ("x2") = 0;
-  register uint64_t x3 __asm__ ("x3") = 0;
-  register uint64_t x4 __asm__ ("x4") = 0;
-  register uint64_t x5 __asm__ ("x5") = 0;
-  register uint64_t x6 __asm__ ("x6") = 0;
-  register uint64_t x7 __asm__ ("x7") = 0;
-  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3),
-                    "+r" (x4), "+r" (x5), "+r" (x6), "+r" (x7) :
-                    : "x8", "x9", "x10", "x11",
-                      "x12", "x13", "x14", "x15", "x16", "x17", "cc", "memory");
-  context->psciFeatures = static_cast<uint32_t> (x0);
-  if (!daliPsciFeatureSupported (context->psciFeatures)) { return; }
-  x0 = 0xC4000012;
-  // Match the stock module's sign extension of its 32-bit vendor/reset type.
-  x1 = static_cast<uint64_t> (static_cast<int64_t> (static_cast<int32_t> (context->resetType)));
-  x2 = 0;
-  x3 = 0;
-  x4 = 0;
-  x5 = 0;
-  x6 = 0;
-  x7 = 0;
-  __asm__ volatile ("mrs %0, daif\n\tmsr daifset, #3\n\tdsb sy"
-                    : "=r" (daif) :: "memory");
-  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3),
-                    "+r" (x4), "+r" (x5), "+r" (x6), "+r" (x7) :
-                    : "x8", "x9", "x10", "x11",
-                      "x12", "x13", "x14", "x15", "x16", "x17", "cc", "memory");
-  __asm__ volatile ("msr daif, %0" :: "r" (daif) : "memory");
-  context->psciResult = static_cast<uint32_t> (x0);
+  if (context->method == DaliResetMethod::Off) { return; }
+  if (context->method != DaliResetMethod::Cold) {
+    context->psciFeatures = recoveryPsciFeatures ();
+    if (!daliPsciFeatureSupported (context->psciFeatures)) {
+      if (context->rgu != 0) {
+        recoveryRecord (context, "features-refused", recoveryRead (context, 0x24), recoveryRead (context, 0));
+      }
+      return; // Never fall back to another reset method.
+    }
+  }
+  if (context->rgu != 0 &&
+      !recoveryRecord (context, "smc", recoveryRead (context, 0x24), recoveryRead (context, 0))) { return; }
+  context->psciResult = context->method == DaliResetMethod::Cold ?
+      recoveryPsciColdReset () : recoveryPsciReset2 (context->resetType);
 }
 
 static __attribute__((noinline)) void recoveryFence(void *)
@@ -203,16 +195,26 @@ static __attribute__((noinline)) void waitForManualRecovery(IOMemoryMap *console
 static bool recoveryRecord(void *opaque, const char *stage, uint32_t marker, uint32_t mode)
 {
   auto *context = static_cast<RecoveryContext *> (opaque);
-  char line[192] = "DALI-RESET: run=";
+  char line[384] = "DALI-RESET: run=";
   char *at = line + sizeof ("DALI-RESET: run=") - 1;
   char *end = line + sizeof (line) - 2;
   at = appendText (at, end, context->token);
-  at = appendText (at, end, " method=psci-aee-reset2 stage=");
+  at = appendText (at, end, " method=");
+  at = appendText (at, end, daliResetLogMethod (context->method));
+  at = appendText (at, end, " stage=");
   at = appendText (at, end, stage);
   at = appendText (at, end, " marker=0x");
   at = appendUnsigned (at, end, marker, 16);
   at = appendText (at, end, " mode=0x");
   at = appendUnsigned (at, end, mode, 16);
+  if (context->qualification) {
+    at = appendText (at, end, " qualification=1 delay_ms=5000 elapsed_ticks=");
+    at = appendUnsigned (at, end, context->elapsedTicks, 10);
+    at = appendText (at, end, " freq=");
+    at = appendUnsigned (at, end, context->frequency, 10);
+    at = appendText (at, end, " type=0x");
+    at = appendUnsigned (at, end, context->resetType, 16);
+  }
   if (stage[0] == 'r') {
     at = appendText (at, end, " features=0x");
     at = appendUnsigned (at, end, context->psciFeatures, 16);
@@ -234,7 +236,8 @@ static DaliRecoveryContract decodeRecoveryContract(const void *resource, const v
   return {resourceValues[0], resourceValues[1], rebootValues[0], rebootValues[1], rebootValues[2]};
 }
 
-static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, const char *token)
+static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, const char *token,
+    DaliResetMethod method = DaliResetMethod::Aee, bool qualification = false)
 {
   IORegistryEntry *entry = IORegistryEntry::fromPath ("/arm-io/dali-boot-log", gIODTPlane);
   if (entry == nullptr || console == nullptr) {
@@ -254,7 +257,9 @@ static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, co
     contract = decodeRecoveryContract (resource->getBytesNoCopy (), reboot->getBytesNoCopy ());
   }
   entry->release ();
-  if (!daliRecoveryContractValid (contract) || resetType != 0x80000201U) { return; }
+  if (!daliRecoveryContractValid (contract) || method == DaliResetMethod::Off ||
+      (method == DaliResetMethod::Aee && resetType != 0x80000201U)) { return; }
+  if (method != DaliResetMethod::Aee) { resetType = 0; }
   OSSharedPtr<IOMemoryDescriptor> descriptor (
       IOMemoryDescriptor::withPhysicalAddress (contract.base, contract.size, kIODirectionInOut), OSNoRetain);
   if (!descriptor) { return; }
@@ -262,9 +267,27 @@ static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, co
   if (!mapping) { return; }
   RecoveryContext context = {static_cast<uintptr_t> (mapping->getVirtualAddress ()), console, token,
                              UINT32_MAX, UINT32_MAX, resetType};
+  context.method = method;
+  context.qualification = qualification;
   DaliRecoveryOps ops = {&context, recoveryRead, recoveryFence, recoveryRecord, recoverySystemReset};
-  IODelay (1000000); // Bounded interval after the completed checkpoint record.
-  if (daliIssueSystemReset (ops)) {
+  if (qualification) {
+    uint64_t frequency;
+    __asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (frequency));
+    context.frequency = static_cast<uint32_t> (frequency);
+    if (frequency != 13000000 ||
+        !recoveryRecord (&context, "wait", recoveryRead (&context, 0x24), recoveryRead (&context, 0))) { return; }
+    const uint64_t start = recoveryTicks ();
+    for (unsigned attempts = 0; attempts < 6000; ++attempts) {
+      IODelay (1000);
+      context.elapsedTicks = recoveryTicks () - start;
+      if (daliQualifiedDelayComplete (context.frequency, context.elapsedTicks)) { break; }
+    }
+    if (!daliQualifiedDelayComplete (context.frequency, context.elapsedTicks)) {
+      recoveryRecord (&context, "delay-refused", recoveryRead (&context, 0x24), recoveryRead (&context, 0));
+      return;
+    }
+  } else { IODelay (1000000); }
+  if (daliIssueSystemReset (ops, qualification)) {
     // Keep a bounded observation interval and persist an unexpected return.
     IODelay (100000);
     recoveryRecord (&context, "returned", recoveryRead (&context, 0x24), recoveryRead (&context, 0));
@@ -285,9 +308,16 @@ public:
     dali_bootstrap_log("DALI:DL IOKit persistent logger entered; mapping console\n");
     if (!IOService::start (provider)) { return false; }
     unsigned pid1Mode = 0, offline = 0, autoFastboot = 0;
+    char resetArgument[16] = {};
+    DaliResetMethod resetMethod = DaliResetMethod::Off;
+    unsigned resetDelay = 0;
+    const bool qualification = PE_parse_boot_argn ("dali-reset-method", resetArgument, sizeof (resetArgument));
+    PE_parse_boot_argn ("dali-reset-delay", &resetDelay, sizeof (resetDelay));
     PE_parse_boot_argn ("dali-pid1", &pid1Mode, sizeof (pid1Mode));
     PE_parse_boot_argn ("dali-pid1-qemu", &offline, sizeof (offline));
     PE_parse_boot_argn ("dali-auto-fastboot", &autoFastboot, sizeof (autoFastboot));
+    if (qualification && (resetArgument[15] != 0 || !daliParseResetMethod (resetArgument, resetMethod) ||
+                         autoFastboot != 0 || pid1Mode != 0 || offline != 0 || resetDelay != 5)) { return false; }
     if (pid1Mode > 1 || offline > 1 || (pid1Mode == 1 && autoFastboot != 0)) { return false; }
     if (offline == 1) {
       // This backend has no hardware MMIO or persistence claim. Both explicit
@@ -367,6 +397,13 @@ public:
       if (!passed || !checkpointSaved || !pid1Initialize (mConsole.get (), runToken, false)) { return false; }
       dali_bootstrap_log("DALI:DL continuing to RAM root and PID1; recovery watchdog disabled\n");
       return true;
+    }
+    if (qualification) {
+      if (passed && checkpointSaved && resetMethod != DaliResetMethod::Off) {
+        recoverToFastboot (mConsole.get (), runToken, resetMethod, true);
+      }
+      // No alternate reset, manual-watchdog helper or later userspace on this path.
+      for (;;) { __asm__ volatile ("wfe"); }
     }
     if (passed && checkpointSaved && autoFastboot == 1) { recoverToFastboot (mConsole.get (), runToken); }
     if (passed && checkpointSaved && autoFastboot == 0) { waitForManualRecovery (mConsole.get (), runToken); }

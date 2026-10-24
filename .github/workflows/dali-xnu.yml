@@ -15,6 +15,11 @@ on:
       - 'README.md'
   workflow_dispatch:
     inputs:
+      validation_profile:
+        description: Qualification target (PID1 work is paused by default)
+        type: choice
+        options: [reset-qualification, pid1]
+        default: reset-qualification
       auto_fastboot:
         description: Arm the default one-shot bootloader recovery watchdog
         type: boolean
@@ -45,6 +50,7 @@ jobs:
     env:
       UNIXNU_OUT: ${{ github.workspace }}/UniXNU/out
       JOBS: '4'
+      VALIDATION_PROFILE: ${{ inputs.validation_profile || 'reset-qualification' }}
     steps:
       - name: Checkout device repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -198,6 +204,7 @@ jobs:
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi"
 
       - name: Build the owned static PID1 and explicit test trust cache
+        if: env.VALIDATION_PROFILE == 'pid1'
         shell: bash
         run: |
           set -euo pipefail
@@ -220,6 +227,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu"
 
       - name: Test readonly RAM root, real PID1 syscalls and 30-second heartbeats
+        if: env.VALIDATION_PROFILE == 'pid1'
         shell: bash
         run: |
           set -euo pipefail
@@ -258,6 +266,17 @@ jobs:
             host_timeout=${DISPATCH_FASTBOOT_TIMEOUT:-120}
             watchdog_timeout=${DISPATCH_WATCHDOG_TIMEOUT:-31}
           fi
+          profile_args=()
+          if [[ "$VALIDATION_PROFILE" == reset-qualification ]]; then
+            auto=false
+            host_timeout=120
+            profile_args+=(--reset-qualification)
+          elif [[ "$VALIDATION_PROFILE" == pid1 ]]; then
+            profile_args+=(--pid1-directory "$RUNNER_TEMP/dali-pid1-fixture")
+          else
+            echo "Unsupported validation profile" >&2
+            exit 2
+          fi
           [[ "$auto" == true || "$auto" == false ]]
           [[ "$watchdog_timeout" =~ ^[0-9]+$ ]] && (( watchdog_timeout >= 2 && watchdog_timeout <= 31 ))
           [[ "$host_timeout" =~ ^[0-9]+$ ]] && (( host_timeout >= watchdog_timeout + 30 && host_timeout <= 600 ))
@@ -266,7 +285,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/public-artifact" \
             --unixnu "$GITHUB_WORKSPACE/UniXNU" \
             --device-repo "$GITHUB_WORKSPACE/UniXNU-Dali" \
-            --pid1-directory "$RUNNER_TEMP/dali-pid1-fixture" \
+            "${profile_args[@]}" \
             --auto-fastboot "$auto" \
             --fastboot-timeout-seconds "$host_timeout" \
             --watchdog-timeout-seconds "$watchdog_timeout"

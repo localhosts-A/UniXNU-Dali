@@ -97,6 +97,20 @@ int main() {
   }
   State lost; lost.recordFailure = true;
   assert(!daliIssueSystemReset(ops(lost)) && lost.resets == 0 && lost.fences == 0);
+  State qualified; qualified.mode = 0x17c;
+  assert(daliIssueSystemReset(ops(qualified), true) && qualified.resets == 1);
+  State competing; competing.mode = 0x17d;
+  assert(!daliIssueSystemReset(ops(competing), true) && competing.resets == 0);
+  assert(!daliQualifiedDelayComplete(13000000, 64999999));
+  assert(!daliQualifiedDelayComplete(24000000, 120000000));
+  assert(daliQualifiedDelayComplete(13000000, 65000000));
+  DaliResetMethod selected = DaliResetMethod::Off;
+  assert(daliParseResetMethod("off", selected) && selected == DaliResetMethod::Off);
+  assert(daliParseResetMethod("psci-cold", selected) && selected == DaliResetMethod::Cold);
+  assert(daliParseResetMethod("psci-warm", selected) && selected == DaliResetMethod::Warm);
+  assert(daliParseResetMethod("aee", selected) && selected == DaliResetMethod::Aee);
+  assert(!daliParseResetMethod("psci-warm-extra", selected));
+  assert(!daliParseResetMethod("", selected));
 }
 '''
         # initializer_list is used by the test only, never by kernel code.

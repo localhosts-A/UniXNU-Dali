@@ -49,9 +49,13 @@ def main():
     parser.add_argument("--device-repo", required=True, type=Path)
     parser.add_argument("--pid1-directory", type=Path, help="Own signed PID1 build with its explicit trust-cache bundle")
     parser.add_argument("--auto-fastboot", choices=("true", "false"), default="true")
+    parser.add_argument("--reset-qualification", action="store_true")
     parser.add_argument("--fastboot-timeout-seconds", type=int, default=120)
     parser.add_argument("--watchdog-timeout-seconds", type=int, default=31)
     args = parser.parse_args()
+    if args.reset_qualification and (args.auto_fastboot != 'false' or args.pid1_directory is not None or
+                                    args.fastboot_timeout_seconds != 120):
+        parser.error('reset qualification requires auto-fastboot=false, no PID1 inputs and a 120-second host deadline')
     if not 2 <= args.watchdog_timeout_seconds <= 31:
         parser.error("MT6991 watchdog timeout must be between 2 and 31 seconds")
     if not args.watchdog_timeout_seconds + 30 <= args.fastboot_timeout_seconds <= 600:
@@ -128,6 +132,10 @@ def main():
                           'runtime_trust_cache_provider': False, 'apple_trust_chain_verified': False,
                           'entitlement_free_development_profile': True, 'entitlements_supported': False,
                           'minimum_heartbeat_seconds': 30, 'apple_userland_included': False}
+    if args.reset_qualification:
+        record['reset_qualification'] = {'methods': ['off', 'psci-cold', 'psci-warm', 'aee'],
+                                        'delay_seconds': 5, 'hardware_watchdog_enabled': False,
+                                        'firmware_reset_deadline_enabled': False}
     (args.output_dir / "manifest.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     print(json.dumps(record, indent=2, sort_keys=True))
 

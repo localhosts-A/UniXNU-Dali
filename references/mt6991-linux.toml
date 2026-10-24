@@ -1,0 +1,58 @@
+# Reference inputs for the unattended reader and the MT6991 driver inventory.
+# Not a build recipe, firmware qualification, or an override of board.toml.
+schema = 1
+branch = "bsp-dali-v-oss"
+purpose = "Dali unattended persistent-log cycle"
+
+[[source]]
+name = "linux"
+repository = "MiCode/Xiaomi_Kernel_OpenSource"
+git = "https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git"
+commit = "f089d58cab670dc0d75db1203fa63850e57a940d"
+role = "Linux 6.6.56 base, UFS core, USB gadget/configfs ACM"
+paths = ["Makefile", "arch/arm64/configs/gki_defconfig", "drivers/usb/gadget", "drivers/ufs"]
+limits = "Does not identify the running Android 17 / Linux 6.6.118 build; never mix module ABIs."
+
+[[source]]
+name = "device_modules"
+repository = "MiCode/MTK_kernel_device_modules"
+git = "https://github.com/MiCode/MTK_kernel_device_modules.git"
+commit = "e45c3199537fbba9aae5fb06c31fc8dbd3c1dcee"
+role = "Dali/MT6991 board and platform integration"
+paths = [
+  "arch/arm64/boot/dts/mediatek/dali.dts",
+  "arch/arm64/boot/dts/mediatek/mt6991.dts",
+  "arch/arm64/configs/mgk_64_k66_defconfig",
+  "kernel/configs/dali.config",
+  "build.config.mtk_kernel_device_modules",
+  "drivers/ufs/ufs-mediatek.c",
+  "drivers/phy/mediatek/phy-mtk-ufs.c",
+  "drivers/usb/mtu3",
+  "drivers/misc/mediatek/typec/tcpc/tcpc_mt6379.c",
+  "drivers/clk/mediatek",
+  "drivers/soc/mediatek",
+]
+limits = "Live FDT, DMA/SMMU ownership, boot handoff and the complete reader configuration still require qualification."
+
+[[source]]
+name = "vendor_modules"
+repository = "MiCode/MTK_kernel_modules"
+git = "https://github.com/MiCode/MTK_kernel_modules.git"
+commit = "fe0fa7ff68a2de0dec7ce1a04f5db6f07fd4a3b9"
+role = "Companion modules; select only demonstrated reader dependencies"
+paths = ["udc/Kbuild"]
+limits = "udc_lib is an ECCCI compression module, not a USB device controller."
+
+[guides]
+unattended = "https://unixnu.com/devices/sheng-unattended-test"
+overview = "https://unixnu.com/porting/"
+ufs = "https://unixnu.com/porting/ufs"
+records = "https://unixnu.com/porting/records"
+
+[qualification]
+source_inventory = "verified"
+linux_reader_build = "pending"
+linux_reader_hardware = "pending"
+xnu_ufs_hardware = "pending"
+scratch_survives_reader_switch = "unknown"
+unattended_cycles_passed = 0

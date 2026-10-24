@@ -28,15 +28,47 @@ struct DaliRecoveryOps {
   void (*reset)(void *);
 };
 
-// Keep the UEFI one-shot watchdog and bootloader marker unchanged. Linux's
-// PSCI restart handler has priority 129, ahead of mtk_wdt's 128. The direct
-// SWRST trial returned on this device. The secure callback uses a feature-
-// checked architectural warm reset, since SYSTEM_RESET lost the console.
-static __attribute__((noinline)) bool daliIssueSystemReset(const DaliRecoveryOps &ops)
+enum class DaliResetMethod : uint32_t { Off, Cold, Warm, Aee };
+
+static inline const char *daliResetMethodArgument(DaliResetMethod method) {
+  switch (method) {
+    case DaliResetMethod::Off: return "off";
+    case DaliResetMethod::Cold: return "psci-cold";
+    case DaliResetMethod::Warm: return "psci-warm";
+    case DaliResetMethod::Aee: return "aee";
+  }
+  return "invalid";
+}
+static inline const char *daliResetLogMethod(DaliResetMethod method) {
+  switch (method) {
+    case DaliResetMethod::Off: return "off";
+    case DaliResetMethod::Cold: return "psci-system-reset";
+    case DaliResetMethod::Warm: return "psci-system-reset2";
+    case DaliResetMethod::Aee: return "psci-aee-reset2";
+  }
+  return "invalid";
+}
+static inline bool daliParseResetMethod(const char *name, DaliResetMethod &method) {
+  for (uint32_t i = 0; i < 4; ++i) {
+    const auto candidate = static_cast<DaliResetMethod>(i);
+    const char *a = name, *b = daliResetMethodArgument(candidate);
+    while (*a && *a == *b) { ++a; ++b; }
+    if (*a == *b) { method = candidate; return true; }
+  }
+  return false;
+}
+static inline bool daliQualifiedDelayComplete(uint32_t frequency, uint64_t elapsed) {
+  return frequency == 13000000 && elapsed >= 5ULL * frequency;
+}
+
+// Legacy images retain their enabled watchdog contract. Qualification images
+// require it disabled so it cannot impersonate a successful PSCI request.
+static __attribute__((noinline)) bool daliIssueSystemReset(const DaliRecoveryOps &ops, bool qualification = false)
 {
   const uint32_t marker = ops.read(ops.context, 0x24);
   const uint32_t mode = ops.read(ops.context, 0);
-  if (marker == UINT32_MAX || (marker & 0xF) != 3 || mode == UINT32_MAX || (mode & 9) != 1) {
+  if (marker == UINT32_MAX || (marker & 0xF) != 3 || mode == UINT32_MAX ||
+      (qualification ? (mode & 1) != 0 : (mode & 9) != 1)) {
     ops.record(ops.context, "state-refused", marker, mode);
     return false;
   }

@@ -13,6 +13,28 @@ import tomllib
 DEVICE_ROOT = Path(__file__).resolve().parents[1]
 
 
+def validate_psci_abis(assembly):
+    def function_id(body, reg, low, high):
+        return bool(re.search(r'\bmov\s+[wx]' + str(reg) + r', #(?:' + hex(low) + '|' + str(low) + r')\b', body) and
+                    re.search(r'\bmovk\s+[wx]' + str(reg) + r', #(?:' + hex(high) + '|' + str(high) + r'), lsl #16\b', body))
+    features, cold, reset2 = (assembly[name] for name in ('recoveryPsciFeatures', 'recoveryPsciColdReset', 'recoveryPsciReset2'))
+    if not function_id(features, 0, 10, 0x8400) or not function_id(features, 1, 18, 0xC400) or \
+            not function_id(cold, 0, 9, 0x8400) or not function_id(reset2, 0, 18, 0xC400):
+        raise ValueError('compiled PSCI function IDs are missing')
+    for body in (features, cold, reset2):
+        if len(re.findall(r'\bsmc\s+#(?:0x0|0)\b', body)) != 1 or not all(
+                re.search(r'\bmov\s+[wx]' + str(reg) + r', (?:#0x0|#0|[wx]zr)\b', body) for reg in range(2, 8)):
+            raise ValueError('compiled SMC or zero cookie/reserved registers are missing')
+    if not re.search(r'\bmov\s+[wx]1, (?:#0x0|#0|[wx]zr)\b', cold) or \
+            not re.search(r'\bsxtw\s+x1, w\d+\b', reset2):
+        raise ValueError('cold reset argument zero or RESET2 type sign extension missing')
+    for body in (cold, reset2):
+        if not re.search(r'\bmrs\s+x\d+, DAIF\b', body, re.I) or \
+                not re.search(r'\bmsr\s+DAIFSet, #(?:0x3|3)\b', body, re.I) or \
+                not re.search(r'\bmsr\s+DAIF,', body, re.I) or not re.search(r'\bdsb\s+sy\b', body):
+            raise ValueError('compiled reset DAIF save/restore or barrier missing')
+
+
 def hardware_arguments():
     board = tomllib.loads((DEVICE_ROOT / 'board.toml').read_text())
     menu = tomllib.loads((DEVICE_ROOT / 'package/unixnu.toml').read_text())
@@ -56,6 +78,8 @@ def validate_reset_instructions(kernel, output):
         recover = find('recoverToFastboot')
         issue = find('daliIssueSystemReset')
         find('recoverySystemReset')
+        for name in ('recoveryPsciFeatures', 'recoveryPsciColdReset', 'recoveryPsciReset2'):
+            find(name)
         find('recoveryRead')
         find('recoveryFence')
         def calls(body, callee):
@@ -63,20 +87,9 @@ def validate_reset_instructions(kernel, output):
         if not calls(assembly['__ZN11DaliBootLog5startEP9IOService'], recover) or \
                 not calls(assembly['recoverToFastboot'], issue):
             raise SystemExit('Compiled Dali checkpoint cannot call the guarded software-reset sequence')
-        reset = assembly['recoverySystemReset']
-        def function_id(low, high):
-            return bool(re.search(r'\bmov\s+w0, #(?:' + hex(low) + '|' + str(low) + r')\b', reset) and
-                re.search(r'\bmovk\s+w0, #(?:' + hex(high) + '|' + str(high) + r'), lsl #16\b', reset))
-        if not function_id(10, 0x8400) or not function_id(18, 0xC400) or \
-                len(re.findall(r'\bsmc\s+#(?:0x0|0)\b', reset)) != 2 or \
-                not re.search(r'\bldrsw\s+x1, \[x\d+, #(?:0x20|32)\]', reset) or \
-                not all(len(re.findall(r'\bmov\s+x' + str(reg) + r', (?:#0x0|#0|xzr)\b', reset)) >= 2
-                        for reg in range(2, 8)) or \
-                not re.search(r'\bmsr\s+DAIFSet, #(?:0x3|3)\b', reset, re.I) or \
-                not re.search(r'\bmsr\s+DAIF,', reset, re.I) or \
-                not re.search(r'\bdsb\s+sy\b', reset) or \
-                not all(re.search(r'\bdsb\s+sy\b', assembly[key]) for key in ('recoveryRead', 'recoveryFence')):
-            raise SystemExit('Compiled AEE RESET2 type extension/zero arguments, SMCs, DAIF restoration or barriers are missing')
+        validate_psci_abis(assembly)
+        if not all(re.search(r'\bdsb\s+sy\b', assembly[key]) for key in ('recoveryRead', 'recoveryFence')):
+            raise SystemExit('Compiled MMIO/persistent-record barriers are missing')
     finally:
         (output / 'reset-instructions.log').write_text('\n'.join(assembly.values()))
     (output / 'reset-instructions.json').write_text(json.dumps({
