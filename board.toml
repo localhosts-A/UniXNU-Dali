@@ -8,7 +8,7 @@ kit = "Dali"
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-unixnu_commit = "3ccc09cf2017e095b9d55cb8634f0364048b720a"
+unixnu_commit = "1ad36d522ea95df5b859028e11c3533eeabb83cb"
 uefi_commit = "c73b12bfec0636cc3033d1b1ab96f032df66e392"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
@@ -43,7 +43,9 @@ loader = "firmware"
 title = "Dali single-core XNU early boot"
 dram_size = "0x300000000"
 timeout = 10
-kernel_args = ["-v"]
+# Qualified with the source-only kernel's typed-allocation metadata. The
+# upstream default exceeds kalloc's 32-zone per-size scratch array here.
+kernel_args = ["-v", "dali-earlyboot=1", "kt_fixed_zones=120"]
 
 [payload.adt]
 tool = "scripts/make-dali-adt.py"

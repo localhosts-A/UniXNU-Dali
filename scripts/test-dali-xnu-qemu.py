@@ -3,8 +3,23 @@
 import argparse
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
+import tomllib
+
+
+DEVICE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def hardware_arguments():
+    board = tomllib.loads((DEVICE_ROOT / 'board.toml').read_text())
+    menu = tomllib.loads((DEVICE_ROOT / 'package/unixnu.toml').read_text())
+    arguments = board['payload']['kernel_args']
+    entry, = (entry for entry in menu['entry'] if entry['id'] == 'xnu')
+    if arguments != shlex.split(entry['args']):
+        raise SystemExit('Board payload and hardware menu must use the same XNU arguments')
+    return arguments
 
 
 def main():
@@ -17,8 +32,12 @@ def main():
     root = args.unixnu.resolve()
     output = args.output_dir.resolve()
     probe = root / "scripts/probe-darwinboot-xnu.py"
+    board_args = hardware_arguments()
+    # Keep only console diagnostics specific to the offline VM. Allocation
+    # policy comes from the hardware configuration, never the probe's defaults.
+    kernel_args = ' '.join([*board_args, 'serial=3', 'debug=0x14e'])
     common = [sys.executable, probe, "--kernel", args.kernel.resolve(), "--uefi-efi", args.uefi_efi.resolve(),
-              "--timeout", "90", "--armvirt", "--armcpu", "--nvram-proxy", "--require-crypto14", "--finish-function"]
+              "--timeout", "90", "--armvirt", "--armcpu", "--nvram-proxy"]
     cases = {
         "platform": "__ZN13ArmDTPlatform9configureEP9IOService",
         "cpu": "__ZN6ArmCpu5startEP9IOService",
@@ -27,7 +46,8 @@ def main():
     reports = {}
     for name, symbol in cases.items():
         destination = output / name
-        command = [*common, "--break-symbol", symbol, "--output", destination]
+        command = [*common, "--kernel-base-args", kernel_args, "--require-crypto14", "--finish-function",
+                   "--break-symbol", symbol, "--output", destination]
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
         (output / f"{name}.log").parent.mkdir(parents=True, exist_ok=True)
         (output / f"{name}.log").write_text(result.stdout)
@@ -37,6 +57,8 @@ def main():
         if not report_path.is_file():
             raise SystemExit(f"QEMU probe {name} did not produce {report_path}")
         reports[name] = json.loads(report_path.read_text())
+        if reports[name].get('kernel_arguments') != kernel_args:
+            raise SystemExit(f'{name}: QEMU did not use the hardware allocation arguments')
 
     hashes = {report.get("kernel_sha256") for report in reports.values()}
     if len(hashes) != 1 or None in hashes:
@@ -75,8 +97,35 @@ def main():
             timer.get("_armcpu_timer_interrupts", 0) < 1:
         raise SystemExit("QEMU did not deliver a real architectural timer interrupt through ArmCpu")
 
+    # Reproduce the hardware failure with this exact kernel by omitting only
+    # the explicit typed-zone budget. Stop at the real fatal Assert, before
+    # panic enters the debugger; no guest state or assertion is modified.
+    negative_args = ' '.join([arg for arg in board_args if not arg.startswith('kt_fixed_zones=')]
+                             + ['serial=3', 'debug=0x14e'])
+    destination = output / 'default-budget-refusal'
+    result = subprocess.run([*common, '--kernel-base-args', negative_args, '--break-symbol', '_Assert',
+                             '--read-entry-region', '0:0:40', '--read-entry-region', '2:0:60',
+                             '--output', destination], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, timeout=150)
+    (output / 'default-budget-refusal.log').write_text(result.stdout)
+    if result.returncode:
+        raise SystemExit(f'Default kalloc budget control failed:\n{result.stdout[-5000:]}')
+    refusal = json.loads((destination / 'gdb-stop.json').read_text())
+    regions = refusal.get('entry_regions', {})
+    def argument_string(request):
+        return bytes.fromhex(regions.get(request, {}).get('bytes', '')).split(b'\0', 1)[0].decode()
+    if refusal.get('kernel_sha256') != reports['platform']['kernel_sha256'] or \
+            refusal.get('kernel_arguments') != negative_args or \
+            refusal.get('bounded_timeout_interrupted') or refusal.get('stop_symbol') != '_Assert' or \
+            int(refusal.get('x3', '0'), 16) != 1 or \
+            argument_string('0:0:40') != 'kalloc.c' or \
+            argument_string('2:0:60') != 'n_zones_sig + n_zones_type + 1 <= 32':
+        raise SystemExit('Default-budget control did not reproduce the real kalloc scratch-array assertion')
+
     summary = {
         "kernel_sha256": hashes.pop(),
+        "hardware_kernel_arguments": board_args,
+        "default_kalloc_budget_assertion_reproduced": True,
         "darwinboot_uefi_to_xnu": True,
         "qemu_cpus": 1,
         "armdt_platform_configured": True,

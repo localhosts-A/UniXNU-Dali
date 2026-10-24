@@ -21,7 +21,7 @@ id = "xnu"
 title = "UniXNU single-core early boot"
 type = "xnu"
 path = "Payloads/kernel.macho"
-args = "-v dali-earlyboot=1"
+args = "-v dali-earlyboot=1 kt_fixed_zones=120"
 
 [[entry]]
 id = "hello"

@@ -143,6 +143,16 @@ panic format arguments or dereference the context. These records diagnose the
 stop and do not bypass allocator checks. Android/root and all 18 original hashes
 were restored after that cycle; full platform/GIC/timer acceptance is pending.
 
+The callback trace subsequently proved that zone initialization returned. The
+stop is a fatal `kalloc.c` assertion in `kalloc_init`:
+`n_zones_sig + n_zones_type + 1 <= 32`. The source-only kernel's typed-allocation
+metadata cannot use the upstream fixed-zone budget. Both hardware entry points
+now pass `kt_fixed_zones=120`, retaining typed segregation and the bounds check.
+The QEMU gate reads those same arguments instead of silently inheriting the
+probe's budget. It also omits the budget in a separate run of the same kernel
+and requires the original fatal assertion as a negative control. Hardware
+acceptance and unattended fastboot recovery remain pending.
+
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
 keeps the prior UEFI-only test menu for firmware checks without an XNU artifact.
