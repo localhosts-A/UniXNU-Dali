@@ -25,7 +25,7 @@ struct DaliRecoveryOps {
 // The UEFI one-shot watchdog must still be armed. Do not reload it, change
 // its length, or write any boot-mode/scratch register here. Follow the same
 // MODE/SWRST sequence as the firmware's Mt6991WarmReset.
-static inline bool daliIssueSoftwareReset(const DaliRecoveryOps &ops)
+static __attribute__((noinline)) bool daliIssueSoftwareReset(const DaliRecoveryOps &ops)
 {
   const uint32_t marker = ops.read(ops.context, 0x24);
   const uint32_t mode = ops.read(ops.context, 0);

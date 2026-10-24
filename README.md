@@ -170,6 +170,13 @@ path. Host gates require the matching reset record as well as XNU and Android
 restoration. USB enumeration alone does not prove an unattended cycle; owner
 observation must still exclude physical keys.
 
+The first controlled reset trial also reached the XNU checkpoint unattended,
+but exposed a fortified-copy trap while decoding the recovery properties.
+Property decoding now copies complete local arrays before assigning fields.
+CI compiles that actual decoder with subobject bounds checks and checks the
+Mach-O call chain, SWRST key/offset/store and Device-memory barriers. Generic
+QEMU success alone cannot validate this Dali-only reset path.
+
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
 keeps the prior UEFI-only test menu for firmware checks without an XNU artifact.

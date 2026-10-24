@@ -8,6 +8,37 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RecoverySequenceTests(unittest.TestCase):
+    def test_actual_property_decoder_respects_fortified_subobject_bounds(self):
+        compiler = shutil.which('clang++')
+        self.assertIsNotNone(compiler)
+        driver = (ROOT / 'drivers/DaliBootLog/DaliBootLog.cpp').read_text()
+        start = driver.index('static DaliRecoveryContract decodeRecoveryContract(')
+        end = driver.index('static __attribute__((noinline)) void recoverToFastboot(', start)
+        decoder = driver[start:end]
+        source = r'''
+#include <stdint.h>
+#include <string.h>
+#include <assert.h>
+#include "DaliRecovery.h"
+#undef memcpy
+#define memcpy(d,s,n) ((n) > __builtin_object_size((d), 1) ? (__builtin_trap(), (void *)0) : __builtin_memcpy((d),(s),(n)))
+''' + decoder + r'''
+int main() {
+  const uint64_t resource[] = {0x1c010000, 0x1000};
+  const uint32_t reboot[] = {0x24, 0xf, 3};
+  auto c = decodeRecoveryContract(resource, reboot);
+  assert(daliRecoveryContractValid(c));
+}
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            test = Path(temp) / 'decode.cpp'
+            binary = Path(temp) / 'decode'
+            test.write_text(source)
+            subprocess.run([compiler, '-std=c++14', '-O2', '-Wall', '-Wextra', '-Werror',
+                            '-Wno-unused-function', '-I', ROOT / 'drivers/DaliBootLog',
+                            test, '-o', binary], check=True)
+            subprocess.run([binary], check=True)
+
     def test_production_sequence_preserves_mode_and_refuses_invalid_state(self):
         compiler = shutil.which('clang++')
         self.assertIsNotNone(compiler)

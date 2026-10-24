@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -36,6 +37,47 @@ def validate_budget_refusal(refusal, kernel_sha256, kernel_args):
         raise SystemExit('Default-budget control did not reproduce the real kalloc scratch-array assertion')
 
 
+def validate_reset_instructions(kernel, output):
+    """Require the real compiled call chain; source/compile success is insufficient."""
+    output.mkdir(parents=True, exist_ok=True)
+    symbols = subprocess.check_output(['llvm-nm', '--defined-only', kernel], text=True)
+    names = [line.split()[-1] for line in symbols.splitlines() if line.split()]
+    assembly = {}
+    def find(fragment):
+        found = [name for name in names if fragment in name and '.cold.' not in name]
+        if len(found) != 1:
+            raise SystemExit(f'Compiled reset boundary {fragment} missing/ambiguous: {found}')
+        name, = found
+        assembly[fragment] = subprocess.check_output(
+            ['llvm-objdump', '-d', '--disassemble-symbols=' + name, kernel], text=True)
+        return name
+    try:
+        start = find('__ZN11DaliBootLog5startEP9IOService')
+        recover = find('recoverToFastboot')
+        issue = find('daliIssueSoftwareReset')
+        find('recoveryWrite')
+        find('recoveryRead')
+        find('recoveryFence')
+        def calls(body, callee):
+            return bool(re.search(r'\bbl\s+[^\n]*<' + re.escape(callee) + r'>', body))
+        if not calls(assembly['__ZN11DaliBootLog5startEP9IOService'], recover) or \
+                not calls(assembly['recoverToFastboot'], issue):
+            raise SystemExit('Compiled Dali checkpoint cannot call the guarded software-reset sequence')
+        if not re.search(r'#(?:0x1209|4617)\b', assembly['daliIssueSoftwareReset']) or \
+                not re.search(r'#(?:0x14|20)\b', assembly['daliIssueSoftwareReset']) or \
+                not re.search(r'\bstr\s+w2,', assembly['recoveryWrite']) or \
+                not all(re.search(r'\bdsb\s+sy\b', assembly[key]) for key in ('recoveryRead', 'recoveryFence')):
+            raise SystemExit('Compiled reset store/key/offset or Device-memory barriers are missing')
+    finally:
+        (output / 'reset-instructions.log').write_text('\n'.join(assembly.values()))
+    (output / 'reset-instructions.json').write_text(json.dumps({
+        'compiled_checkpoint_calls_recovery': True,
+        'compiled_recovery_calls_guarded_reset': True,
+        'swrst_key_offset_store_and_barriers_present': True,
+        'hardware_recovery_demonstrated': False,
+    }, indent=2) + '\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unixnu", type=Path, required=True)
@@ -45,6 +87,7 @@ def main():
     args = parser.parse_args()
     root = args.unixnu.resolve()
     output = args.output_dir.resolve()
+    validate_reset_instructions(args.kernel.resolve(), output)
     probe = root / "scripts/probe-darwinboot-xnu.py"
     board_args = hardware_arguments()
     # Keep only console diagnostics specific to the offline VM. Allocation
@@ -131,6 +174,7 @@ def main():
         "kernel_sha256": hashes.pop(),
         "hardware_kernel_arguments": board_args,
         "default_kalloc_budget_assertion_reproduced": True,
+        "compiled_reset_instruction_chain_present": True,
         "darwinboot_uefi_to_xnu": True,
         "qemu_cpus": 1,
         "armdt_platform_configured": True,

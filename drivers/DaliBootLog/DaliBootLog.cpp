@@ -75,7 +75,7 @@ struct RecoveryContext {
   const char *token;
 };
 
-static uint32_t recoveryRead(void *opaque, uint32_t offset)
+static __attribute__((noinline)) uint32_t recoveryRead(void *opaque, uint32_t offset)
 {
   auto *context = static_cast<RecoveryContext *> (opaque);
   const uint32_t value = *reinterpret_cast<volatile uint32_t *> (context->rgu + offset);
@@ -83,13 +83,13 @@ static uint32_t recoveryRead(void *opaque, uint32_t offset)
   return value;
 }
 
-static void recoveryWrite(void *opaque, uint32_t offset, uint32_t value)
+static __attribute__((noinline)) void recoveryWrite(void *opaque, uint32_t offset, uint32_t value)
 {
   auto *context = static_cast<RecoveryContext *> (opaque);
   *reinterpret_cast<volatile uint32_t *> (context->rgu + offset) = value;
 }
 
-static void recoveryFence(void *)
+static __attribute__((noinline)) void recoveryFence(void *)
 {
   __asm__ volatile ("dsb sy" ::: "memory");
 }
@@ -111,7 +111,18 @@ static bool recoveryRecord(void *opaque, const char *stage, uint32_t marker, uin
   return appendRamoops (context->console, line, static_cast<size_t> (at - line));
 }
 
-static void recoverToFastboot(IOMemoryMap *console, const char *token)
+static DaliRecoveryContract decodeRecoveryContract(const void *resource, const void *reboot)
+{
+  // Copy whole objects. XNU's fortified memcpy rejects a multi-field copy
+  // through &contract.base or &contract.offset as a subobject overflow.
+  uint64_t resourceValues[2];
+  uint32_t rebootValues[3];
+  memcpy (resourceValues, resource, sizeof (resourceValues));
+  memcpy (rebootValues, reboot, sizeof (rebootValues));
+  return {resourceValues[0], resourceValues[1], rebootValues[0], rebootValues[1], rebootValues[2]};
+}
+
+static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, const char *token)
 {
   IORegistryEntry *entry = IORegistryEntry::fromPath ("/arm-io/dali-boot-log", gIODTPlane);
   if (entry == nullptr || console == nullptr) {
@@ -123,8 +134,7 @@ static void recoverToFastboot(IOMemoryMap *console, const char *token)
   DaliRecoveryContract contract = {};
   if (resource != nullptr && resource->getLength () == 2 * sizeof (uint64_t) &&
       reboot != nullptr && reboot->getLength () == 3 * sizeof (uint32_t)) {
-    memcpy (&contract.base, resource->getBytesNoCopy (), 2 * sizeof (uint64_t));
-    memcpy (&contract.offset, reboot->getBytesNoCopy (), 3 * sizeof (uint32_t));
+    contract = decodeRecoveryContract (resource->getBytesNoCopy (), reboot->getBytesNoCopy ());
   }
   entry->release ();
   if (!daliRecoveryContractValid (contract)) { return; }
