@@ -25,10 +25,16 @@ unprelinked arm64 kernel Mach-O and its SHA-256 manifest; no IPSW, kernelcache,
 device FDT, boot image, or ramoops logs are uploaded. Auto-fastboot defaults to
 on. Each hardware cycle builds a private payload with a unique XNU log token.
 The MT6991 watchdog interval is at most 31 seconds; the 120-second default is
-the host's fastboot wait deadline. The cache fingerprint covers all board settings
-except the host-built UEFI revision, alongside the full UniXNU pin, toolchain,
-source, config, driver and patch inputs. A firmware-only pin update can reuse
-kernel objects; artifact manifests still require the exact current source pins.
+the host's fastboot wait deadline. Feeds/BaseTools, source XNU, and EFI package
+caches are separate. The kernel key hashes the checked-out tracked source graph,
+all board settings except revision pins, and installed Xcode/SDK/LLVM/build-tool
+versions. Only audited DarwinBoot-only inputs and root READMEs are excluded;
+unknown inputs and other gitlinks invalidate the key. An exact hit reuses the
+completed source kernel after checking its SHA-256, Mach-O and input stamp,
+avoiding repeated archive compilation. A missing or invalid stamp rebuilds it.
+There are no fallback cache keys. Every run still executes the complete DarwinBoot
+fixtures and one-core source XNU QEMU gate, and artifact manifests require both
+exact current repository pins. The first run of this cache format builds once.
 
 The pinned firmware adds an FDT-derived conventional-memory region for
 DarwinBoot's 256 MiB contiguous window. Static reservations, protected regions,
@@ -50,6 +56,8 @@ The following hardware cycle proved EBS returned successfully and the loader
 trampoline was called, with no XNU checkpoint. The current pins trace trampoline
 stages through cache maintenance and MMU disable; a guarded, stack-free Dali
 kernel breadcrumb records cold-entry execution before its first register access.
+The entry checks a bounded Apple DT root `compatible="xiaomi,dali"` before
+touching Dali persistent RAM; the generic 1 GiB QEMU machine skips this probe.
 This early marker does not satisfy the platform/GIC/timer acceptance gate.
 No Dali XNU pass has been claimed.
 

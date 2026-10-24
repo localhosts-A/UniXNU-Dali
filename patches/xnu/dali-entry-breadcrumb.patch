@@ -1,12 +1,97 @@
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
-@@ -457,6 +457,42 @@
+@@ -457,6 +457,127 @@
  	.align 2
  	.globl EXT(start_first_cpu)
  LEXT(start_first_cpu)
 +		/* Dali-only pre-MMU breadcrumb. Preserve x0 (boot_args), use no
-+		 * stack or calls. The host validates this persistent RAM reservation.
-+		 * Append only to an intact, non-wrapped Linux console ring. */
++		 * stack or calls. First bound the physical Apple DT within boot memory
++		 * and require its root compatible="xiaomi,dali". Generic QEMU RAM does
++		 * not include the Dali console: never probe that address speculatively.
++		 * All DT reads are 32-bit aligned, including property names/values. */
++		ldr x16, [x0, BA_DEVICE_TREE]
++		ldr x15, [x0, BA_VIRT_BASE]
++		subs x16, x16, x15
++		b.lo 991f
++		ldr w17, [x0, BA_DEVICE_TREE_LENGTH]
++		cmp w17, #8
++		b.lo 991f
++		cmp w17, #16, lsl #12
++		b.hi 991f
++		adds x15, x16, x17
++		b.cs 991f
++		ldr x14, [x0, BA_MEM_SIZE]
++		cmp x15, x14
++		b.hi 991f
++		ldr x14, [x0, BA_PHYS_BASE]
++		adds x16, x16, x14
++		b.cs 991f
++		tst x16, #3
++		b.ne 991f
++		adds x17, x16, x17
++		b.cs 991f
++		ldr w13, [x16]
++		cbz w13, 991f
++		cmp w13, #64
++		b.hi 991f
++		add x16, x16, #8
++992:	sub x15, x17, x16
++		cmp x15, #36
++		b.lo 991f
++		ldr w14, [x16, #32]
++		add x14, x14, #3
++		and x14, x14, #0xfffffffffffffffc
++		add x14, x14, #36
++		cmp x14, x15
++		b.hi 991f
++		ldr w12, [x16]
++		movz w15, #0x6f63
++		movk w15, #0x706d, lsl #16
++		cmp w12, w15
++		b.ne 993f
++		ldr w12, [x16, #4]
++		movz w15, #0x7461
++		movk w15, #0x6269, lsl #16
++		cmp w12, w15
++		b.ne 993f
++		ldr w12, [x16, #8]
++		mov w15, #0x656c
++		cmp w12, w15
++		b.ne 993f
++		ldr w12, [x16, #12]
++		ldr w15, [x16, #16]
++		orr w12, w12, w15
++		ldr w15, [x16, #20]
++		orr w12, w12, w15
++		ldr w15, [x16, #24]
++		orr w12, w12, w15
++		ldr w15, [x16, #28]
++		orr w12, w12, w15
++		cbnz w12, 993f
++		ldr w12, [x16, #32]
++		cmp w12, #12
++		b.ne 991f
++		ldr w12, [x16, #36]
++		movz w15, #0x6978
++		movk w15, #0x6f61, lsl #16
++		cmp w12, w15
++		b.ne 991f
++		ldr w12, [x16, #40]
++		movz w15, #0x696d
++		movk w15, #0x642c, lsl #16
++		cmp w12, w15
++		b.ne 991f
++		ldr w12, [x16, #44]
++		movz w15, #0x6c61
++		movk w15, #0x0069, lsl #16
++		cmp w12, w15
++		b.eq 994f
++		b 991f
++993:	add x16, x16, x14
++		subs w13, w13, #1
++		b.ne 992b
++		b 991f
++994:	/* Append only to an intact, non-wrapped Linux console ring. */
 +		movz x16, #0xf000
 +		movk x16, #0xaec0, lsl #16
 +		ldr w17, [x16]
@@ -43,3 +128,14 @@
  
  	// Unlock the core for debugging
  	msr		OSLAR_EL1, xzr
+--- a/osfmk/arm64/genassym.c
++++ b/osfmk/arm64/genassym.c
+@@ -323,6 +323,8 @@
+ 	DECLARE("BA_VIRT_BASE", offsetof(struct boot_args, virtBase));
+ 	DECLARE("BA_PHYS_BASE", offsetof(struct boot_args, physBase));
+ 	DECLARE("BA_MEM_SIZE", offsetof(struct boot_args, memSize));
++	DECLARE("BA_DEVICE_TREE", offsetof(struct boot_args, deviceTreeP));
++	DECLARE("BA_DEVICE_TREE_LENGTH", offsetof(struct boot_args, deviceTreeLength));
+ 	DECLARE("BA_TOP_OF_KERNEL_DATA", offsetof(struct boot_args, topOfKernelData));
+ 	DECLARE("BA_BOOT_FLAGS", offsetof(struct boot_args, bootFlags));
+ 
