@@ -25,7 +25,10 @@ unprelinked arm64 kernel Mach-O and its SHA-256 manifest; no IPSW, kernelcache,
 device FDT, boot image, or ramoops logs are uploaded. Auto-fastboot defaults to
 on. Each hardware cycle builds a private payload with a unique XNU log token.
 The MT6991 watchdog interval is at most 31 seconds; the 120-second default is
-the host's fastboot wait deadline.
+the host's fastboot wait deadline. The cache fingerprint covers all board settings
+except the host-built UEFI revision, alongside the full UniXNU pin, toolchain,
+source, config, driver and patch inputs. A firmware-only pin update can reuse
+kernel objects; artifact manifests still require the exact current source pins.
 
 The pinned firmware adds an FDT-derived conventional-memory region for
 DarwinBoot's 256 MiB contiguous window. Static reservations, protected regions,
@@ -35,9 +38,10 @@ diagnostic heap remains 128 MiB. A separate 60-second UEFI application timer
 provides a warm-reset fallback while Boot Services remain active. Recovery from
 an XNU freeze after ExitBootServices still depends on the hardware watchdog and
 requires hardware qualification. One cycle reached the loader and returned Out
-of Resources before the memory extension. The latest cycle retained only SEC
-entry/register records; its stop is unresolved. The pinned firmware now records
-direct early checkpoints to locate it. No Dali XNU pass has been claimed.
+of Resources before the memory extension. Trace v2 located the subsequent stop
+inside the static reserved-memory walk. The pinned firmware removes repeated
+parent searches there and records node progress/timer ticks; the underlying hang
+is not yet proven fixed. No Dali XNU pass has been claimed.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
