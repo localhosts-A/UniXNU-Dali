@@ -17,34 +17,26 @@ static inline bool daliRecoveryContractValid(const DaliRecoveryContract &c)
 struct DaliRecoveryOps {
   void *context;
   uint32_t (*read)(void *, uint32_t);
-  void (*write)(void *, uint32_t, uint32_t);
   void (*fence)(void *);
   bool (*record)(void *, const char *, uint32_t, uint32_t);
+  void (*reset)(void *);
 };
 
-// The UEFI one-shot watchdog must still be armed. Do not reload it, change
-// its length, or write any boot-mode/scratch register here. Follow the same
-// MODE/SWRST sequence as the firmware's Mt6991WarmReset.
-static __attribute__((noinline)) bool daliIssueSoftwareReset(const DaliRecoveryOps &ops)
+// Keep the UEFI one-shot watchdog and bootloader marker unchanged. Linux's
+// PSCI restart handler has priority 129, ahead of mtk_wdt's 128. The direct
+// SWRST trial returned on this device, so request the standard secure reset.
+static __attribute__((noinline)) bool daliIssueSystemReset(const DaliRecoveryOps &ops)
 {
   const uint32_t marker = ops.read(ops.context, 0x24);
   const uint32_t mode = ops.read(ops.context, 0);
-  if (marker == UINT32_MAX || (marker & 0xF) != 3 || mode == UINT32_MAX || !(mode & 1)) {
+  if (marker == UINT32_MAX || (marker & 0xF) != 3 || mode == UINT32_MAX || (mode & 9) != 1) {
     ops.record(ops.context, "state-refused", marker, mode);
     return false;
   }
-  ops.write(ops.context, 0, (mode & ~8U) | 0x22000000);
-  ops.fence(ops.context);
-  const uint32_t readback = ops.read(ops.context, 0);
-  if (readback == UINT32_MAX || (readback & 0xFFFFFF) != ((mode & ~8U) & 0xFFFFFF) ||
-      ops.read(ops.context, 0x24) != marker) {
-    ops.record(ops.context, "mode-refused", marker, readback);
-    return false;
-  }
-  if (!ops.record(ops.context, "issue", marker, readback)) { return false; }
+  if (!ops.record(ops.context, "issue", marker, mode)) { return false; }
   ops.fence(ops.context); // Commit the persistent record before resetting.
-  ops.write(ops.context, 0x14, 0x1209);
+  ops.reset(ops.context);
   ops.fence(ops.context);
-  return true; // MMIO completion can precede reset assertion; caller waits.
+  return true; // A returned PSCI call must fail the recovery evidence gate.
 }
 #endif

@@ -83,10 +83,22 @@ static __attribute__((noinline)) uint32_t recoveryRead(void *opaque, uint32_t of
   return value;
 }
 
-static __attribute__((noinline)) void recoveryWrite(void *opaque, uint32_t offset, uint32_t value)
+static __attribute__((noinline)) void recoverySystemReset(void *)
 {
-  auto *context = static_cast<RecoveryContext *> (opaque);
-  *reinterpret_cast<volatile uint32_t *> (context->rgu + offset) = value;
+  // The live FDT validator requires PSCI 1.0 with the SMC conduit. Follow
+  // Linux machine_restart's local IRQ masking without altering other CPUs.
+  // Restore DAIF only if firmware unexpectedly returns from SYSTEM_RESET.
+  uint64_t daif;
+  register uint64_t x0 __asm__ ("x0") = 0x84000009;
+  register uint64_t x1 __asm__ ("x1") = 0;
+  register uint64_t x2 __asm__ ("x2") = 0;
+  register uint64_t x3 __asm__ ("x3") = 0;
+  __asm__ volatile ("mrs %0, daif\n\tmsr daifset, #3\n\tdsb sy"
+                    : "=r" (daif) :: "memory");
+  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3) :
+                    : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+                      "x12", "x13", "x14", "x15", "x16", "x17", "cc", "memory");
+  __asm__ volatile ("msr daif, %0" :: "r" (daif) : "memory");
 }
 
 static __attribute__((noinline)) void recoveryFence(void *)
@@ -101,7 +113,7 @@ static bool recoveryRecord(void *opaque, const char *stage, uint32_t marker, uin
   char *at = line + sizeof ("DALI-RESET: run=") - 1;
   char *end = line + sizeof (line) - 2;
   at = appendText (at, end, context->token);
-  at = appendText (at, end, " method=rgu-swrst stage=");
+  at = appendText (at, end, " method=psci-system-reset stage=");
   at = appendText (at, end, stage);
   at = appendText (at, end, " marker=0x");
   at = appendUnsigned (at, end, marker, 16);
@@ -144,11 +156,10 @@ static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, co
   OSSharedPtr<IOMemoryMap> mapping (descriptor->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
   if (!mapping) { return; }
   RecoveryContext context = {static_cast<uintptr_t> (mapping->getVirtualAddress ()), console, token};
-  DaliRecoveryOps ops = {&context, recoveryRead, recoveryWrite, recoveryFence, recoveryRecord};
+  DaliRecoveryOps ops = {&context, recoveryRead, recoveryFence, recoveryRecord, recoverySystemReset};
   IODelay (1000000); // Bounded interval after the completed checkpoint record.
-  if (daliIssueSoftwareReset (ops)) {
-    // The Linux restart loop allows a delay after SWRST. Completion of its
-    // MMIO store alone does not prove that reset has already asserted.
+  if (daliIssueSystemReset (ops)) {
+    // Keep a bounded observation interval and persist an unexpected return.
     IODelay (100000);
     recoveryRecord (&context, "returned", recoveryRead (&context, 0x24), recoveryRead (&context, 0));
     recoveryFence (&context);
