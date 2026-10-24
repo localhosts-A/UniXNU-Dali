@@ -1,0 +1,45 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -457,6 +457,42 @@
+ 	.align 2
+ 	.globl EXT(start_first_cpu)
+ LEXT(start_first_cpu)
++		/* Dali-only pre-MMU breadcrumb. Preserve x0 (boot_args), use no
++		 * stack or calls. The host validates this persistent RAM reservation.
++		 * Append only to an intact, non-wrapped Linux console ring. */
++		movz x16, #0xf000
++		movk x16, #0xaec0, lsl #16
++		ldr w17, [x16]
++		movz w15, #0x4244
++		movk w15, #0x4347, lsl #16
++		cmp w17, w15
++		b.ne 991f
++		ldp w17, w15, [x16, #4]
++		cmp w17, w15
++		b.ne 991f
++		movz w14, #0xffec
++		movk w14, #0x1f, lsl #16
++		cmp w17, w14
++		b.hs 991f
++		add x13, x16, #12
++		add x13, x13, x17
++		/* Eight bytes: "DALI:X0\\n". This proves cold-entry execution only. */
++		movz x14, #0x4144
++		movk x14, #0x494c, lsl #16
++		movk x14, #0x583a, lsl #32
++		movk x14, #0x0a30, lsl #48
++		mov w12, #8
++990:	strb w14, [x13], #1
++		lsr x14, x14, #8
++		subs w12, w12, #1
++		b.ne 990b
++		dmb sy
++		add w17, w17, #8
++		str w17, [x16, #4]
++		str w17, [x16, #8]
++		dsb sy
++991:
++
+ 
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr

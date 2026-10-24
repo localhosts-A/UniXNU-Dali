@@ -46,9 +46,12 @@ pin validates/stops the inherited LK watchdog before memory scans and timestamps
 each probe; expiry as the cause remains unproven. The owner entered fastboot
 manually in that cycle. The next hardware cycle reached menu timeout and
 DarwinBoot window allocation, but only printed diagnostics before calling EBS.
-There is no proof yet that EBS returned or that XNU executed. The current pins
-trace EBS core stages and the loader's actual EBS return. No Dali XNU pass has
-been claimed.
+The following hardware cycle proved EBS returned successfully and the loader
+trampoline was called, with no XNU checkpoint. The current pins trace trampoline
+stages through cache maintenance and MMU disable; a guarded, stack-free Dali
+kernel breadcrumb records cold-entry execution before its first register access.
+This early marker does not satisfy the platform/GIC/timer acceptance gate.
+No Dali XNU pass has been claimed.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
