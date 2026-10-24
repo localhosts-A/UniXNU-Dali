@@ -54,12 +54,19 @@ manually in that cycle. The next hardware cycle reached menu timeout and
 DarwinBoot window allocation, but only printed diagnostics before calling EBS.
 The following hardware cycle proved EBS returned successfully and the loader
 trampoline was called, with no XNU checkpoint. The current pins trace trampoline
-stages through cache maintenance and MMU disable; a guarded, stack-free Dali
-kernel breadcrumb records cold-entry execution before its first register access.
+stages through cache maintenance and immediately before MMU disable. The
+transition then uses assembly without C calls or stack references; a guarded,
+stack-free Dali kernel breadcrumb records cold-entry execution before its first
+register access.
 The entry checks a bounded Apple DT root `compatible="xiaomi,dali"` before
 touching Dali persistent RAM; the generic 1 GiB QEMU machine skips this probe.
 This early marker does not satisfy the platform/GIC/timer acceptance gate.
-No Dali XNU pass has been claimed.
+The latest hardware cycle recorded trampoline entry, framebuffer completion and
+cache cleaning, then required the owner to enter fastboot manually. Android and
+all 18 backed partition hashes were restored. That console contains periodic
+binary overlays, so missing records cannot precisely locate the stop. The next
+candidate removes the post-MMU firmware C logging dependency. No Dali XNU pass
+has been claimed.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
