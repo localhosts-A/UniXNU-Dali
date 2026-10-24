@@ -168,6 +168,11 @@ def main():
                 tree.cells("/gpio-keys/volumedown", "gpios") !=
                 (*tree.cells("/soc/pinctrl@1002d000", "phandle"), 60, 1)):
             raise ValueError("runtime GPIO60 manual recovery contract differs")
+        chosen_fdt = tree.nodes.get("/chosen", {})
+        if (chosen_fdt.get("aee,enable") != b"mini\0" or
+                chosen_fdt.get("mrdump,lk") != b"MRDUMP11\0" or
+                len(chosen_fdt.get("mrdump,cblock", b"")) != 8):
+            raise ValueError("runtime AEE mini/MRDUMP11 recovery contract differs")
     except (OSError, ValueError, KeyError, struct.error) as error:
         raise SystemExit(f"Dali FDT validation failed: {error}") from None
 
@@ -187,6 +192,9 @@ def main():
         ("recovery-rgu", struct.pack("<2Q", *tree.reg("/watchdog@1c010000")[0])),
         ("recovery-reboot-mode", struct.pack("<3I", 0x24, 0x0F, 3)),
         ("manual-recovery-gpio", struct.pack("<2Q", 0x1002D000, 0x1000)),
+        # Original Dali mrdump.ko: C4000012, vendor bit | KE(2)<<8 | AEE(1).
+        # No control-block or DDR reserve registers are written by this port.
+        ("recovery-aee-reset-type", struct.pack("<I", 0x80000201)),
     ])
     dram_base = memory[0][0]
     chosen = apple_node("chosen", [

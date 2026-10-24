@@ -162,7 +162,7 @@ unattended recovery cycles.
 When the firmware recovery switch is enabled, packaging now forwards
 `dali-auto-fastboot=1`. After a successful checkpoint, DaliBootLog validates the
 FDT-derived RGU resource, verifies the existing bootloader marker and enabled
-watchdog, then requests feature-checked PSCI SYSTEM_RESET2 using the live FDT's verified SMC conduit.
+watchdog, then requests feature-checked vendor AEE PSCI SYSTEM_RESET2 using the live FDT's verified SMC conduit.
 It keeps all RGU registers unchanged and writes no boot-mode or storage field.
 The persistent `DALI-RESET` record precedes the secure call; a returned/refused
 request fails the evidence gate. Disabling recovery forwards zero and skips this
@@ -187,6 +187,13 @@ and all 18 original hashes, but lost all ramoops evidence. It cannot satisfy ful
 acceptance. Android reported PSCI 1.1. The current diagnostic queries RESET2
 support before requesting architectural warm reset (type 0, cookie 0); a returned
 call records feature/result status. Warm-reset retention remains unverified.
+
+The architectural warm-reset trial also reached fastboot unattended but lost
+ramoops. The next controlled trial uses the original Dali mrdump module's vendor
+AEE reset type `0x80000201` (KE domain reason), with the same native RESET2 function
+and zero cookie. Packaging requires the live FDT's AEE mini/MRDUMP11 handoff;
+the port does not write the mrdump control block or DDR-reserve registers.
+This diagnostic reset is still unqualified for RAM retention and LK dump behavior.
 
 For the current ramoops diagnostic, build with `DALI_AUTO_FASTBOOT=false`.
 This disables the firmware recovery watchdog/deadline and the XNU PSCI request.

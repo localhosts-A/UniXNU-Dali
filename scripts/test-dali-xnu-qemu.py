@@ -69,11 +69,14 @@ def validate_reset_instructions(kernel, output):
                 re.search(r'\bmovk\s+w0, #(?:' + hex(high) + '|' + str(high) + r'), lsl #16\b', reset))
         if not function_id(10, 0x8400) or not function_id(18, 0xC400) or \
                 len(re.findall(r'\bsmc\s+#(?:0x0|0)\b', reset)) != 2 or \
+                not re.search(r'\bldrsw\s+x1, \[x\d+, #(?:0x20|32)\]', reset) or \
+                not all(len(re.findall(r'\bmov\s+x' + str(reg) + r', (?:#0x0|#0|xzr)\b', reset)) >= 2
+                        for reg in range(2, 8)) or \
                 not re.search(r'\bmsr\s+DAIFSet, #(?:0x3|3)\b', reset, re.I) or \
                 not re.search(r'\bmsr\s+DAIF,', reset, re.I) or \
                 not re.search(r'\bdsb\s+sy\b', reset) or \
                 not all(re.search(r'\bdsb\s+sy\b', assembly[key]) for key in ('recoveryRead', 'recoveryFence')):
-            raise SystemExit('Compiled PSCI FEATURES/RESET2 SMCs, DAIF restoration or Device-memory barriers are missing')
+            raise SystemExit('Compiled AEE RESET2 type extension/zero arguments, SMCs, DAIF restoration or barriers are missing')
     finally:
         (output / 'reset-instructions.log').write_text('\n'.join(assembly.values()))
     (output / 'reset-instructions.json').write_text(json.dumps({

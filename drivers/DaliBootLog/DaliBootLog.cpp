@@ -76,6 +76,7 @@ struct RecoveryContext {
   const char *token;
   uint32_t psciFeatures;
   uint32_t psciResult;
+  uint32_t resetType;
 };
 
 static __attribute__((noinline)) uint32_t recoveryRead(void *opaque, uint32_t offset)
@@ -90,26 +91,37 @@ static __attribute__((noinline)) void recoverySystemReset(void *opaque)
 {
   auto *context = static_cast<RecoveryContext *> (opaque);
   // The live FDT validates the SMC conduit. RESET2 is optional, so query it
-  // before requesting architectural SYSTEM_WARM_RESET (type=0, cookie=0).
-  // Do not silently fall back to the log-losing SYSTEM_RESET diagnostic.
+  // before a vendor AEE diagnostic reset. The type is validated against the
+  // live-FDT handoff and the original Dali mrdump module's KE reset argument.
   uint64_t daif;
   register uint64_t x0 __asm__ ("x0") = 0x8400000A; // PSCI_FEATURES
   register uint64_t x1 __asm__ ("x1") = 0xC4000012; // 64-bit SYSTEM_RESET2
   register uint64_t x2 __asm__ ("x2") = 0;
   register uint64_t x3 __asm__ ("x3") = 0;
-  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3) :
-                    : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+  register uint64_t x4 __asm__ ("x4") = 0;
+  register uint64_t x5 __asm__ ("x5") = 0;
+  register uint64_t x6 __asm__ ("x6") = 0;
+  register uint64_t x7 __asm__ ("x7") = 0;
+  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3),
+                    "+r" (x4), "+r" (x5), "+r" (x6), "+r" (x7) :
+                    : "x8", "x9", "x10", "x11",
                       "x12", "x13", "x14", "x15", "x16", "x17", "cc", "memory");
   context->psciFeatures = static_cast<uint32_t> (x0);
   if (!daliPsciFeatureSupported (context->psciFeatures)) { return; }
   x0 = 0xC4000012;
-  x1 = 0;
+  // Match the stock module's sign extension of its 32-bit vendor/reset type.
+  x1 = static_cast<uint64_t> (static_cast<int64_t> (static_cast<int32_t> (context->resetType)));
   x2 = 0;
   x3 = 0;
+  x4 = 0;
+  x5 = 0;
+  x6 = 0;
+  x7 = 0;
   __asm__ volatile ("mrs %0, daif\n\tmsr daifset, #3\n\tdsb sy"
                     : "=r" (daif) :: "memory");
-  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3) :
-                    : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3),
+                    "+r" (x4), "+r" (x5), "+r" (x6), "+r" (x7) :
+                    : "x8", "x9", "x10", "x11",
                       "x12", "x13", "x14", "x15", "x16", "x17", "cc", "memory");
   __asm__ volatile ("msr daif, %0" :: "r" (daif) : "memory");
   context->psciResult = static_cast<uint32_t> (x0);
@@ -157,8 +169,8 @@ static __attribute__((noinline)) void waitForManualRecovery(IOMemoryMap *console
   OSSharedPtr<IOMemoryMap> gm (gd->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
   OSSharedPtr<IOMemoryMap> wm (wd->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
   if (!gm || !wm) { return; }
-  RecoveryContext pins = {static_cast<uintptr_t> (gm->getVirtualAddress ()), console, token, 0, 0};
-  RecoveryContext watchdog = {static_cast<uintptr_t> (wm->getVirtualAddress ()), console, token, 0, 0};
+  RecoveryContext pins = {static_cast<uintptr_t> (gm->getVirtualAddress ()), console, token, 0, 0, 0};
+  RecoveryContext watchdog = {static_cast<uintptr_t> (wm->getVirtualAddress ()), console, token, 0, 0, 0};
   const uint32_t mode = (recoveryRead (&pins, 0x370) >> 16) & 15;
   if (mode > 1 || (recoveryRead (&pins, 0x10) & (1U << 28)) ||
       recoveryRead (&watchdog, 0) == UINT32_MAX || (recoveryRead (&watchdog, 0) & 1)) {
@@ -190,7 +202,7 @@ static bool recoveryRecord(void *opaque, const char *stage, uint32_t marker, uin
   char *at = line + sizeof ("DALI-RESET: run=") - 1;
   char *end = line + sizeof (line) - 2;
   at = appendText (at, end, context->token);
-  at = appendText (at, end, " method=psci-system-reset2 stage=");
+  at = appendText (at, end, " method=psci-aee-reset2 stage=");
   at = appendText (at, end, stage);
   at = appendText (at, end, " marker=0x");
   at = appendUnsigned (at, end, marker, 16);
@@ -226,20 +238,25 @@ static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, co
   }
   auto *resource = OSDynamicCast (OSData, entry->getProperty ("recovery-rgu"));
   auto *reboot = OSDynamicCast (OSData, entry->getProperty ("recovery-reboot-mode"));
+  auto *aee = OSDynamicCast (OSData, entry->getProperty ("recovery-aee-reset-type"));
+  uint32_t resetType = 0;
+  if (aee != nullptr && aee->getLength () == sizeof (resetType)) {
+    memcpy (&resetType, aee->getBytesNoCopy (), sizeof (resetType));
+  }
   DaliRecoveryContract contract = {};
   if (resource != nullptr && resource->getLength () == 2 * sizeof (uint64_t) &&
       reboot != nullptr && reboot->getLength () == 3 * sizeof (uint32_t)) {
     contract = decodeRecoveryContract (resource->getBytesNoCopy (), reboot->getBytesNoCopy ());
   }
   entry->release ();
-  if (!daliRecoveryContractValid (contract)) { return; }
+  if (!daliRecoveryContractValid (contract) || resetType != 0x80000201U) { return; }
   OSSharedPtr<IOMemoryDescriptor> descriptor (
       IOMemoryDescriptor::withPhysicalAddress (contract.base, contract.size, kIODirectionInOut), OSNoRetain);
   if (!descriptor) { return; }
   OSSharedPtr<IOMemoryMap> mapping (descriptor->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
   if (!mapping) { return; }
   RecoveryContext context = {static_cast<uintptr_t> (mapping->getVirtualAddress ()), console, token,
-                             UINT32_MAX, UINT32_MAX};
+                             UINT32_MAX, UINT32_MAX, resetType};
   DaliRecoveryOps ops = {&context, recoveryRead, recoveryFence, recoveryRecord, recoverySystemReset};
   IODelay (1000000); // Bounded interval after the completed checkpoint record.
   if (daliIssueSystemReset (ops)) {
