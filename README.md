@@ -27,6 +27,17 @@ on. Each hardware cycle builds a private payload with a unique XNU log token.
 The MT6991 watchdog interval is at most 31 seconds; the 120-second default is
 the host's fastboot wait deadline.
 
+The pinned firmware adds an FDT-derived conventional-memory region for
+DarwinBoot's 256 MiB contiguous window. Static reservations, protected regions,
+loaded firmware and runtime boot data are excluded; size-only pools receive
+excluded placements respecting their allocation constraints. The initial
+diagnostic heap remains 128 MiB. A separate 60-second UEFI application timer
+provides a warm-reset fallback while Boot Services remain active. Recovery from
+an XNU freeze after ExitBootServices still depends on the hardware watchdog and
+requires hardware qualification. The last hardware cycle reached the loader
+but returned Out of Resources before this memory extension; no Dali XNU pass
+has been claimed.
+
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
 keeps the prior UEFI-only test menu for firmware checks without an XNU artifact.
