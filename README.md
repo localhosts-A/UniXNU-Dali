@@ -5,6 +5,9 @@ The source profile now includes mockfs. Its original BCM2837 development
 configuration has no Image4/AMFI provider, so trust-cache runtime initialization
 stays disabled: enabling it panics before platform start. The one-entry own
 test trust cache is a loader input; its runtime trust membership is unverified.
+The profile enables the existing native ARM PAN handling for user-memory copies;
+the source A53 configuration otherwise leaves those accesses unbracketed on
+MT6991 and QEMU A710. Actual user execution still requires the QEMU/hardware gates.
 `dali-pid1=1 dali-auto-fastboot=0` selects continuation after
 the platform checkpoint, retaining the single-CPU early diagnostic sink. The
 existing early-boot menu remains the hardware default until RAM-root packaging
