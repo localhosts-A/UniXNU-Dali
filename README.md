@@ -34,9 +34,10 @@ excluded placements respecting their allocation constraints. The initial
 diagnostic heap remains 128 MiB. A separate 60-second UEFI application timer
 provides a warm-reset fallback while Boot Services remain active. Recovery from
 an XNU freeze after ExitBootServices still depends on the hardware watchdog and
-requires hardware qualification. The last hardware cycle reached the loader
-but returned Out of Resources before this memory extension; no Dali XNU pass
-has been claimed.
+requires hardware qualification. One cycle reached the loader and returned Out
+of Resources before the memory extension. The latest cycle retained only SEC
+entry/register records; its stop is unresolved. The pinned firmware now records
+direct early checkpoints to locate it. No Dali XNU pass has been claimed.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
