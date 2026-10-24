@@ -40,8 +40,11 @@ an XNU freeze after ExitBootServices still depends on the hardware watchdog and
 requires hardware qualification. One cycle reached the loader and returned Out
 of Resources before the memory extension. Trace v2 located the subsequent stop
 inside the static reserved-memory walk. The pinned firmware removes repeated
-parent searches there and records node progress/timer ticks; the underlying hang
-is not yet proven fixed. No Dali XNU pass has been claimed.
+parent searches there and records node progress/timer ticks. Hardware then
+completed memory selection and stopped during MMIO-node validation. The current
+pin validates/stops the inherited LK watchdog before memory scans and timestamps
+each probe; expiry as the cause remains unproven. The owner entered fastboot
+manually in that cycle. No Dali XNU pass has been claimed.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`

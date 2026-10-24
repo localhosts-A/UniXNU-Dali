@@ -657,11 +657,18 @@ def main():
                                      f"{restore_error}") from restore_error
             raise
 
-        # The device reached fastboot without a host-triggered reboot after the candidate boot.
-        print("Automatic fastboot detected; restoring original boot_b.", flush=True)
+        # USB re-enumeration cannot distinguish a device reset from owner keys.
+        # Automatic recovery still requires the matching firmware/XNU evidence.
+        print("Fastboot re-enumerated; restoring original boot_b (reset trigger not proven by USB).", flush=True)
         restore_android_safely(args.serial, args.fastboot_serial, backup, records, host_timeout)
         android = current_android(args.serial)
         hashes = compare_partition_hashes(args.serial, records)
+        write_json(cycle_dir / "recovery-verification.json", {
+            "android": android, "partition_hashes": hashes,
+            "all_partition_hashes_match": True,
+            "fastboot_reenumerated": auto_fastboot_seen,
+            "reset_trigger": "unverified",
+        })
         try:
             collected = collect_cycle(args, cycle_dir, require_xnu=True, run_token=run_token,
                                       watchdog_timeout=recovery["device_watchdog_timeout_seconds"])
