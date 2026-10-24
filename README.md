@@ -69,9 +69,20 @@ entry with Power at 5 seconds and entered fastboot manually; automatic menu
 timeout and fastboot recovery were not demonstrated. Android and all 18 backed
 partition hashes were restored. No Dali platform/GIC/timer pass has been claimed.
 
-The next source kernel adds bounded, stack-free entry markers. They preserve the
-live boot arguments and bootstrap registers and stop before MMU enable, because
-the persistent console is outside the initial kernel mappings:
+The following hardware cycle recorded every `X0`–`X6` marker and an automatic
+menu timeout. The owner used keys to return to fastboot; its last visible menu
+frame did not describe the actual execution stage. Android and all 18 partition
+hashes were restored. MMU enable and the C checkpoint remain unverified on Dali.
+
+The current source kernel extends the bounded entry markers with a bootstrap
+console mapping. It reuses the existing identity L2 table and requires both
+console blocks to be empty and the table to lie in the owned bootstrap pool.
+Only `[0xAEC00000, 0xAF000000)` within the verified ramoops reservation is added,
+as Device-nGnRnE with execution disabled. A conflict records `DALI:XM` and skips
+the extra sink. Generic machines skip it after the Dali DT guard. The mapping
+approach was cross-checked against the earlier
+[ios-sweet Dali port](https://github.com/localhosts-A/ios-sweet/tree/port/dali-mt6991),
+with its 16 KiB assumptions replaced by checked 4 KiB table traversal.
 
 | Marker | Last completed stage |
 | --- | --- |
@@ -82,6 +93,16 @@ the persistent console is outside the initial kernel mappings:
 | `DALI:X4` | Physical and kernel-virtual bootstrap tables populated |
 | `DALI:X5` | TCR, TTBR and MAIR setup |
 | `DALI:X6` | Ready to enable the MMU; enable itself is not yet proved |
+| `DALI:X7` | MMU enabled and bootstrap console accessible |
+| `DALI:X8` | Ready to return through the kernel-virtual entry bridge |
+| `DALI:X9` | Kernel-virtual entry bridge executed |
+
+Bounded `DALI:C0`–`DALI:C9` records then bracket C entry, pre-sign setup,
+relocation, platform setup, CPU topology/bootstrap, startup and CPU init. This
+sink ends before `arm_vm_init` can discard TTBR0; subsequent logging still
+requires the ordinary platform checkpoint. Local tests execute the exact mapper,
+MMU enable, high-VA return and C writer, including conflicting tables and invalid
+or full rings. Hardware qualification of these new stages is pending.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`

@@ -1,0 +1,247 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -466,7 +466,7 @@
+ 		/* x27/x28 are unused by the native cold bootstrap. x28 stays zero
+ 		 * on generic machines; it becomes the console PA only after the DT
+ 		 * guard. Preserve all bootstrap live registers, including x0. These
+-		 * markers stop before MMU enable: ramoops is outside bootstrap maps. */
++		 * post-MMU markers require the bounded console mapping below. */
+ 		.macro dali_early_mark stage
+ 		cbz x28, 995f
+ 		ldr w16, [x28]
+@@ -645,8 +645,8 @@
+ 	mov		sp, x0
+ 
+ 	// Load address to the C init routine into link register
+-	adrp	lr, EXT(arm_init)@page
+-	add		lr, lr, EXT(arm_init)@pageoff
++	adrp	lr, Ldali_arm_init_entry@page
++	add		lr, lr, Ldali_arm_init_entry@pageoff
+ 	add		lr, lr, x22							// Convert to KVA
+ 	sub		lr, lr, x23
+ 		dali_early_mark 3
+@@ -758,6 +758,51 @@
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
++
++	/* DALI_BOOTSTRAP_MAP_BEGIN
++	 * Reuse the existing V=P L2 page. Allocating another L2 for this L1
++	 * index would discard the kernel's identity mapping. Only the two empty
++	 * blocks entirely inside the verified ramoops reservation are added.
++	 * x28 is nonzero only after the bounded xiaomi,dali DT guard. */
++	cbz x28, 997f
++#if !defined(__ARM_16K_PG__)
++	and x16, x28, #(ARM_TT_L1_INDEX_MASK)
++	lsr x16, x16, #(ARM_TT_L1_SHIFT)
++	ldr x16, [x25, x16, lsl #TTE_SHIFT]
++	and x17, x16, #3
++	cmp x17, #3
++	b.ne 998f
++	and x16, x16, #(ARM_TTE_TABLE_MASK)
++	add x17, x25, #(2 * PGBYTES)
++	cmp x16, x17
++	b.lo 998f
++	add x17, x25, #(BOOTSTRAP_TABLE_BYTES >> 12), lsl #12
++	cmp x16, x17
++	b.hs 998f
++	and x17, x28, #(ARM_TT_L2_INDEX_MASK)
++	lsr x17, x17, #(ARM_TT_L2_SHIFT)
++	add x16, x16, x17, lsl #TTE_SHIFT
++	ldp x9, x10, [x16]
++	orr x9, x9, x10
++	cbnz x9, 998f
++	MOV64 x9, (ARM_TTE_VALID | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
++	and x10, x28, #(ARM_TTE_BLOCK_L2_MASK)
++	orr x9, x9, x10
++	str x9, [x16]
++	add x9, x9, #(ARM_TT_L2_SIZE >> 12), lsl #12
++	str x9, [x16, #8]
++	adrp x9, EXT(dali_bootstrap_console)@page
++	add x9, x9, EXT(dali_bootstrap_console)@pageoff
++	str x28, [x9]
++	dsb sy
++	b 997f
++#endif
++998:
++	/* Refuse conflicting/unknown tables; keep boot behavior without a sink. */
++	dali_early_mark (0x4d - 0x30)
++	mov x28, xzr
++997:
++	/* DALI_BOOTSTRAP_MAP_END */
+ 
+ 		dali_early_mark 4
+ 	b		common_start
+@@ -897,6 +942,10 @@
+ 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
+ #endif /* HAS_APPLE_PAC */
+ 
++	/* Complete TLB/I-cache maintenance before changing translation. */
++	dsb sy
++	isb
++
+ 	// Enable caches, MMU, ROP and JOP
+ 		cbnz x21, 996f
+ 		dali_early_mark 6
+@@ -904,6 +953,9 @@
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
++	cbnz x21, 996f
++	dali_early_mark 7
++996:
+ 
+ #if !VMAPPLE
+ 	MOV64   x1, SCTLR_EL1_DEFAULT
+@@ -969,8 +1021,14 @@
+ 	mov	lr, x21
+ #endif
+ 
++	dali_early_mark 8
+ 	// Return to arm_init()
+ 	ret
++
++Ldali_arm_init_entry:
++	/* Executed at KVA after the cold ret; x0 remains boot_args KVA. */
++	dali_early_mark 9
++	b EXT(arm_init)
+ 
+ Ltrampoline:
+ 	// Load VA of the trampoline
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -337,6 +337,9 @@
+ #endif /* __arm64 */
+ }
+ 
++extern void dali_bootstrap_log(const char *message);
++extern void dali_bootstrap_log_end(void);
++
+ /*
+  *		Routine:		arm_init
+  *		Function:		Runs on the boot CPU, once, on entry from iBoot.
+@@ -354,9 +357,12 @@
+ 	DTEntry chosen = NULL;
+ 	unsigned int dt_entry_size = 0;
+ 
++	dali_bootstrap_log("DALI:C0 arm_init entered\n");
+ 	arm_setup_pre_sign();
++	dali_bootstrap_log("DALI:C1 pre-sign complete\n");
+ 
+ 	arm_slide_rebase_and_sign_image();
++	dali_bootstrap_log("DALI:C2 relocation complete\n");
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
+@@ -370,7 +376,9 @@
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	dali_bootstrap_log("DALI:C3 platform expert complete\n");
+ 	boot_progress_init();
++	dali_bootstrap_log("DALI:C4 boot progress ready\n");
+ 
+ #if __arm64__
+ 	configure_timer_apple_regs();
+@@ -442,6 +450,7 @@
+ #endif
+ 
+ 	ml_parse_cpu_topology();
++	dali_bootstrap_log("DALI:C5 topology complete\n");
+ 
+ 
+ 	master_cpu = ml_get_boot_cpu_number();
+@@ -471,11 +480,13 @@
+ 	 */
+ 	thread->machine.preemption_count = 0;
+ 	cpu_bootstrap();
++	dali_bootstrap_log("DALI:C6 CPU bootstrap complete\n");
+ 
+ 	rtclock_early_init();
+ 
+ 	kernel_debug_string_early("kernel_startup_bootstrap");
+ 	kernel_startup_bootstrap();
++	dali_bootstrap_log("DALI:C7 startup bootstrap complete\n");
+ 
+ 	/*
+ 	 * Initialize the timer callout world
+@@ -483,6 +494,7 @@
+ 	timer_call_init();
+ 
+ 	cpu_init();
++	dali_bootstrap_log("DALI:C8 CPU init complete\n");
+ 
+ 	processor_bootstrap();
+ 
+@@ -531,6 +543,8 @@
+ 	__builtin_arm_wsr("pan", 1);
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
++	dali_bootstrap_log("DALI:C9 entering arm_vm_init; bootstrap sink ending\n");
++	dali_bootstrap_log_end();
+ 	boot_progress_stage("arm_vm_init enter");
+ 	arm_vm_init(xmaxmem, args);
+ 	boot_progress_stage("arm_vm_init returned");
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -62,6 +62,7 @@
+ osfmk/arm64/lowmem_vectors.c	standard
+ osfmk/arm64/sleh.c			standard
+ osfmk/arm64/start.s	optional nos_arm_asm config_pmap_ppl
++osfmk/arm64/dali_bootstrap_log.c standard
+ osfmk/arm64/pinst.s	optional nos_arm_asm
+ osfmk/arm64/cswitch.s	optional nos_arm_asm
+ osfmk/arm/machine_cpuid.c	standard
+diff --git a/osfmk/arm64/dali_bootstrap_log.c b/osfmk/arm64/dali_bootstrap_log.c
+new file mode 100644
+--- /dev/null
++++ b/osfmk/arm64/dali_bootstrap_log.c
+@@ -0,0 +1,48 @@
++/*
++ * Dali bootstrap-only persistent console. start.s publishes the base only
++ * after adding two Device-nGnRnE, PXN/UXN blocks to the existing TTBR0.
++ * No allocation, locks, formatters, per-CPU state or device register access.
++ * arm_init ends this sink before arm_vm_init can discard the identity map.
++ */
++extern volatile unsigned long dali_bootstrap_console;
++volatile unsigned long dali_bootstrap_console;
++void dali_bootstrap_log(const char *message);
++void dali_bootstrap_log_end(void);
++
++void
++dali_bootstrap_log(const char *message)
++{
++    const unsigned long base = dali_bootstrap_console;
++    if (!base) {
++        return;
++    }
++    volatile unsigned int *header = (volatile unsigned int *)base;
++    const unsigned int start = header[1];
++    if (header[0] != 0x43474244U || start != header[2] ||
++        start > 0x200000U - 12U) {
++        return;
++    }
++    const volatile unsigned char *text = (const volatile unsigned char *)message;
++    unsigned int length = 0;
++    while (length < 192U && text[length]) {
++        length++;
++    }
++    if (length == 192U || length > 0x200000U - 12U - start) {
++        return;
++    }
++    volatile unsigned char *data = (volatile unsigned char *)(base + 12U + start);
++    for (unsigned int index = 0; index < length; index++) {
++        data[index] = text[index];
++    }
++    __asm__ volatile("dsb sy" ::: "memory");
++    header[1] = start + length;
++    header[2] = start + length;
++    __asm__ volatile("dsb sy" ::: "memory");
++}
++
++void
++dali_bootstrap_log_end(void)
++{
++    dali_bootstrap_console = 0;
++    __asm__ volatile("dsb sy" ::: "memory");
++}
