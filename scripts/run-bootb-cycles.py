@@ -461,7 +461,7 @@ def collect_cycle(args, cycle_dir, *, require_xnu, run_token=None, watchdog_time
     command = [sys.executable, args.uefi / "tools/dali/collect.py", "--serial", args.serial,
                "--output", output]
     if require_xnu:
-        command += ["--require-xnu", "--require-fastboot-arm"]
+        command += ["--require-xnu", "--require-fastboot-arm", "--require-software-reset"]
     if run_token:
         command += ["--expected-run-token", run_token]
     if watchdog_timeout is not None:
@@ -678,8 +678,12 @@ def main():
             "cycle": number,
             "pass": auto_fastboot_seen and collected["new_boot_marker"] and collected["xnu"]["pass"] and
                     collected["recovery"]["auto_fastboot_armed"] and
-                    collected["recovery"]["timeout_matches_expected"],
-            "automatic_fastboot": auto_fastboot_seen,
+                    collected["recovery"]["timeout_matches_expected"] and
+                    collected["recovery"]["software_reset_requested"] and
+                    not collected["io"]["keypad_events"] and not collected["io"]["input_events"],
+            "fastboot_reenumerated": auto_fastboot_seen,
+            "automatic_fastboot": None,
+            "unattended_observation": "pending; USB and reset-request logs cannot exclude owner keys",
             "run_token": run_token,
             "candidate_sha256": image_manifest["sha256"],
             "android": android,
@@ -692,8 +696,9 @@ def main():
         write_json(cycle_dir / "cycle-result.json", result)
         results.append(result)
         if not result["pass"]:
-            raise CycleError(f"cycle {number} did not satisfy the XNU and automatic recovery checkpoints")
-        print(f"Cycle {number} PASS: XNU checkpoint, fastboot recovery, Android root, boot_b and all partition hashes.", flush=True)
+            raise CycleError(f"cycle {number} did not satisfy the XNU/reset/fastboot evidence gates or recorded operator keys")
+        print(f"Cycle {number} evidence PASS: XNU checkpoint, software reset request, fastboot re-enumeration, "
+              "Android root and all partition hashes; unattended observation remains required.", flush=True)
 
     summary = {"schema": 1, "device": "dali", "slot": "_b", "cycles": results,
                "backup_manifest": str(backup / "manifest.json")}

@@ -153,6 +153,23 @@ probe's budget. It also omits the budget in a separate run of the same kernel
 and requires the original fatal assertion as a negative control. Hardware
 acceptance and unattended fastboot recovery remain pending.
 
+The first hardware cycle with the corrected budget completed the actual XNU
+checkpoint: Darwin 23.6.0 / 10063.141.1, CPU/platform/GIC all 1, timer 1 and
+MPIDR 0x81000000. Android/root and all 18 original hashes were restored. The
+owner used keys, so this is an XNU success and does not count toward the three
+unattended recovery cycles.
+
+When the firmware recovery switch is enabled, packaging now forwards
+`dali-auto-fastboot=1`. After a successful checkpoint, DaliBootLog validates the
+FDT-derived RGU resource, verifies the existing bootloader marker and enabled
+watchdog, then requests the firmware's register-only software reset. It keeps
+the watchdog interval and mode bits and writes no boot-mode or storage field.
+The persistent `DALI-RESET` record precedes the SWRST write; a returned/refused
+request fails the evidence gate. Disabling recovery forwards zero and skips this
+path. Host gates require the matching reset record as well as XNU and Android
+restoration. USB enumeration alone does not prove an unattended cycle; owner
+observation must still exclude physical keys.
+
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
 keeps the prior UEFI-only test menu for firmware checks without an XNU artifact.

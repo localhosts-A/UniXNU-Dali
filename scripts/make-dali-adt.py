@@ -178,6 +178,10 @@ def main():
     ])
     boot_log = apple_node("dali-boot-log", [
         ("compatible", b"localhosts,dali-boot-log\0"),
+        # Absolute resources, deliberately separate from arm-io's GIC bus.
+        # All fields were checked against the live FDT above.
+        ("recovery-rgu", struct.pack("<2Q", *tree.reg("/watchdog@1c010000")[0])),
+        ("recovery-reboot-mode", struct.pack("<3I", 0x24, 0x0F, 3)),
     ])
     dram_base = memory[0][0]
     chosen = apple_node("chosen", [
