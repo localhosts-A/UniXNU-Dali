@@ -8,6 +8,7 @@
 #include <libkern/c++/OSData.h>
 #include <pexpert/pexpert.h>
 #include "DaliRecovery.h"
+#include "DaliManualRecovery.h"
 
 #if !defined(DALI_XNU_DARWIN) || !defined(DALI_XNU_BUILD)
 #error "DaliBootLog must be built with the pinned XNU version and build number"
@@ -117,6 +118,69 @@ static __attribute__((noinline)) void recoverySystemReset(void *opaque)
 static __attribute__((noinline)) void recoveryFence(void *)
 {
   __asm__ volatile ("dsb sy" ::: "memory");
+}
+
+static void manualWatchdogWrite(void *opaque, uint32_t offset, uint32_t value)
+{
+  auto *context = static_cast<RecoveryContext *> (opaque);
+  *reinterpret_cast<volatile uint32_t *> (context->rgu + offset) = value;
+}
+
+static bool manualRecord(IOMemoryMap *console, const char *token, const char *stage)
+{
+  char line[128] = "DALI-MANUAL: run=";
+  char *at = line + sizeof ("DALI-MANUAL: run=") - 1;
+  char *end = line + sizeof (line) - 2;
+  at = appendText (at, end, token);
+  at = appendText (at, end, " stage=");
+  at = appendText (at, end, stage);
+  *at++ = '\n';
+  return appendRamoops (console, line, static_cast<size_t> (at - line));
+}
+
+static __attribute__((noinline)) void waitForManualRecovery(IOMemoryMap *console, const char *token)
+{
+  IORegistryEntry *entry = IORegistryEntry::fromPath ("/arm-io/dali-boot-log", gIODTPlane);
+  if (entry == nullptr) { return; }
+  auto *resource = OSDynamicCast (OSData, entry->getProperty ("manual-recovery-gpio"));
+  uint64_t gpio[2] = {};
+  if (resource != nullptr && resource->getLength () == sizeof (gpio)) {
+    memcpy (gpio, resource->getBytesNoCopy (), sizeof (gpio));
+  }
+  entry->release ();
+  if (gpio[0] != 0x1002D000 || gpio[1] != 0x1000) { return; }
+  OSSharedPtr<IOMemoryDescriptor> gd (
+      IOMemoryDescriptor::withPhysicalAddress (gpio[0], gpio[1], kIODirectionInOut), OSNoRetain);
+  OSSharedPtr<IOMemoryDescriptor> wd (
+      IOMemoryDescriptor::withPhysicalAddress (0x1C010000, 0x1000, kIODirectionInOut), OSNoRetain);
+  if (!gd || !wd) { return; }
+  OSSharedPtr<IOMemoryMap> gm (gd->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
+  OSSharedPtr<IOMemoryMap> wm (wd->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
+  if (!gm || !wm) { return; }
+  RecoveryContext pins = {static_cast<uintptr_t> (gm->getVirtualAddress ()), console, token, 0, 0};
+  RecoveryContext watchdog = {static_cast<uintptr_t> (wm->getVirtualAddress ()), console, token, 0, 0};
+  const uint32_t mode = (recoveryRead (&pins, 0x370) >> 16) & 15;
+  if (mode > 1 || (recoveryRead (&pins, 0x10) & (1U << 28)) ||
+      recoveryRead (&watchdog, 0) == UINT32_MAX || (recoveryRead (&watchdog, 0) & 1)) {
+    manualRecord (console, token, "state-refused");
+    return;
+  }
+  // No timer or reset is armed during this wait. GPIO60 is sampled read-only;
+  // it is the physically calibrated Volume Up input inherited from LK.
+  if (!manualRecord (console, token, "waiting-for-volume-up")) { return; }
+  DaliManualKey key;
+  for (;;) {
+    IODelay (10000);
+    if (!daliManualKeySample (key, (recoveryRead (&pins, 0x210) & (1U << 28)) == 0)) { continue; }
+    if (!manualRecord (console, token, "volume-up-requested-watchdog-2s")) { return; }
+    recoveryFence (nullptr);
+    DaliManualWdtOps ops = {&watchdog, recoveryRead, manualWatchdogWrite, recoveryFence};
+    const bool armed = daliArmManualWatchdog (ops);
+    manualRecord (console, token, armed ? "watchdog-armed-2s" : "watchdog-refused");
+    recoveryFence (nullptr);
+    // Do not reload or retry. Keep Volume Down held to select LK fastboot.
+    for (;;) { __asm__ volatile ("wfe"); }
+  }
 }
 
 static bool recoveryRecord(void *opaque, const char *stage, uint32_t marker, uint32_t mode)
@@ -251,6 +315,7 @@ public:
     unsigned autoFastboot = 0;
     PE_parse_boot_argn ("dali-auto-fastboot", &autoFastboot, sizeof (autoFastboot));
     if (passed && checkpointSaved && autoFastboot == 1) { recoverToFastboot (mConsole.get (), runToken); }
+    if (passed && checkpointSaved && autoFastboot == 0) { waitForManualRecovery (mConsole.get (), runToken); }
     return true;
   }
 };

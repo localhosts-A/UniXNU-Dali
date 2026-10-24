@@ -164,6 +164,10 @@ def main():
                 tree.cells("/watchdog@1c010000/reboot-mode", "mask") != (0x0F,) or
                 tree.cells("/watchdog@1c010000/reboot-mode", "mode-bootloader") != (0x03,)):
             raise ValueError("runtime reboot-mode watchdog contract differs")
+        if (tree.reg("/soc/pinctrl@1002d000")[:1] != [(0x1002D000, 0x1000)] or
+                tree.cells("/gpio-keys/volumedown", "gpios") !=
+                (*tree.cells("/soc/pinctrl@1002d000", "phandle"), 60, 1)):
+            raise ValueError("runtime GPIO60 manual recovery contract differs")
     except (OSError, ValueError, KeyError, struct.error) as error:
         raise SystemExit(f"Dali FDT validation failed: {error}") from None
 
@@ -182,6 +186,7 @@ def main():
         # All fields were checked against the live FDT above.
         ("recovery-rgu", struct.pack("<2Q", *tree.reg("/watchdog@1c010000")[0])),
         ("recovery-reboot-mode", struct.pack("<3I", 0x24, 0x0F, 3)),
+        ("manual-recovery-gpio", struct.pack("<2Q", 0x1002D000, 0x1000)),
     ])
     dram_base = memory[0][0]
     chosen = apple_node("chosen", [

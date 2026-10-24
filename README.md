@@ -188,6 +188,15 @@ acceptance. Android reported PSCI 1.1. The current diagnostic queries RESET2
 support before requesting architectural warm reset (type 0, cookie 0); a returned
 call records feature/result status. Warm-reset retention remains unverified.
 
+For the current ramoops diagnostic, build with `DALI_AUTO_FASTBOOT=false`.
+This disables the firmware recovery watchdog/deadline and the XNU PSCI request.
+After a saved XNU checkpoint, the kernel waits without arming a reset. Release
+Volume Up first, then hold Volume Down and hold Volume Up for 0.7 seconds to
+request a two-second watchdog reset; keep Volume Down held for LK fastboot.
+GPIO60 is sampled without changing its mux or direction. This manual recovery
+path is intended to avoid the power-key/PSCI resets that lost ramoops, and still
+requires hardware qualification. It is not an unattended acceptance cycle.
+
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
 keeps the prior UEFI-only test menu for firmware checks without an XNU artifact.
