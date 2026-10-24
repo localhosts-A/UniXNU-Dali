@@ -16,7 +16,9 @@ spec.loader.exec_module(runner)
 class HardwareEvidenceTests(unittest.TestCase):
     def test_pending_restore_uses_original_restorer_and_refuses_changed_identity(self):
         with tempfile.TemporaryDirectory() as temp:
-            run = Path(temp)
+            # macOS /var and /tmp aliases resolve through /private. The writer
+            # stores canonical backup paths; match that production convention.
+            run = Path(temp).resolve()
             backup = run / 'backup'
             state = {'token': 'a' * 32, 'serial': 'dali-serial', 'fastboot_serial': 'dali-serial',
                      'backup': str(backup), 'original_boot_b_sha256': 'b' * 64,
