@@ -110,19 +110,28 @@ timebase setup. Before removing TTBR0, it installs two empty Device blocks in th
 final TTBR1 low-globals/kernel gap. It checks the gap, table type, allocation
 bounds, both empty entries and exclusion from the managed write-back physical
 aperture, then moves the sink to that alias. A failed check
-disables the sink without replacing any existing mapping. It also ends before
-`machine_startup`; the ordinary platform/GIC/timer checkpoint is still required.
+disables the sink without replacing any existing mapping. The current version
+continues through `machine_startup` and the existing kernel bootstrap stage logs.
+Each bounded write and shutdown saves, masks local IRQ/FIQ and restores DAIF.
+This provides single-CPU ownership only. When `DaliBootLog` first enters, it
+records `DL` and shuts down the early sink before using its ordinary mapping.
+The platform/GIC/timer checkpoint is still required.
 Local tests execute the exact mappers, MMU enable, high-VA return, final TTBR1
 switch, TTBR0 removal and C writer, including conflicting tables, insufficient
-VA gaps and invalid or full rings. Hardware qualification of the final alias is
-pending.
+VA gaps, invalid or full rings, overlong records and DAIF restoration on success
+and rejection paths.
 
 The next hardware cycle reached `V6` (final tables prepared), then safely refused
 the alias because the first implementation used `VM_MIN_KERNEL_ADDRESS`, which
 is 64 GiB below low globals in this XNU ABI. The mapper now uses
 `LOW_GLOBAL_BASE_ADDRESS`; the instruction fixture uses both distinct native
 constants. That cycle required manual fastboot and restored Android/root and all
-18 original partition hashes. The corrected alias still needs hardware testing.
+18 original partition hashes. The corrected alias was then verified on hardware:
+all `V0`–`VD` and `CA`–`CI` records appeared, proving final-table switch, TTBR0
+removal, pmap/VM return, serial, platform and CPU timebase initialization.
+Android/root and all 18 hashes were restored again after manual fastboot. The
+next diagnostic continues through `machine_conf`, kernel bootstrap and IOKit;
+those later stages remain unverified.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`

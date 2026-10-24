@@ -15,6 +15,8 @@ extern volatile uint32_t armdt_platform_configured;
 extern volatile uint32_t armcpu_registered;
 extern volatile uint32_t armcpu_gic_ready;
 extern volatile uint64_t armcpu_timer_interrupts;
+void dali_bootstrap_log(const char *message);
+void dali_bootstrap_log_end(void);
 }
 
 static constexpr uintptr_t kConsolePhysical = 0xAEC0F000;
@@ -70,6 +72,10 @@ class DaliBootLog : public IOService {
 public:
   bool start (IOService *provider) override
   {
+    // Dali exposes one boot CPU only. Closing the locally IRQ/FIQ-masked early
+    // writer here hands ownership over before this service accesses the ring.
+    dali_bootstrap_log("DALI:DL IOKit persistent logger entered; early sink ending\n");
+    dali_bootstrap_log_end();
     if (!IOService::start (provider)) { return false; }
     OSSharedPtr<IOMemoryDescriptor> descriptor (
         IOMemoryDescriptor::withPhysicalAddress (kConsolePhysical, kConsoleBytes, kIODirectionInOut), OSNoRetain);

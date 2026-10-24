@@ -50,6 +50,14 @@ class BootstrapConsoleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="dali-bootstrap-console-") as directory:
             work = Path(directory)
             (work / "writer.c").write_text(writer)
+            # Compile the final production writer, after both follow-up patches.
+            for filename in ("zzzzz-dali-vm-console.patch", "zzzzzz-dali-startup-console.patch"):
+                text = (ROOT / "patches/xnu" / filename).read_text()
+                marker = "--- a/osfmk/arm64/dali_bootstrap_log.c\n"
+                section = marker + text.split(marker, 1)[1]
+                section = re.split(r"\n(?:--- a/|diff --git )", section, maxsplit=1)[0] + "\n"
+                subprocess.run(["patch", "--batch", "--fuzz=0", str(work / "writer.c")],
+                               input=section, text=True, check=True, stdout=subprocess.PIPE)
             assembly = r'''
 #define PGBYTES 4096
 #define BOOTSTRAP_TABLE_BYTES 65536
@@ -82,6 +90,13 @@ class BootstrapConsoleTests(unittest.TestCase):
   movk \register, #(((\value) >> 16) & 0xffff), lsl #16
   movk \register, #(((\value) >> 32) & 0xffff), lsl #32
   movk \register, #(((\value) >> 48) & 0xffff), lsl #48
+.endm
+.macro check_daif
+  ldr x16, =0xfffffff008700020
+  ldr x16, [x16]
+  mrs x17, daif
+  cmp x16, x17
+  b.ne failed
 .endm
 .text
 .global _start
@@ -152,9 +167,25 @@ el1:
   ret
 high_entry:
   dali_early_mark 9
+  ldr x16, =0x91f00000
+  ldr x16, [x16, #32]
+  msr daif, x16
   adrp x0, message
   add x0, x0, :lo12:message
   bl dali_bootstrap_log
+  check_daif
+  adrp x0, stage_message
+  add x0, x0, :lo12:stage_message
+  bl dali_bootstrap_stage
+  check_daif
+  adrp x0, overlong
+  add x0, x0, :lo12:overlong
+  bl dali_bootstrap_log
+  check_daif
+  adrp x0, overlong
+  add x0, x0, :lo12:overlong
+  bl dali_bootstrap_stage
+  check_daif
   ldr x16, =0x91f00000
   ldr x0, [x16, #24]
   cbz x0, end_bootstrap
@@ -171,6 +202,7 @@ high_entry:
   adrp x0, final_live
   add x0, x0, :lo12:final_live
   bl dali_bootstrap_log
+  check_daif
   ldr x9, =0x91006000
   msr ttbr0_el1, x9
   isb
@@ -180,7 +212,9 @@ high_entry:
   adrp x0, ttbr0_off
   add x0, x0, :lo12:ttbr0_off
   bl dali_bootstrap_log
+  check_daif
   bl dali_bootstrap_log_end
+  check_daif
   adrp x0, poison
   add x0, x0, :lo12:poison
   bl dali_bootstrap_log
@@ -189,6 +223,7 @@ high_entry:
   b complete
 end_bootstrap:
   bl dali_bootstrap_log_end
+  check_daif
   adrp x0, poison
   add x0, x0, :lo12:poison
   bl dali_bootstrap_log
@@ -212,6 +247,12 @@ failed:
 .ltorg
 .section .rodata
 message: .asciz "DALI:C0 fixture reached\n"
+stage_message: .asciz "fixture stage"
+overlong:
+.rept 192
+.byte 120
+.endr
+.byte 0
 poison: .asciz "MUST NOT WRITE AFTER BOOTSTRAP END\n"
 final_live: .asciz "DALI:V8 fixture final TTBR1 live\n"
 ttbr0_off: .asciz "DALI:V9 fixture TTBR0 removed\n"
@@ -294,11 +335,12 @@ vm_offset_t fixture_final_map(unsigned long mode) {
                     if negative_map:
                         suffix = b"DALI:XM\n"
                     elif case == "mapped":
-                        suffix = b"DALI:X7\nDALI:X8\nDALI:X9\nDALI:C0 fixture reached\n"
+                        suffix = b"DALI:X7\nDALI:X8\nDALI:X9\nDALI:C0 fixture reached\nDALI:K fixture stage\n"
                     elif case == "almost-full-ring":
                         suffix = b"DALI:X7\nDALI:X8\nDALI:X9\n"
                     elif case.startswith("final-") and case != "final-non-dali":
                         suffix = b"DALI:X7\nDALI:X8\nDALI:X9\nDALI:C0 fixture reached\n"
+                        suffix += b"DALI:K fixture stage\n"
                         if case == "final-mapped":
                             suffix += b"DALI:V8 fixture final TTBR1 live\nDALI:V9 fixture TTBR0 removed\n"
                         else:
@@ -309,11 +351,12 @@ vm_offset_t fixture_final_map(unsigned long mode) {
                                          initial_start + len(suffix), initial_start + len(suffix))
                     (work / "tables.bin").write_bytes(tables)
                     (work / "ring.bin").write_bytes(ring)
-                    (work / "mode.bin").write_bytes(struct.pack("<QQQQ", 0,
+                    (work / "mode.bin").write_bytes(struct.pack("<QQQQQ", 0,
                         0 if case in ("non-dali", "final-non-dali") else console,
                         0 if negative_map else 1,
                         ({"final-tight-gap": 2, "final-aperture-overlap": 3}.get(case, 1))
-                        if case.startswith("final-") else 0))
+                        if case.startswith("final-") else 0,
+                        (0x3c0, 0x100, 0x280, 0)[cases.index(case) % 4]))
                     qmp_path = work / "qmp"
                     qmp_path.unlink(missing_ok=True)
                     command = ["qemu-system-aarch64", "-M", "virt,virtualization=on", "-cpu", "cortex-a76",

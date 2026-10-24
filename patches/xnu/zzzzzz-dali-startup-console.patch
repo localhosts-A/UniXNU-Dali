@@ -1,0 +1,182 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -688,8 +688,7 @@
+ 	 * against string vulnerabilities
+ 	 */
+ 	__stack_chk_guard &= ~(0xFFULL << 8);
+-	dali_bootstrap_log("DALI:CI entering machine_startup; early sink ending\n");
+-	dali_bootstrap_log_end();
++	dali_bootstrap_log("DALI:CI entering machine_startup\n");
+ 	machine_startup(args);
+ }
+ 
+--- a/osfmk/arm64/dali_bootstrap_log.c
++++ b/osfmk/arm64/dali_bootstrap_log.c
+@@ -3,25 +3,30 @@
+  * after adding two Device-nGnRnE, PXN/UXN blocks to the existing TTBR0.
+  * No allocation, locks, formatters, per-CPU state or device register access.
+  * arm_vm_init moves this sink to checked final TTBR1 blocks before removing
+- * TTBR0. It is disabled on any mapping conflict and before machine_startup.
++ * TTBR0. It is disabled on mapping conflict or when DaliBootLog takes over.
++ * This is a single-CPU diagnostic: DAIF excludes local IRQ/FIQ preemption,
++ * not other CPUs. No early sink calls are installed in interrupt handlers.
+  */
+ extern volatile unsigned long dali_bootstrap_console;
+ volatile unsigned long dali_bootstrap_console;
+ void dali_bootstrap_log(const char *message);
+ void dali_bootstrap_log_end(void);
++void dali_bootstrap_stage(const char *message);
+ 
+ void
+ dali_bootstrap_log(const char *message)
+ {
++    unsigned long daif;
++    __asm__ volatile("mrs %0, daif\n\tmsr daifset, #3" : "=r" (daif) :: "memory");
+     const unsigned long base = dali_bootstrap_console;
+     if (!base) {
+-        return;
++        goto out;
+     }
+     volatile unsigned int *header = (volatile unsigned int *)base;
+     const unsigned int start = header[1];
+     if (header[0] != 0x43474244U || start != header[2] ||
+         start > 0x200000U - 12U) {
+-        return;
++        goto out;
+     }
+     const volatile unsigned char *text = (const volatile unsigned char *)message;
+     unsigned int length = 0;
+@@ -29,7 +34,7 @@
+         length++;
+     }
+     if (length == 192U || length > 0x200000U - 12U - start) {
+-        return;
++        goto out;
+     }
+     volatile unsigned char *data = (volatile unsigned char *)(base + 12U + start);
+     for (unsigned int index = 0; index < length; index++) {
+@@ -39,11 +44,39 @@
+     header[1] = start + length;
+     header[2] = start + length;
+     __asm__ volatile("dsb sy" ::: "memory");
++out:
++    __asm__ volatile("msr daif, %0" :: "r" (daif) : "memory");
+ }
+ 
+ void
+ dali_bootstrap_log_end(void)
+ {
++    unsigned long daif;
++    __asm__ volatile("mrs %0, daif\n\tmsr daifset, #3" : "=r" (daif) :: "memory");
+     dali_bootstrap_console = 0;
+     __asm__ volatile("dsb sy" ::: "memory");
++    __asm__ volatile("msr daif, %0" :: "r" (daif) : "memory");
+ }
++
++void
++dali_bootstrap_stage(const char *message)
++{
++    if (!dali_bootstrap_console) {
++        return;
++    }
++    char line[192];
++    const char prefix[] = "DALI:K ";
++    for (unsigned int index = 0; index < 7; index++) {
++        line[index] = prefix[index];
++    }
++    unsigned int at = 7, index = 0;
++    while (at < sizeof(line) - 2 && message[index]) {
++        line[at++] = message[index++];
++    }
++    if (message[index]) {
++        return;
++    }
++    line[at++] = '\n';
++    line[at] = 0;
++    dali_bootstrap_log(line);
++}
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -496,9 +496,12 @@
+ #endif
+ }
+ 
++extern void dali_bootstrap_log(const char *message);
++
+ void
+ machine_startup(__unused boot_args * args)
+ {
++	dali_bootstrap_log("DALI:S0 machine_startup entered\n");
+ #if defined(HAS_IPI) && (DEVELOPMENT || DEBUG)
+ 	if (!PE_parse_boot_argn("fastipi", &gFastIPI, sizeof(gFastIPI))) {
+ 		gFastIPI = 1;
+@@ -506,7 +509,9 @@
+ #endif /* defined(HAS_IPI) && (DEVELOPMENT || DEBUG)*/
+ 
+ 
++	dali_bootstrap_log("DALI:S1 calling machine_conf\n");
+ 	machine_conf();
++	dali_bootstrap_log("DALI:S2 machine_conf returned\n");
+ 
+ 
+ 	/*
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -219,9 +219,17 @@
+ 
+ TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
+ 
++#if defined(__arm64__)
++extern void dali_bootstrap_log(const char *message);
++extern void dali_bootstrap_stage(const char *message);
++#endif
++
+ static inline void
+ kernel_bootstrap_log(const char *message)
+ {
++#if defined(__arm64__)
++	dali_bootstrap_stage(message);
++#endif
+ 	boot_progress_stage(message);
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+@@ -233,6 +241,9 @@
+ static inline void
+ kernel_bootstrap_thread_log(const char *message)
+ {
++#if defined(__arm64__)
++	dali_bootstrap_stage(message);
++#endif
+ 	boot_progress_stage(message);
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+@@ -431,7 +442,13 @@
+ 
+ 	code_signing_config_t cs_config;
+ 
++#if defined(__arm64__)
++	dali_bootstrap_log("DALI:S3 kernel_bootstrap entered\n");
++#endif
+ 	printf("%s\n", version); /* log kernel version */
++#if defined(__arm64__)
++	dali_bootstrap_log("DALI:S4 kernel version printed\n");
++#endif
+ 
+ 	scale_setup();
+ 
+@@ -698,6 +715,7 @@
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_init_iokit");
+ 	PE_init_iokit();
++	kernel_bootstrap_log("PE_init_iokit returned");
+ #endif
+ 
+ 	assert(ml_get_interrupts_enabled() == FALSE);
+@@ -799,6 +817,7 @@
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_lockdown_iokit");
+ 	PE_lockdown_iokit();
++	kernel_bootstrap_log("PE_lockdown_iokit returned");
+ #endif
+ 	/*
+ 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
