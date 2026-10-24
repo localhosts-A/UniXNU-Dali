@@ -178,6 +178,15 @@ jobs:
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu"
 
+      - name: Upload bounded QEMU diagnostics after failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-xnu-qemu-diagnostics
+          path: ${{ runner.temp }}/dali-xnu-qemu
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Validate and stage the one-day kernel artifact
         id: artifact
         shell: bash

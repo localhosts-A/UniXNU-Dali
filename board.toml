@@ -32,6 +32,7 @@ defconfig = "dali_defconfig"
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
+  "build-libpthread-kernel.py",
   "build-dali-xnu-platform.py",
 ]
 

@@ -47,6 +47,11 @@ def main():
             raise SystemExit(f"{name}: native XNU initialization or bounded handoff failed")
         if report.get("pc") != report.get("function_return_target"):
             raise SystemExit(f"{name}: QEMU stopped before returning from the selected XNU checkpoint")
+        pthread = report.get("pthread_globals", {})
+        if int(pthread.get("_source_pthread_status", -1)) != 0 or \
+                int(pthread.get("_pthread_functions", 0)) == 0 or \
+                int(pthread.get("_pthread519_pthread_kern", 0)) == 0:
+            raise SystemExit(f"{name}: the real source pthread provider was not registered before this checkpoint")
 
     platform = reports["platform"]
     if int(platform.get("x0", "0"), 16) != 1:

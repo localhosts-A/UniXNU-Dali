@@ -49,9 +49,22 @@ class BoardArchiveTests(unittest.TestCase):
         archives = board['kernel']['archives']
         plain = archives.index('build-corecrypto-14.py')
         namespaced = archives.index('build-corecrypto-14.py --namespace')
+        pthread = archives.index('build-libpthread-kernel.py')
         platform = archives.index('build-dali-xnu-platform.py')
         self.assertLess(plain, namespaced)
-        self.assertLess(namespaced, platform)
+        self.assertLess(namespaced, pthread)
+        self.assertLess(pthread, platform)
+
+    def test_dali_builds_and_enables_the_real_source_pthread_provider(self):
+        config = {
+            line.split('=', 1)[0]: line.split('=', 1)[1]
+            for line in (ROOT / 'configs/dali_defconfig').read_text().splitlines()
+            if '=' in line and not line.startswith('#')
+        }
+        self.assertEqual(config.get('CONFIG_XNU_SOURCE_PTHREAD'), 'y')
+        self.assertEqual(config.get('CONFIG_XNU_SOURCE_CORECRYPTO14'), 'y')
+        archives = tomllib.loads((ROOT / 'board.toml').read_text())['kernel']['archives']
+        self.assertIn('build-libpthread-kernel.py', archives)
 
 
 if __name__ == '__main__':
