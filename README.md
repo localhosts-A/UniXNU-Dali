@@ -72,7 +72,11 @@ partition hashes were restored. No Dali platform/GIC/timer pass has been claimed
 The following hardware cycle recorded every `X0`–`X6` marker and an automatic
 menu timeout. The owner used keys to return to fastboot; its last visible menu
 frame did not describe the actual execution stage. Android and all 18 partition
-hashes were restored. MMU enable and the C checkpoint remain unverified on Dali.
+hashes were restored. The next cycle proved every `X0`–`X9` and `C0`–`C9`
+stage, including MMU enable, the high-VA C entry and CPU bootstrap. The owner
+reported an unattended reboot while the display retained the menu countdown;
+automatic fastboot was not reached. Android/root and all 18 partition hashes
+were restored after manual fastboot. The exact reset cause remains unproved.
 
 The current source kernel extends the bounded entry markers with a bootstrap
 console mapping. It reuses the existing identity L2 table and requires both
@@ -99,10 +103,19 @@ with its 16 KiB assumptions replaced by checked 4 KiB table traversal.
 
 Bounded `DALI:C0`–`DALI:C9` records then bracket C entry, pre-sign setup,
 relocation, platform setup, CPU topology/bootstrap, startup and CPU init. This
-sink ends before `arm_vm_init` can discard TTBR0; subsequent logging still
-requires the ordinary platform checkpoint. Local tests execute the exact mapper,
-MMU enable, high-VA return and C writer, including conflicting tables and invalid
-or full rings. Hardware qualification of these new stages is pending.
+first hardware version ended its sink before `arm_vm_init`; the absence of later
+logs did not establish a stop inside that function. The current diagnostic adds
+`V0`–`VD` records through VM setup and `CA`–`CI` through serial, platform and CPU
+timebase setup. Before removing TTBR0, it installs two empty Device blocks in the
+final TTBR1 low-globals/kernel gap. It checks the gap, table type, allocation
+bounds, both empty entries and exclusion from the managed write-back physical
+aperture, then moves the sink to that alias. A failed check
+disables the sink without replacing any existing mapping. It also ends before
+`machine_startup`; the ordinary platform/GIC/timer checkpoint is still required.
+Local tests execute the exact mappers, MMU enable, high-VA return, final TTBR1
+switch, TTBR0 removal and C writer, including conflicting tables, insufficient
+VA gaps and invalid or full rings. Hardware qualification of the final alias is
+pending.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`

@@ -1,0 +1,225 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -543,10 +543,10 @@
+ 	__builtin_arm_wsr("pan", 1);
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
+-	dali_bootstrap_log("DALI:C9 entering arm_vm_init; bootstrap sink ending\n");
+-	dali_bootstrap_log_end();
++	dali_bootstrap_log("DALI:C9 entering arm_vm_init\n");
+ 	boot_progress_stage("arm_vm_init enter");
+ 	arm_vm_init(xmaxmem, args);
++	dali_bootstrap_log("DALI:CA arm_vm_init returned\n");
+ 	boot_progress_stage("arm_vm_init returned");
+ 
+ 	if (debug_boot_arg) {
+@@ -560,8 +560,11 @@
+ 	PE_consistent_debug_inherit();
+ 
+ 	/* Setup debugging output. */
++	dali_bootstrap_log("DALI:CB calling serial_init\n");
+ 	const unsigned int serial_exists = serial_init();
++	dali_bootstrap_log("DALI:CC serial_init returned\n");
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
++	dali_bootstrap_log("DALI:CD kprintf startup complete\n");
+ 	kprintf("kprintf initialized\n");
+ 
+ 	serialmode = 0;
+@@ -615,7 +618,9 @@
+ 
+ 	cpu_machine_idle_init(TRUE);
+ 
++	dali_bootstrap_log("DALI:CE calling platform initialization\n");
+ 	PE_init_platform(TRUE, &BootCpuData);
++	dali_bootstrap_log("DALI:CF platform initialization returned\n");
+ 
+ #if __arm64__
+ 	extern bool cpu_config_correct;
+@@ -631,7 +636,9 @@
+ 
+ #endif
+ 
++	dali_bootstrap_log("DALI:CG calling CPU timebase initialization\n");
+ 	cpu_timebase_init(TRUE);
++	dali_bootstrap_log("DALI:CH CPU timebase initialized\n");
+ 
+ #if KPERF
+ 	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
+@@ -681,6 +688,8 @@
+ 	 * against string vulnerabilities
+ 	 */
+ 	__stack_chk_guard &= ~(0xFFULL << 8);
++	dali_bootstrap_log("DALI:CI entering machine_startup; early sink ending\n");
++	dali_bootstrap_log_end();
+ 	machine_startup(args);
+ }
+ 
+--- a/osfmk/arm64/dali_bootstrap_log.c
++++ b/osfmk/arm64/dali_bootstrap_log.c
+@@ -1,8 +1,9 @@
+ /*
+- * Dali bootstrap-only persistent console. start.s publishes the base only
++ * Dali early persistent console. start.s publishes the base only
+  * after adding two Device-nGnRnE, PXN/UXN blocks to the existing TTBR0.
+  * No allocation, locks, formatters, per-CPU state or device register access.
+- * arm_init ends this sink before arm_vm_init can discard the identity map.
++ * arm_vm_init moves this sink to checked final TTBR1 blocks before removing
++ * TTBR0. It is disabled on any mapping conflict and before machine_startup.
+  */
+ extern volatile unsigned long dali_bootstrap_console;
+ volatile unsigned long dali_bootstrap_console;
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1817,6 +1817,62 @@
+ #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
+ #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
+ 
++extern volatile unsigned long dali_bootstrap_console;
++extern void dali_bootstrap_log(const char *message);
++extern void dali_bootstrap_log_end(void);
++
++/* DALI_FINAL_CONSOLE_MAP_BEGIN
++ * Reserve two empty 4 KiB-granule L2 blocks in the low-globals/kernel gap.
++ * This follows the earlier ios-sweet final-console mapping approach, with
++ * explicit type, allocation and gap checks. Never allocate or replace tables.
++ * Keep the same Device-nGnRnE attributes as the outgoing identity alias.
++ */
++static vm_offset_t
++dali_console_map_final(void)
++{
++	if (!dali_bootstrap_console) {
++		return 0;
++	}
++#if !defined(__ARM_16K_PG__) && !XNU_MONITOR && !__ARM_KERNEL_PROTECT__
++	const vm_map_address_t va = VM_MIN_KERNEL_ADDRESS + ARM_TT_L2_SIZE;
++	if (dali_bootstrap_console != 0xAEC0F000UL ||
++	    va + 2 * ARM_TT_L2_SIZE > gVirtBase ||
++	    (gPhysBase < 0xAF000000ULL && real_avail_end > 0xAEC00000ULL)) {
++		/* Never introduce a Device alias of the managed write-back aperture. */
++		goto unavailable;
++	}
++	tt_entry_t root = cpu_tte[(va & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT];
++	if ((root & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) !=
++	    (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE)) {
++		goto unavailable;
++	}
++	pmap_paddr_t table_pa = root & ARM_TTE_TABLE_MASK;
++	if (table_pa < gPhysBase || table_pa >= avail_start ||
++	    avail_start - table_pa < ARM_PGBYTES) {
++		goto unavailable;
++	}
++	tt_entry_t *table = (tt_entry_t *)phystokv(table_pa);
++	unsigned int index = (va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT;
++	if (index + 1 >= ARM_PGBYTES / sizeof(tt_entry_t) ||
++	    table[index] != ARM_TTE_EMPTY || table[index + 1] != ARM_TTE_EMPTY) {
++		goto unavailable;
++	}
++	const tt_entry_t flags = ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
++	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
++	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) |
++	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
++	table[index] = 0xAEC00000ULL | flags;
++	table[index + 1] = 0xAEE00000ULL | flags;
++	__asm__ volatile("dsb ishst" ::: "memory");
++	return va + 0xF000;
++unavailable:
++#endif
++	dali_bootstrap_log("DALI:VM final console unavailable; sink ending\n");
++	dali_bootstrap_log_end();
++	return 0;
++}
++/* DALI_FINAL_CONSOLE_MAP_END */
++
+ void
+ arm_vm_init(uint64_t memory_size, boot_args * args)
+ {
+@@ -1829,6 +1885,9 @@
+ 	uint64_t         mem_segments;
+ 	vm_offset_t      ptpage_vaddr;
+ 	vm_map_address_t dynamic_memory_begin;
++	vm_offset_t dali_final_console = 0;
++
++	dali_bootstrap_log("DALI:V0 arm_vm_init entered\n");
+ 
+ 	/*
+ 	 * Get the virtual and physical kernel-managed memory base from boot_args.
+@@ -1852,6 +1911,7 @@
+ 	gPhysSize = mem_size = ((gPhysBase + args->memSize) & ~PAGE_MASK) - gPhysBase;
+ 
+ 	mem_actual = args->memSizeActual ? args->memSizeActual : mem_size;
++	dali_bootstrap_log("DALI:V1 memory arguments accepted\n");
+ 
+ 	if ((memory_size != 0) && (mem_size > memory_size)) {
+ 		mem_size = memory_size;
+@@ -1918,6 +1978,7 @@
+ 		panic("Unsupported memory configuration %lx", mem_size);
+ 	}
+ 
++	dali_bootstrap_log("DALI:V2 memory layout complete\n");
+ 	boot_tte = (tt_entry_t *)&bootstrap_pagetables;
+ 	boot_ttep = kvtophys((vm_offset_t)boot_tte);
+ 
+@@ -1978,6 +2039,7 @@
+ 	 *   the so called physical aperture should be statically mapped
+ 	 */
+ 	init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, TRUE, ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
++	dali_bootstrap_log("DALI:V3 root and L2 tables allocated\n");
+ 
+ #if defined(ARM_LARGE_MEMORY)
+ 	/*
+@@ -2101,7 +2163,9 @@
+ 	vm_prelink_sdata = segPRELINKDATAB;
+ 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
+ 
++	dali_bootstrap_log("DALI:V4 Mach-O segments ready\n");
+ 	arm_vm_prot_init(args);
++	dali_bootstrap_log("DALI:V5 kernel protections ready\n");
+ 
+ 	/*
+ 	 * Initialize the page tables for the low globals:
+@@ -2147,8 +2211,15 @@
+ 
+ 	arm_set_user_tbi();
+ 
++	dali_bootstrap_log("DALI:V6 final tables ready\n");
++	dali_final_console = dali_console_map_final();
++	dali_bootstrap_log("DALI:V7 entering physmap initialization\n");
+ 	arm_vm_physmap_init(args);
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
++	/* The new TTBR1 is live; leave the identity alias before TTBR0 teardown. */
++	dali_bootstrap_console = dali_final_console;
++	__asm__ volatile("dsb sy" ::: "memory");
++	dali_bootstrap_log("DALI:V8 final TTBR1 console live\n");
+ 
+ #if XNU_MONITOR
+ 	ml_enable_monitor();
+@@ -2157,6 +2228,7 @@
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
+ 	flush_mmu_tlb();
++	dali_bootstrap_log("DALI:V9 TTBR0 removed; TLB flushed\n");
+ 	kva_active = TRUE;
+ 	// global table pointers may need to be different due to physical aperture remapping
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+@@ -2253,7 +2325,9 @@
+     }
+ #endif
+ #endif
++	dali_bootstrap_log("DALI:VA entering pmap_bootstrap\n");
+ 	pmap_bootstrap(dynamic_memory_begin);
++	dali_bootstrap_log("DALI:VB pmap_bootstrap returned\n");
+ 
+ 	disable_preemption();
+ 
+@@ -2377,9 +2451,11 @@
+ #if XNU_MONITOR
+ 	pmap_static_allocations_done();
+ #endif
++	dali_bootstrap_log("DALI:VC early I/O tables ready\n");
+ 	first_avail = avail_start;
+ 	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);
+ 	enable_preemption();
++	dali_bootstrap_log("DALI:VD arm_vm_init complete\n");
+ }
+ 
+ /*

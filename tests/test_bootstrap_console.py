@@ -35,12 +35,18 @@ class BootstrapConsoleTests(unittest.TestCase):
         mapping = mapping.replace("EXT(dali_bootstrap_console)@pageoff", ":lo12:dali_bootstrap_console")
         mapping = mapping.replace("EXT(dali_bootstrap_console)@page", "dali_bootstrap_console")
         writer = added_file(patch, "osfmk/arm64/dali_bootstrap_log.c")
+        final_patch = (ROOT / "patches/xnu/zzzzz-dali-vm-console.patch").read_text()
+        final_source = added_file(final_patch, "osfmk/arm64/arm_vm_init.c")
+        final_mapper = final_source[final_source.index("/* DALI_FINAL_CONSOLE_MAP_BEGIN"):
+                                    final_source.index("/* DALI_FINAL_CONSOLE_MAP_END */")]
         signature, capacity = 0x43474244, 0x200000 - 12
         console, pool = 0xaec0f000, 0x91000000
         flags = 0x006000000000060d  # Device MAIR index 3, AF, outer-shareable, PXN/UXN.
         cases = ("mapped", "non-dali", "bad-root-type", "root-outside-pool",
                  "occupied-first", "occupied-second", "bad-signature", "wrapped-ring",
-                 "almost-full-ring", "full-ring", "over-capacity")
+                 "almost-full-ring", "full-ring", "over-capacity", "final-mapped",
+                 "final-non-dali", "final-occupied-first", "final-occupied-second",
+                 "final-bad-root", "final-bad-table", "final-tight-gap", "final-aperture-overlap")
         with tempfile.TemporaryDirectory(prefix="dali-bootstrap-console-") as directory:
             work = Path(directory)
             (work / "writer.c").write_text(writer)
@@ -56,6 +62,12 @@ class BootstrapConsoleTests(unittest.TestCase):
 #define ARM_TTE_BLOCK_L2_MASK 0x0000ffffffe00000
 #define ARM_TT_L2_SIZE 0x200000
 #define ARM_TTE_VALID 1
+#define ARM_TTE_TYPE_MASK 2
+#define ARM_TTE_TYPE_TABLE 2
+#define ARM_TTE_TYPE_BLOCK 0
+#define ARM_TTE_EMPTY 0
+#define ARM_PGBYTES 4096
+#define VM_MIN_KERNEL_ADDRESS 0xfffffff000000000UL
 #define ARM_TTE_BLOCK_AF 0x400
 #define ARM_TTE_BLOCK_SH(x) ((x) << 8)
 #define SH_OUTER_MEMORY 2
@@ -141,6 +153,39 @@ high_entry:
   adrp x0, message
   add x0, x0, :lo12:message
   bl dali_bootstrap_log
+  ldr x16, =0x91f00000
+  ldr x0, [x16, #24]
+  cbz x0, end_bootstrap
+  bl fixture_final_map
+  cbz x0, end_bootstrap
+  mov x19, x0
+  ldr x9, =0x91004000
+  dsb sy
+  msr ttbr1_el1, x9
+  isb
+  adrp x9, dali_bootstrap_console
+  add x9, x9, :lo12:dali_bootstrap_console
+  str x19, [x9]
+  adrp x0, final_live
+  add x0, x0, :lo12:final_live
+  bl dali_bootstrap_log
+  ldr x9, =0x91006000
+  msr ttbr0_el1, x9
+  isb
+  tlbi vmalle1
+  dsb sy
+  isb
+  adrp x0, ttbr0_off
+  add x0, x0, :lo12:ttbr0_off
+  bl dali_bootstrap_log
+  bl dali_bootstrap_log_end
+  adrp x0, poison
+  add x0, x0, :lo12:poison
+  bl dali_bootstrap_log
+  // TTBR0 is empty: even the completion store must now use a kernel VA.
+  ldr x16, =0xfffffff008700000
+  b complete
+end_bootstrap:
   bl dali_bootstrap_log_end
   adrp x0, poison
   add x0, x0, :lo12:poison
@@ -155,6 +200,7 @@ high_entry:
   b.ne failed
 finished:
   ldr x16, =0x91f00000
+complete:
   mov x9, #0x55
   str x9, [x16]
   dsb sy
@@ -165,18 +211,47 @@ failed:
 .section .rodata
 message: .asciz "DALI:C0 fixture reached\n"
 poison: .asciz "MUST NOT WRITE AFTER BOOTSTRAP END\n"
+final_live: .asciz "DALI:V8 fixture final TTBR1 live\n"
+ttbr0_off: .asciz "DALI:V9 fixture TTBR0 removed\n"
 '''
             (work / "entry.S").write_text(assembly)
+            constants = assembly[:assembly.index(".macro MOV64")]
+            (work / "final.c").write_text(constants + r'''
+typedef unsigned long vm_offset_t;
+typedef unsigned long vm_map_address_t;
+typedef unsigned long pmap_paddr_t;
+typedef unsigned long tt_entry_t;
+extern volatile unsigned long dali_bootstrap_console;
+void dali_bootstrap_log(const char *);
+void dali_bootstrap_log_end(void);
+static vm_offset_t gVirtBase, gPhysBase, avail_start, real_avail_end;
+static tt_entry_t *cpu_tte;
+static vm_offset_t phystokv(pmap_paddr_t pa) { return gVirtBase + pa - gPhysBase; }
+''' + final_mapper + r'''
+vm_offset_t fixture_final_map(unsigned long mode);
+vm_offset_t fixture_final_map(unsigned long mode) {
+    gVirtBase = mode == 2 ? VM_MIN_KERNEL_ADDRESS + 0x400000 : 0xfffffff007004000;
+    gPhysBase = 0x90804000;
+    avail_start = 0x91008000;
+    real_avail_end = mode == 3 ? 0xb0804000 : 0xa0804000;
+    cpu_tte = (tt_entry_t *)(0xfffffff007004000UL + 0x91004000UL - gPhysBase);
+    return dali_console_map_final();
+}
+''')
             subprocess.run(["clang", "--target=aarch64-none-elf", "-c", work / "entry.S", "-o", work / "entry.o"], check=True)
             subprocess.run(["clang", "--target=aarch64-none-elf", "-O2", "-ffreestanding", "-fno-builtin",
                             "-Wall", "-Wextra", "-Werror", "-Wmissing-prototypes", "-Wmissing-variable-declarations",
                             "-fno-stack-protector", "-mgeneral-regs-only", "-c", work / "writer.c",
                             "-o", work / "writer.o"], check=True)
+            subprocess.run(["clang", "--target=aarch64-none-elf", "-O2", "-ffreestanding", "-fno-builtin",
+                            "-Wall", "-Wextra", "-Werror", "-Wmissing-prototypes", "-Wmissing-variable-declarations",
+                            "-fno-stack-protector", "-mgeneral-regs-only", "-c", work / "final.c",
+                            "-o", work / "final.o"], check=True)
             subprocess.run(["ld.lld", "-m", "aarch64elf", "-Ttext=0x90804000", "-e", "_start",
-                            work / "entry.o", work / "writer.o", "-o", work / "entry.elf"], check=True)
+                            work / "entry.o", work / "writer.o", work / "final.o", "-o", work / "entry.elf"], check=True)
             for case in cases:
                 with self.subTest(case=case):
-                    tables = bytearray(0x4000)
+                    tables = bytearray(0x8000)
                     # The same L1 entry contains both kernel and console; keep it.
                     struct.pack_into("<Q", tables, 2 * 8, pool + 0x2000 | 3)
                     high_index = (0xfffffff007004000 & 0x3fc0000000) >> 30
@@ -185,6 +260,14 @@ poison: .asciz "MUST NOT WRITE AFTER BOOTSTRAP END\n"
                         physical = 0x90800000 + index * 0x200000
                         struct.pack_into("<Q", tables, 0x2000 + (132 + index) * 8, physical | 0x601)
                         struct.pack_into("<Q", tables, 0x3000 + (56 + index) * 8, physical | 0x601)
+                    struct.pack_into("<Q", tables, 0x4000 + high_index * 8, pool + 0x5000 | 3)
+                    tables[0x5000:0x6000] = tables[0x3000:0x4000]
+                    if case.startswith("final-occupied"):
+                        struct.pack_into("<Q", tables, 0x5000 + (1 + (case == "final-occupied-second")) * 8, 0x12345678)
+                    if case == "final-bad-root":
+                        struct.pack_into("<Q", tables, 0x4000 + high_index * 8, pool + 0x5000 | 1)
+                    if case == "final-bad-table":
+                        struct.pack_into("<Q", tables, 0x4000 + high_index * 8, pool + 0x8000 | 3)
                     if case == "bad-root-type":
                         struct.pack_into("<Q", tables, 16, pool + 0x2000 | 1)
                     if case == "root-outside-pool":
@@ -193,8 +276,11 @@ poison: .asciz "MUST NOT WRITE AFTER BOOTSTRAP END\n"
                         struct.pack_into("<Q", tables, 0x2000 + (374 + (case == "occupied-second")) * 8, 0x12345678)
                     negative_map = case in ("bad-root-type", "root-outside-pool", "occupied-first", "occupied-second")
                     expected_tables = tables.copy()
-                    if case != "non-dali" and not negative_map:
+                    if case not in ("non-dali", "final-non-dali") and not negative_map:
                         struct.pack_into("<QQ", expected_tables, 0x2000 + 374 * 8,
+                                         0xaec00000 | flags, 0xaee00000 | flags)
+                    if case == "final-mapped":
+                        struct.pack_into("<QQ", expected_tables, 0x5000 + 8,
                                          0xaec00000 | flags, 0xaee00000 | flags)
                     ring = bytearray(b"\x5a" * 0x200000)
                     initial_start = {"wrapped-ring": 3, "almost-full-ring": capacity - 33,
@@ -209,14 +295,23 @@ poison: .asciz "MUST NOT WRITE AFTER BOOTSTRAP END\n"
                         suffix = b"DALI:X7\nDALI:X8\nDALI:X9\nDALI:C0 fixture reached\n"
                     elif case == "almost-full-ring":
                         suffix = b"DALI:X7\nDALI:X8\nDALI:X9\n"
+                    elif case.startswith("final-") and case != "final-non-dali":
+                        suffix = b"DALI:X7\nDALI:X8\nDALI:X9\nDALI:C0 fixture reached\n"
+                        if case == "final-mapped":
+                            suffix += b"DALI:V8 fixture final TTBR1 live\nDALI:V9 fixture TTBR0 removed\n"
+                        else:
+                            suffix += b"DALI:VM final console unavailable; sink ending\n"
                     if suffix:
                         expected_ring[12 + initial_start:12 + initial_start + len(suffix)] = suffix
                         struct.pack_into("<II", expected_ring, 4,
                                          initial_start + len(suffix), initial_start + len(suffix))
                     (work / "tables.bin").write_bytes(tables)
                     (work / "ring.bin").write_bytes(ring)
-                    (work / "mode.bin").write_bytes(struct.pack("<QQQ", 0, 0 if case == "non-dali" else console,
-                                                                0 if negative_map else 1))
+                    (work / "mode.bin").write_bytes(struct.pack("<QQQQ", 0,
+                        0 if case in ("non-dali", "final-non-dali") else console,
+                        0 if negative_map else 1,
+                        ({"final-tight-gap": 2, "final-aperture-overlap": 3}.get(case, 1))
+                        if case.startswith("final-") else 0))
                     qmp_path = work / "qmp"
                     qmp_path.unlink(missing_ok=True)
                     command = ["qemu-system-aarch64", "-M", "virt,virtualization=on", "-cpu", "cortex-a76",
@@ -252,7 +347,7 @@ poison: .asciz "MUST NOT WRITE AFTER BOOTSTRAP END\n"
                             time.sleep(0.15)
                             qmp("stop")
                             for address, length, filename in ((console, 0x200000, "ring-after.bin"),
-                                                              (pool, 0x4000, "tables-after.bin"),
+                                                              (pool, 0x8000, "tables-after.bin"),
                                                               (0x91f00000, 8, "result.bin")):
                                 result = qmp("human-monitor-command", **{"command-line":
                                     f'pmemsave {address:#x} {length:#x} "{work / filename}"'})
