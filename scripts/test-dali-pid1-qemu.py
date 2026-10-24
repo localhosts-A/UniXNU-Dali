@@ -13,6 +13,13 @@ import tomllib
 DEVICE = Path(__file__).resolve().parents[1]
 
 
+def counter(report, symbol):
+    raw = bytes.fromhex(report.get('requested_kernel_symbols', {}).get(symbol, ''))
+    if len(raw) != 8:
+        raise ValueError('Actual source entitlement observation is missing: ' + symbol)
+    return int.from_bytes(raw, 'little')
+
+
 def validate_report(report, kernel_sha, process_sha, trust_sha):
     if report.get('boot_path') != 'uefi-unixnu-darwinboot' or \
             report.get('kernel_sha256') != kernel_sha or report.get('native_user_image_sha256') != process_sha or \
@@ -23,6 +30,11 @@ def validate_report(report, kernel_sha, process_sha, trust_sha):
                 'getpid_carry': 0, 'sysctl_carry': 0}
     if any(report.get('native_user_syscalls', {}).get(k) != v for k, v in syscalls.items()):
         raise ValueError('Actual getpid/HW_PAGESIZE syscall values disagree with the EL0 flags')
+    if report.get('amfi_interface_pointer') != 0 or \
+            counter(report, '_source_entitlement_free_accepts') < 1 or \
+            counter(report, '_source_entitlement_free_refusals') != 0 or \
+            counter(report, '_source_entitlement_free_entitlement_refusals') != 0:
+        raise ValueError('The actual source no-entitlement path did not accept precisely the supported input')
     raw_state = bytes.fromhex(report.get('requested_kernel_symbols', {}).get('_dali_pid1_report', ''))
     if len(raw_state) != 48:
         raise ValueError('Actual compiled kernel PID1 observation is missing')
@@ -47,10 +59,24 @@ def validate_report(report, kernel_sha, process_sha, trust_sha):
             'apple_trust_chain_verified': False, 'hardware_demonstrated': False}
 
 
+def validate_refused_report(denied, returncode, kernel_sha, process_sha, trust_sha):
+    if returncode != 1 or denied.get('boot_path') != 'uefi-unixnu-darwinboot' or \
+            denied.get('kernel_sha256') != kernel_sha or denied.get('native_user_image_sha256') != process_sha or \
+            denied.get('trust_cache_bundle_sha256') != trust_sha or denied.get('kernel_exception') or \
+            denied.get('bounded_timeout_interrupted') is not False or denied.get('stop_symbol') != '_panic' or \
+            denied.get('native_user_el0_observed') is not False or denied.get('amfi_interface_pointer') != 0 or \
+            counter(denied, '_source_entitlement_free_refusals') < 1 or \
+            counter(denied, '_source_entitlement_free_entitlement_refusals') < 1 or \
+            counter(denied, '_source_entitlement_free_accepts') != 0:
+        raise ValueError('Valid ad-hoc entitlement input was not genuinely refused before EL0')
+    return {'unsupported_entitlements_refused': True}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('unixnu', 'kernel', 'uefi-efi', 'fixture', 'output-dir'):
         p.add_argument('--' + name, required=True, type=Path)
+    p.add_argument('--entitlement-negative-fixture', required=True, type=Path)
     a = p.parse_args()
     a.output_dir.mkdir(parents=True, exist_ok=True)
     fixture = a.fixture.resolve()
@@ -68,6 +94,9 @@ def main():
                '--kernel-base-args', base, '--native-user',
                '--test-service', 'dali-boot-log:localhosts,dali-boot-log',
                '--read-kernel-symbol', '_dali_pid1_report:48',
+               '--read-kernel-symbol', '_source_entitlement_free_accepts:8',
+               '--read-kernel-symbol', '_source_entitlement_free_refusals:8',
+               '--read-kernel-symbol', '_source_entitlement_free_entitlement_refusals:8',
                '--read-user-symbol', '_pid1_failure:8', '--read-user-symbol', '_readonly_result:16',
                '--native-user-image', str(process), '--trust-cache', str(trust)]
     with (a.output_dir / 'probe.log').open('w') as log:
@@ -78,6 +107,21 @@ def main():
     summary = validate_report(report, *hashes)
     if report.get('kernel_arguments') != 'rd=md0 ' + base:
         raise SystemExit('PID1 QEMU used different kernel arguments')
+    negative = a.output_dir / 'entitlement-negative'
+    negative_command = command.copy()
+    for flag, value in (('--output', str(negative)),
+                        ('--native-user-image', str(a.entitlement_negative_fixture / 'launchd.macho')),
+                        ('--trust-cache', str(a.entitlement_negative_fixture / 'trustcache.bundle'))):
+        negative_command[negative_command.index(flag) + 1] = value
+    with (a.output_dir / 'entitlement-negative.log').open('w') as log:
+        # The generic probe correctly returns failure when exec never reaches EL0.
+        result = subprocess.run(negative_command, stdout=log, stderr=subprocess.STDOUT, timeout=240)
+    denied = json.loads((negative / 'gdb-stop.json').read_text())
+    expected_process = hashlib.sha256((a.entitlement_negative_fixture / 'launchd.macho').read_bytes()).hexdigest()
+    expected_trust = hashlib.sha256((a.entitlement_negative_fixture / 'trustcache.bundle').read_bytes()).hexdigest()
+    summary.update(validate_refused_report(denied, result.returncode, hashes[0], expected_process, expected_trust))
+    if denied.get('kernel_arguments') != 'rd=md0 ' + base:
+        raise SystemExit('Entitlement negative QEMU used different kernel arguments')
     summary['run_token'] = token
     (a.output_dir / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print('PASS: real PID1, getpid/sysctl/select, readonly mockfs/EROFS and >=30 seconds of heartbeats')

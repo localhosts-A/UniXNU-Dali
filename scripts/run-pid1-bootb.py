@@ -28,6 +28,8 @@ def verify_pid1_artifact(directory, manifest):
             record.get('minimum_heartbeat_seconds') != 30 or record.get('test_instrument_only') is not True or \
             record.get('apple_userland_included') is not False or \
             record.get('runtime_trust_cache_provider') is not False or \
+            record.get('entitlement_free_development_profile') is not True or \
+            record.get('entitlements_supported') is not False or \
             record.get('apple_trust_chain_verified') is not False:
         raise cycle.CycleError('artifact lacks the owned PID1 identity and explicit trust-runtime limits')
     sources = []

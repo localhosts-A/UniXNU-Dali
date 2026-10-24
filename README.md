@@ -8,6 +8,13 @@ test trust cache is a loader input; its runtime trust membership is unverified.
 The profile enables the existing native ARM PAN handling for user-memory copies;
 the source A53 configuration otherwise leaves those accesses unbracketed on
 MT6991 and QEMU A710. Actual user execution still requires the QEMU/hardware gates.
+The explicit source entitlement-free option handles the absent AMFI query
+context only for valid ad-hoc signatures with no XML/DER entitlement bytes or
+nonzero signed entitlement slots. It leaves MACF and code-page hash checks in
+place and rejects unsupported entitlement-bearing programs. CI requires the
+actual kernel acceptance counter for the positive process and a separate signed
+entitlement-bearing process to be refused before EL0. This provides no AMFI
+implementation or Apple trust claim; actual qualification is pending.
 `dali-pid1=1 dali-auto-fastboot=0` selects continuation after
 the platform checkpoint, retaining the single-CPU early diagnostic sink. The
 existing early-boot menu remains the hardware default until RAM-root packaging

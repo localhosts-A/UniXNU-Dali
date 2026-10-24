@@ -16,6 +16,7 @@ class Pid1Tests(unittest.TestCase):
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
         report = {'boot_path': 'uefi-unixnu-darwinboot',
+                  'amfi_interface_pointer': 0,
                   'kernel_sha256': 'a', 'native_user_image_sha256': 'b',
                   'trust_cache_bundle_sha256': 'c', 'native_user_el0_observed': True,
                   'native_user_4k_abi_observed': True,
@@ -33,7 +34,10 @@ class Pid1Tests(unittest.TestCase):
             fields = ('active', 'offline', 'pid', 'sequence', 'readonly_root', 'failures',
                       'complete', 'reserved', 'first_ns', 'elapsed_ns')
             data['requested_kernel_symbols'] = {'_dali_pid1_report': struct.pack(
-                '<8I2Q', *(state.get(k, 0) for k in fields)).hex()}
+                '<8I2Q', *(state.get(k, 0) for k in fields)).hex(),
+                '_source_entitlement_free_accepts': (1).to_bytes(8, 'little').hex(),
+                '_source_entitlement_free_refusals': bytes(8).hex(),
+                '_source_entitlement_free_entitlement_refusals': bytes(8).hex()}
             return gate.validate_report(data, 'a', 'b', 'c')
         self.assertEqual(evaluate(report)['pid'], 1)
         mutations = [('dali_pid1', 'elapsed_ns', 29_999_999_999),
@@ -50,6 +54,32 @@ class Pid1Tests(unittest.TestCase):
             bad[key] = 'wrong'
             with self.subTest(identity=key), self.assertRaises(ValueError):
                 evaluate(bad)
+
+    def test_entitlement_negative_requires_specific_valid_signature_refusal(self):
+        path = Path(__file__).resolve().parents[1] / 'scripts/test-dali-pid1-qemu.py'
+        spec = importlib.util.spec_from_file_location('negative_gate', path)
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        report = {'boot_path': 'uefi-unixnu-darwinboot', 'kernel_sha256': 'a',
+                  'native_user_image_sha256': 'b', 'trust_cache_bundle_sha256': 'c',
+                  'amfi_interface_pointer': 0, 'bounded_timeout_interrupted': False,
+                  'native_user_el0_observed': False, 'stop_symbol': '_panic',
+                  'requested_kernel_symbols': {
+                      '_source_entitlement_free_accepts': bytes(8).hex(),
+                      '_source_entitlement_free_refusals': (1).to_bytes(8, 'little').hex(),
+                      '_source_entitlement_free_entitlement_refusals': (1).to_bytes(8, 'little').hex()}}
+        gate.validate_refused_report(report, 1, 'a', 'b', 'c')
+        bad = copy.deepcopy(report)
+        bad['requested_kernel_symbols']['_source_entitlement_free_entitlement_refusals'] = bytes(8).hex()
+        with self.assertRaises(ValueError):
+            gate.validate_refused_report(bad, 1, 'a', 'b', 'c')
+        for key, value in (('kernel_exception', {'pc': '0x1a0'}),
+                           ('bounded_timeout_interrupted', True), ('native_user_el0_observed', True),
+                           ('kernel_sha256', 'wrong'), ('stop_symbol', '_Assert')):
+            bad = copy.deepcopy(report)
+            bad[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                gate.validate_refused_report(bad, 1, 'a', 'b', 'c')
 
     def test_real_time_sequence_and_rejections(self):
         compiler = shutil.which('clang++') or shutil.which('c++')

@@ -3,6 +3,7 @@ CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
 CONFIG_XNU_SOURCE_PTHREAD=y
 CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_SOURCE_ENTITLEMENT_FREE=y
 # The BCM2837 source development profile has no Image4/AMFI provider. Keep its
 # original runtime selection; a supplied own TC is a loader input, not proof of
 # a functioning Apple trust runtime. Enabling it panics before platform start.

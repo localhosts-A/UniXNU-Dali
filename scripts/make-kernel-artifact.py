@@ -126,6 +126,7 @@ def main():
                           'trust_cache_sha256': hashlib.sha256(trust).hexdigest(),
                           'cdhash': identity['cdhash'], 'test_instrument_only': True,
                           'runtime_trust_cache_provider': False, 'apple_trust_chain_verified': False,
+                          'entitlement_free_development_profile': True, 'entitlements_supported': False,
                           'minimum_heartbeat_seconds': 30, 'apple_userland_included': False}
     (args.output_dir / "manifest.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     print(json.dumps(record, indent=2, sort_keys=True))

@@ -204,6 +204,10 @@ jobs:
           python3 "$GITHUB_WORKSPACE/UniXNU/scripts/build-native-user-fixture.py" \
             --source "$GITHUB_WORKSPACE/UniXNU-Dali/drivers/DaliBootLog/pid1.S" \
             --output "$RUNNER_TEMP/dali-pid1-fixture"
+          python3 "$GITHUB_WORKSPACE/UniXNU/scripts/build-native-user-fixture.py" \
+            --source "$GITHUB_WORKSPACE/UniXNU-Dali/drivers/DaliBootLog/pid1.S" \
+            --entitlements "$GITHUB_WORKSPACE/UniXNU-Dali/drivers/DaliBootLog/negative-entitlements.plist" \
+            --output "$RUNNER_TEMP/dali-pid1-entitlement-negative"
 
       - name: Test one-core DarwinBoot to source XNU handoff
         shell: bash
@@ -224,6 +228,7 @@ jobs:
             --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
             --fixture "$RUNNER_TEMP/dali-pid1-fixture" \
+            --entitlement-negative-fixture "$RUNNER_TEMP/dali-pid1-entitlement-negative" \
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu/pid1"
 
       - name: Upload bounded QEMU diagnostics after failure
