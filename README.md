@@ -20,6 +20,21 @@ this does not establish automatic fastboot. The explicitly opted-in QEMU backend
 requires the synthetic DT model and never touches MT6991 MMIO or claims ramoops
 persistence. Full compilation, QEMU and hardware qualification are pending.
 
+The explicit hardware profile is `package/unixnu-pid1.toml`. After a successful
+CI run, `scripts/run-pid1-bootb.py` can first package a candidate with `--dry-run`
+using the saved verified FDT, without contacting the device. Its required paths
+are `--backup`, `--evidence-root`, `--uefi`, `--unixnu`, `--artifact-dir`, and the
+backed-up `--serial`. A real run rechecks the live rooted Android B/FDT and all
+18 protected hashes before using the existing literal `boot_b` writer. It disables
+the firmware watchdog, checks exact artifact and payload identities, and requires
+31 current-token ramoops messages with at least 30 seconds of kernel time after
+restoring Android. If fastboot is unavailable after the bounded observation,
+the pending restore is recorded and physical recovery is required. Neither USB
+re-enumeration nor the end-reset request proves unattended fastboot.
+The record includes the exact `--restore-run` command, stable device serial,
+backup path and original boot hash. That mode only restores the original boot_b
+and collects evidence; it never starts another candidate experiment.
+
 Device repository for REDMI K80 Ultra (dali / MT6991). The current target is a
 single-core XNU early-boot checkpoint through UniXNU and DarwinBoot. Storage,
 root and iOS userland are outside this stage.

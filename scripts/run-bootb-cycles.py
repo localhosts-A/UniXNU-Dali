@@ -471,7 +471,7 @@ def collect_cycle(args, cycle_dir, *, require_xnu, run_token=None, watchdog_time
     return result
 
 
-def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir):
+def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *, pid1_inputs=None):
     env = dict(os.environ)
     env["DALI_AUTO_FASTBOOT"] = "true" if recovery["auto_fastboot"] else "false"
     env["DALI_WATCHDOG_TIMEOUT_SECONDS"] = str(recovery["device_watchdog_timeout_seconds"])
@@ -479,6 +479,10 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir):
     env["UNIXNU_EDK2"] = env.get("UNIXNU_EDK2", str(args.uefi / "Mu_Basecore"))
     build_command = ["bash", DEVICE_ROOT / "scripts/build-firmware.sh", backup, args.uefi,
                      args.unixnu, kernel, adt_path]
+    if pid1_inputs is not None:
+        if recovery["auto_fastboot"] or len(pid1_inputs) != 2:
+            raise CycleError("PID1 hardware inputs require the disabled firmware recovery watchdog")
+        build_command.extend(pid1_inputs)
     run_logged(build_command, run_dir / "firmware-build.log", timeout=3600, env=env)
     image = args.uefi / "out/UniXNU-dali-uefi-boot.img"
     image_manifest_path = args.uefi / "out/manifest.json"
@@ -500,6 +504,12 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir):
             raise CycleError(f"candidate package was built from a different {key}")
     if image_manifest.get("payload", {}).get("xnu_kernel_sha256") != sha256(kernel.read_bytes()):
         raise CycleError("candidate payload contains a different XNU kernel")
+    if payload.get("xnu_adt_sha256") != sha256(adt_path.read_bytes()):
+        raise CycleError("candidate payload contains a different Apple device tree")
+    if pid1_inputs is not None:
+        for key, source in zip(("xnu_ramdisk_sha256", "xnu_trust_cache_sha256"), pid1_inputs):
+            if payload.get(key) != sha256(source.read_bytes()):
+                raise CycleError("candidate PID1/RAM-root input differs from the verified artifact")
     if payload.get("xnu_run_token") != token:
         raise CycleError("candidate payload does not contain this cycle's unique XNU run token")
     payload_recovery = payload.get("recovery", {})

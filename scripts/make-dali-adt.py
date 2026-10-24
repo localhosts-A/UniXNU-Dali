@@ -125,6 +125,8 @@ def main():
                         help="private live FDT; or set DALI_RUNTIME_FDT")
     parser.add_argument("--cpu-regs", default="0")
     parser.add_argument("--psci-method", choices=("smc", "hvc"), default="smc")
+    parser.add_argument("--ramdisk", action="store_true", help="zero RAMDisk slot for DarwinBoot to fill")
+    parser.add_argument("--trust-cache", action="store_true", help="zero TrustCache slot for the explicit own test input")
     args = parser.parse_args()
     if args.fdt is None:
         parser.error("a private live Dali FDT is required (--fdt or DALI_RUNTIME_FDT)")
@@ -203,7 +205,10 @@ def main():
         ("dram-base", struct.pack("<Q", dram_base)),
         ("dram-size", struct.pack("<Q", args.dram_size)),
         *empty_nvram_proxy(),
-    ], [apple_node("memory-map")])
+    ], [apple_node("memory-map", [
+        *([("RAMDisk", bytes(16))] if args.ramdisk else []),
+        *([("TrustCache", bytes(16))] if args.trust_cache else []),
+    ])])
     root_node = apple_node("device-tree", [
         ("model", b"REDMI K80 Ultra\0"),
         ("compatible", b"xiaomi,dali\0"),

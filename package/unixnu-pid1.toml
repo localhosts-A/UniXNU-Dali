@@ -1,0 +1,26 @@
+version = 1
+
+[boot]
+timeout = 10
+default = "xnu"
+rotate = 0
+
+[ui]
+title = "UniXNU / Dali owned PID1 test"
+
+[kits]
+autoload = false
+
+[[entry]]
+id = "xnu"
+title = "Readonly RAM root and owned PID1"
+type = "xnu"
+path = "Payloads/kernel.macho"
+initrd = "Payloads/root.img"
+args = "rd=md0 -v dali-earlyboot=1 kt_fixed_zones=120 dali-pid1=1"
+
+[[entry]]
+id = "exit"
+title = "Return to firmware diagnostics"
+type = "action"
+action = "exit"
