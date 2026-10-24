@@ -9,7 +9,7 @@ config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
 unixnu_commit = "5c4e27f961e6c71ccf474223b91f859cc25c2d18"
-uefi_commit = "106eb80e034064e757a810af939f2da3beaeca8a"
+uefi_commit = "a8a8aea9b9ec6c024d13258c697b5f7f4b33fbdc"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
 packages = [
@@ -38,7 +38,7 @@ archives = [
 
 [payload]
 volume = "DALI-XNU"
-size_mib = 48
+size_mib = 24
 loader = "firmware"
 title = "Dali single-core XNU early boot"
 dram_size = "0x300000000"
