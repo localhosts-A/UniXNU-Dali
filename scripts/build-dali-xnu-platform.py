@@ -71,7 +71,15 @@ def compile_source(source, output):
                             stderr=subprocess.STDOUT, text=True)
     output.with_suffix(output.suffix + ".log").write_text(result.stdout)
     if result.returncode:
-        raise SystemExit(f"{source.name} compile failed:\n{result.stdout[-6000:]}")
+        # XNU's typed-allocation macros can emit enough warnings to push the
+        # real error out of a tail excerpt. Keep its nearby source diagnostic.
+        lines = result.stdout.splitlines()
+        errors = []
+        for index, line in enumerate(lines):
+            if 'error:' in line:
+                errors.extend(lines[max(0, index - 1):index + 5])
+        raise SystemExit(f"{source.name} compile failed:\n" + '\n'.join(errors[:60]) +
+                         '\nCompiler tail:\n' + result.stdout[-6000:])
 
 
 def archive(name, source, destination):

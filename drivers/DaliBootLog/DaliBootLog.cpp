@@ -2,6 +2,7 @@
 // Append bounded XNU platform/GIC/timer checkpoints to the inherited ramoops console.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <libkern/c++/OSSharedPtr.h>
 #include <libkern/c++/OSData.h>
