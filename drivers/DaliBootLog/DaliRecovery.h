@@ -14,6 +14,12 @@ static inline bool daliRecoveryContractValid(const DaliRecoveryContract &c)
          c.offset == 0x24 && c.mask == 0xF && c.bootloader == 3;
 }
 
+static inline bool daliPsciFeatureSupported(uint32_t result)
+{
+  // PSCI_FEATURES returns nonnegative flags, or a negative PSCI error.
+  return (result & 0x80000000U) == 0;
+}
+
 struct DaliRecoveryOps {
   void *context;
   uint32_t (*read)(void *, uint32_t);
@@ -24,7 +30,8 @@ struct DaliRecoveryOps {
 
 // Keep the UEFI one-shot watchdog and bootloader marker unchanged. Linux's
 // PSCI restart handler has priority 129, ahead of mtk_wdt's 128. The direct
-// SWRST trial returned on this device, so request the standard secure reset.
+// SWRST trial returned on this device. The secure callback uses a feature-
+// checked architectural warm reset, since SYSTEM_RESET lost the console.
 static __attribute__((noinline)) bool daliIssueSystemReset(const DaliRecoveryOps &ops)
 {
   const uint32_t marker = ops.read(ops.context, 0x24);

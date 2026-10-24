@@ -70,6 +70,8 @@ static bool record(void *p, const char *stage, uint32_t marker, uint32_t) {
 }
 static DaliRecoveryOps ops(State &s) { return {&s, readReg, fence, record, reset}; }
 int main() {
+  assert(daliPsciFeatureSupported(0) && daliPsciFeatureSupported(1));
+  assert(!daliPsciFeatureSupported(0xffffffffU) && !daliPsciFeatureSupported(0xfffffffdU));
   DaliRecoveryContract good = {0x1c010000, 0x1000, 0x24, 0xf, 3};
   assert(daliRecoveryContractValid(good));
   for (unsigned i = 0; i < 5; ++i) {

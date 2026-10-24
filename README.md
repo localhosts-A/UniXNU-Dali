@@ -162,7 +162,7 @@ unattended recovery cycles.
 When the firmware recovery switch is enabled, packaging now forwards
 `dali-auto-fastboot=1`. After a successful checkpoint, DaliBootLog validates the
 FDT-derived RGU resource, verifies the existing bootloader marker and enabled
-watchdog, then requests PSCI SYSTEM_RESET using the live FDT's verified SMC conduit.
+watchdog, then requests feature-checked PSCI SYSTEM_RESET2 using the live FDT's verified SMC conduit.
 It keeps all RGU registers unchanged and writes no boot-mode or storage field.
 The persistent `DALI-RESET` record precedes the secure call; a returned/refused
 request fails the evidence gate. Disabling recovery forwards zero and skips this
@@ -174,15 +174,19 @@ The first controlled reset trial also reached the XNU checkpoint unattended,
 but exposed a fortified-copy trap while decoding the recovery properties.
 Property decoding now copies complete local arrays before assigning fields.
 CI compiles that actual decoder with subobject bounds checks and checks the
-Mach-O call chain, PSCI function ID/SMC, DAIF save/restore and Device-memory barriers. Generic
+Mach-O call chain, PSCI FEATURES/RESET2 IDs/SMCs, DAIF save/restore and Device-memory barriers. Generic
 QEMU success alone cannot validate this Dali-only reset path.
 
 The repaired property decoder then reached the XNU checkpoint unattended and
 issued SWRST, but CPU execution continued after 100 ms and automatic fastboot
-failed. Android/root and all 18 original hashes were restored. The source of
-the original Android watchdog module also issues SWRST, but Linux registers its
-PSCI restart handler at priority 129 ahead of watchdog priority 128. The current
-diagnostic tests PSCI SYSTEM_RESET instead; hardware recovery remains unqualified.
+failed. Android/root and all 18 original hashes were restored. The original
+Android watchdog module also issues SWRST, but Linux registers its
+PSCI restart handler at priority 129 ahead of watchdog priority 128. The following
+SYSTEM_RESET trial then reached fastboot automatically and restored Android/root
+and all 18 original hashes, but lost all ramoops evidence. It cannot satisfy full
+acceptance. Android reported PSCI 1.1. The current diagnostic queries RESET2
+support before requesting architectural warm reset (type 0, cookie 0); a returned
+call records feature/result status. Warm-reset retention remains unverified.
 
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`

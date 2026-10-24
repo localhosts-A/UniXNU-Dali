@@ -64,21 +64,22 @@ def validate_reset_instructions(kernel, output):
                 not calls(assembly['recoverToFastboot'], issue):
             raise SystemExit('Compiled Dali checkpoint cannot call the guarded software-reset sequence')
         reset = assembly['recoverySystemReset']
-        function_id = bool(re.search(r'#(?:0x84000009|2214592521)\b', reset)) or bool(
-            re.search(r'\bmov\s+w0, #(?:0x9|9)\b', reset) and
-            re.search(r'\bmovk\s+w0, #(?:0x8400|33792), lsl #16\b', reset))
-        if not function_id or not re.search(r'\bsmc\s+#(?:0x0|0)\b', reset) or \
+        def function_id(low, high):
+            return bool(re.search(r'\bmov\s+w0, #(?:' + hex(low) + '|' + str(low) + r')\b', reset) and
+                re.search(r'\bmovk\s+w0, #(?:' + hex(high) + '|' + str(high) + r'), lsl #16\b', reset))
+        if not function_id(10, 0x8400) or not function_id(18, 0xC400) or \
+                len(re.findall(r'\bsmc\s+#(?:0x0|0)\b', reset)) != 2 or \
                 not re.search(r'\bmsr\s+DAIFSet, #(?:0x3|3)\b', reset, re.I) or \
                 not re.search(r'\bmsr\s+DAIF,', reset, re.I) or \
                 not re.search(r'\bdsb\s+sy\b', reset) or \
                 not all(re.search(r'\bdsb\s+sy\b', assembly[key]) for key in ('recoveryRead', 'recoveryFence')):
-            raise SystemExit('Compiled PSCI SYSTEM_RESET/SMC, DAIF restoration or Device-memory barriers are missing')
+            raise SystemExit('Compiled PSCI FEATURES/RESET2 SMCs, DAIF restoration or Device-memory barriers are missing')
     finally:
         (output / 'reset-instructions.log').write_text('\n'.join(assembly.values()))
     (output / 'reset-instructions.json').write_text(json.dumps({
         'compiled_checkpoint_calls_recovery': True,
         'compiled_recovery_calls_guarded_reset': True,
-        'psci_system_reset_smc_daif_and_barriers_present': True,
+        'psci_features_reset2_smcs_daif_and_barriers_present': True,
         'hardware_recovery_demonstrated': False,
     }, indent=2) + '\n')
 

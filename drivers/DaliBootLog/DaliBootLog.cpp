@@ -73,6 +73,8 @@ struct RecoveryContext {
   uintptr_t rgu;
   IOMemoryMap *console;
   const char *token;
+  uint32_t psciFeatures;
+  uint32_t psciResult;
 };
 
 static __attribute__((noinline)) uint32_t recoveryRead(void *opaque, uint32_t offset)
@@ -83,22 +85,33 @@ static __attribute__((noinline)) uint32_t recoveryRead(void *opaque, uint32_t of
   return value;
 }
 
-static __attribute__((noinline)) void recoverySystemReset(void *)
+static __attribute__((noinline)) void recoverySystemReset(void *opaque)
 {
-  // The live FDT validator requires PSCI 1.0 with the SMC conduit. Follow
-  // Linux machine_restart's local IRQ masking without altering other CPUs.
-  // Restore DAIF only if firmware unexpectedly returns from SYSTEM_RESET.
+  auto *context = static_cast<RecoveryContext *> (opaque);
+  // The live FDT validates the SMC conduit. RESET2 is optional, so query it
+  // before requesting architectural SYSTEM_WARM_RESET (type=0, cookie=0).
+  // Do not silently fall back to the log-losing SYSTEM_RESET diagnostic.
   uint64_t daif;
-  register uint64_t x0 __asm__ ("x0") = 0x84000009;
-  register uint64_t x1 __asm__ ("x1") = 0;
+  register uint64_t x0 __asm__ ("x0") = 0x8400000A; // PSCI_FEATURES
+  register uint64_t x1 __asm__ ("x1") = 0xC4000012; // 64-bit SYSTEM_RESET2
   register uint64_t x2 __asm__ ("x2") = 0;
   register uint64_t x3 __asm__ ("x3") = 0;
+  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3) :
+                    : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+                      "x12", "x13", "x14", "x15", "x16", "x17", "cc", "memory");
+  context->psciFeatures = static_cast<uint32_t> (x0);
+  if (!daliPsciFeatureSupported (context->psciFeatures)) { return; }
+  x0 = 0xC4000012;
+  x1 = 0;
+  x2 = 0;
+  x3 = 0;
   __asm__ volatile ("mrs %0, daif\n\tmsr daifset, #3\n\tdsb sy"
                     : "=r" (daif) :: "memory");
   __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3) :
                     : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
                       "x12", "x13", "x14", "x15", "x16", "x17", "cc", "memory");
   __asm__ volatile ("msr daif, %0" :: "r" (daif) : "memory");
+  context->psciResult = static_cast<uint32_t> (x0);
 }
 
 static __attribute__((noinline)) void recoveryFence(void *)
@@ -113,12 +126,18 @@ static bool recoveryRecord(void *opaque, const char *stage, uint32_t marker, uin
   char *at = line + sizeof ("DALI-RESET: run=") - 1;
   char *end = line + sizeof (line) - 2;
   at = appendText (at, end, context->token);
-  at = appendText (at, end, " method=psci-system-reset stage=");
+  at = appendText (at, end, " method=psci-system-reset2 stage=");
   at = appendText (at, end, stage);
   at = appendText (at, end, " marker=0x");
   at = appendUnsigned (at, end, marker, 16);
   at = appendText (at, end, " mode=0x");
   at = appendUnsigned (at, end, mode, 16);
+  if (stage[0] == 'r') {
+    at = appendText (at, end, " features=0x");
+    at = appendUnsigned (at, end, context->psciFeatures, 16);
+    at = appendText (at, end, " result=0x");
+    at = appendUnsigned (at, end, context->psciResult, 16);
+  }
   *at++ = '\n';
   return appendRamoops (context->console, line, static_cast<size_t> (at - line));
 }
@@ -155,7 +174,8 @@ static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, co
   if (!descriptor) { return; }
   OSSharedPtr<IOMemoryMap> mapping (descriptor->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
   if (!mapping) { return; }
-  RecoveryContext context = {static_cast<uintptr_t> (mapping->getVirtualAddress ()), console, token};
+  RecoveryContext context = {static_cast<uintptr_t> (mapping->getVirtualAddress ()), console, token,
+                             UINT32_MAX, UINT32_MAX};
   DaliRecoveryOps ops = {&context, recoveryRead, recoveryFence, recoveryRecord, recoverySystemReset};
   IODelay (1000000); // Bounded interval after the completed checkpoint record.
   if (daliIssueSystemReset (ops)) {
