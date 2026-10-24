@@ -197,6 +197,14 @@ jobs:
           python3 scripts/test-darwinboot.py \
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi"
 
+      - name: Build the owned static PID1 and explicit test trust cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU/scripts/build-native-user-fixture.py" \
+            --source "$GITHUB_WORKSPACE/UniXNU-Dali/drivers/DaliBootLog/pid1.S" \
+            --output "$RUNNER_TEMP/dali-pid1-fixture"
+
       - name: Test one-core DarwinBoot to source XNU handoff
         shell: bash
         run: |
@@ -206,6 +214,17 @@ jobs:
             --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu"
+
+      - name: Test readonly RAM root, real PID1 syscalls and 30-second heartbeats
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/test-dali-pid1-qemu.py" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
+            --fixture "$RUNNER_TEMP/dali-pid1-fixture" \
+            --output-dir "$RUNNER_TEMP/dali-xnu-qemu/pid1"
 
       - name: Upload bounded QEMU diagnostics after failure
         if: failure()
@@ -242,6 +261,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/public-artifact" \
             --unixnu "$GITHUB_WORKSPACE/UniXNU" \
             --device-repo "$GITHUB_WORKSPACE/UniXNU-Dali" \
+            --pid1-directory "$RUNNER_TEMP/dali-pid1-fixture" \
             --auto-fastboot "$auto" \
             --fastboot-timeout-seconds "$host_timeout" \
             --watchdog-timeout-seconds "$watchdog_timeout"
@@ -253,5 +273,7 @@ jobs:
           path: |
             ${{ runner.temp }}/public-artifact/kernel.macho
             ${{ runner.temp }}/public-artifact/manifest.json
+            ${{ runner.temp }}/public-artifact/pid1.macho
+            ${{ runner.temp }}/public-artifact/pid1.trustcache
           if-no-files-found: error
           retention-days: 1

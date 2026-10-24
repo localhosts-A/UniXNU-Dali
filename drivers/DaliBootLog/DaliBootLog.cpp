@@ -55,11 +55,15 @@ static char *appendText(char *out, char *end, const char *text)
 static bool appendRamoops(IOMemoryMap *map, const char *text, size_t length)
 {
   if (map == nullptr || text == nullptr) { return false; }
+  uint64_t daif;
+  __asm__ volatile ("mrs %0, daif\n\tmsr daifset, #3" : "=r" (daif) :: "memory");
   auto *ring = reinterpret_cast<RamoopsConsole *> (map->getVirtualAddress ());
-  if (ring->signature != kConsoleSignature) { return false; }
   const uint32_t capacity = kConsoleBytes - sizeof (RamoopsConsole);
   auto *data = reinterpret_cast<volatile uint8_t *> (ring + 1);
-  if (ring->start >= capacity || ring->size > capacity) { return false; }
+  if (ring->signature != kConsoleSignature || ring->start >= capacity || ring->size > capacity) {
+    __asm__ volatile ("msr daif, %0" :: "r" (daif) : "memory");
+    return false;
+  }
   for (size_t index = 0; index < length; index++) {
     const uint32_t at = ring->start;
     data[at] = static_cast<uint8_t> (text[index]);
@@ -67,6 +71,7 @@ static bool appendRamoops(IOMemoryMap *map, const char *text, size_t length)
     if (ring->size < capacity) { ring->size++; }
   }
   __sync_synchronize ();
+  __asm__ volatile ("msr daif, %0" :: "r" (daif) : "memory");
   return true;
 }
 
@@ -267,6 +272,8 @@ static __attribute__((noinline)) void recoverToFastboot(IOMemoryMap *console, co
   }
 }
 
+#include "DaliPid1Service.h"
+
 class DaliBootLog : public IOService {
   OSDeclareDefaultStructors (DaliBootLog)
   OSSharedPtr<IOMemoryMap> mConsole;
@@ -277,6 +284,29 @@ public:
     // writer here hands ownership over before this service accesses the ring.
     dali_bootstrap_log("DALI:DL IOKit persistent logger entered; mapping console\n");
     if (!IOService::start (provider)) { return false; }
+    unsigned pid1Mode = 0, offline = 0, autoFastboot = 0;
+    PE_parse_boot_argn ("dali-pid1", &pid1Mode, sizeof (pid1Mode));
+    PE_parse_boot_argn ("dali-pid1-qemu", &offline, sizeof (offline));
+    PE_parse_boot_argn ("dali-auto-fastboot", &autoFastboot, sizeof (autoFastboot));
+    if (pid1Mode > 1 || offline > 1 || (pid1Mode == 1 && autoFastboot != 0)) { return false; }
+    if (offline == 1) {
+      // This backend has no hardware MMIO or persistence claim. Both explicit
+      // opt-in and the synthetic fixture's exact DT model are required.
+      if (pid1Mode != 1) { return false; }
+      IORegistryEntry *root = IORegistryEntry::fromPath ("/", gIODTPlane);
+      auto *model = root == nullptr ? nullptr : OSDynamicCast (OSData, root->getProperty ("model"));
+      const bool synthetic = model != nullptr && model->getLength () == sizeof ("qemu-entry-fixture") &&
+          memcmp (model->getBytesNoCopy (), "qemu-entry-fixture", sizeof ("qemu-entry-fixture")) == 0;
+      if (root != nullptr) { root->release (); }
+      char token[33] = {};
+      if (!synthetic || !PE_parse_boot_argn ("dali-run", token, sizeof (token)) || token[32] != '\0') { return false; }
+      for (unsigned i = 0; i < 32; i++) {
+        if (!((token[i] >= '0' && token[i] <= '9') || (token[i] >= 'a' && token[i] <= 'f'))) { return false; }
+      }
+      if (!pid1Initialize (nullptr, token, true)) { return false; }
+      registerService ();
+      return true;
+    }
     OSSharedPtr<IOMemoryDescriptor> descriptor (
         IOMemoryDescriptor::withPhysicalAddress (kConsolePhysical, kConsoleBytes, kIODirectionInOut), OSNoRetain);
     if (descriptor) {
@@ -287,8 +317,12 @@ public:
       dali_bootstrap_log("DALI:DL console mapping failed; early sink retained\n");
       return false;
     }
-    dali_bootstrap_log("DALI:DL console mapped; early sink ending\n");
-    dali_bootstrap_log_end();
+    if (pid1Mode == 1) {
+      dali_bootstrap_log("DALI:DL console mapped; retaining single-CPU early sink for PID1\n");
+    } else {
+      dali_bootstrap_log("DALI:DL console mapped; early sink ending\n");
+      dali_bootstrap_log_end();
+    }
     for (unsigned attempt = 0; attempt < 200 &&
          (!armdt_platform_configured || !armcpu_registered || !armcpu_gic_ready || !armcpu_timer_interrupts); attempt++) {
       IODelay (10000);
@@ -329,8 +363,11 @@ public:
     const bool checkpointSaved = appendRamoops (mConsole.get (), line, length);
     IOLog ("%s", line);
     registerService ();
-    unsigned autoFastboot = 0;
-    PE_parse_boot_argn ("dali-auto-fastboot", &autoFastboot, sizeof (autoFastboot));
+    if (pid1Mode == 1) {
+      if (!passed || !checkpointSaved || !pid1Initialize (mConsole.get (), runToken, false)) { return false; }
+      dali_bootstrap_log("DALI:DL continuing to RAM root and PID1; recovery watchdog disabled\n");
+      return true;
+    }
     if (passed && checkpointSaved && autoFastboot == 1) { recoverToFastboot (mConsole.get (), runToken); }
     if (passed && checkpointSaved && autoFastboot == 0) { waitForManualRecovery (mConsole.get (), runToken); }
     return true;

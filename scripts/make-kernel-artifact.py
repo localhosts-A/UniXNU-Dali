@@ -47,6 +47,7 @@ def main():
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--unixnu", required=True, type=Path)
     parser.add_argument("--device-repo", required=True, type=Path)
+    parser.add_argument("--pid1-directory", type=Path, help="Own signed PID1 build with its explicit trust-cache bundle")
     parser.add_argument("--auto-fastboot", choices=("true", "false"), default="true")
     parser.add_argument("--fastboot-timeout-seconds", type=int, default=120)
     parser.add_argument("--watchdog-timeout-seconds", type=int, default=31)
@@ -108,6 +109,23 @@ def main():
             "device_watchdog_timeout_seconds": args.watchdog_timeout_seconds,
         },
     }
+    if args.pid1_directory is not None:
+        pid1 = validate_kernel(args.pid1_directory / 'launchd.macho')
+        trust = (args.pid1_directory / 'trustcache.bundle').read_bytes()
+        identity = json.loads((args.pid1_directory / 'trustcache.json').read_text())
+        if identity.get('process_sha256') != hashlib.sha256(pid1).hexdigest() or \
+                identity.get('bundle_sha256') != hashlib.sha256(trust).hexdigest() or \
+                identity.get('signature_hash_page_bytes') != 4096 or identity.get('entries') != 1 or \
+                identity.get('test_instrument_only') is not True:
+            raise SystemExit('Owned PID1 signature/trust input identity mismatch')
+        (args.output_dir / 'pid1.macho').write_bytes(pid1)
+        (args.output_dir / 'pid1.trustcache').write_bytes(trust)
+        record['pid1'] = {'root_file': 'pid1.macho', 'root_bytes': len(pid1),
+                          'root_sha256': hashlib.sha256(pid1).hexdigest(),
+                          'trust_cache_file': 'pid1.trustcache', 'trust_cache_bytes': len(trust),
+                          'trust_cache_sha256': hashlib.sha256(trust).hexdigest(),
+                          'cdhash': identity['cdhash'], 'test_instrument_only': True,
+                          'minimum_heartbeat_seconds': 30, 'apple_userland_included': False}
     (args.output_dir / "manifest.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     print(json.dumps(record, indent=2, sort_keys=True))
 

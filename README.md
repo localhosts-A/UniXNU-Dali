@@ -1,5 +1,22 @@
 # UniXNU-Dali
 
+The next milestone is an owned static PID1 on a read-only mockfs RAM root.
+The source profile now includes mockfs and runtime loading of the one-entry
+test trust cache. `dali-pid1=1 dali-auto-fastboot=0` selects continuation after
+the platform checkpoint, retaining the single-CPU early diagnostic sink. The
+existing early-boot menu remains the hardware default until RAM-root packaging
+and the new path are qualified. Do not enable its 31-second recovery watchdog
+for the 30-second user test.
+
+The owned program exercises getpid, HW_PAGESIZE, write-open refusal (EROFS) and
+one-second select timeouts, then submits 31 sequential heartbeat requests through
+`kern.dali_pid1`. The kernel checks the actual caller is PID1, the actual root
+mount is read-only mockfs, the 4K ABI and at least 30 seconds of kernel monotonic
+time. Only after its saved PASS does hardware request the existing AEE reset;
+this does not establish automatic fastboot. The explicitly opted-in QEMU backend
+requires the synthetic DT model and never touches MT6991 MMIO or claims ramoops
+persistence. Full compilation, QEMU and hardware qualification are pending.
+
 Device repository for REDMI K80 Ultra (dali / MT6991). The current target is a
 single-core XNU early-boot checkpoint through UniXNU and DarwinBoot. Storage,
 root and iOS userland are outside this stage.

@@ -1,7 +1,9 @@
-# Source-only early boot profile: no IPSW/kernelcache, storage, or userland.
+# Source-only Dali profile with an owned minimal RAM-root test, no Apple userland.
 CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
 CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
 CONFIG_XNU_ARM_DT_PLATFORM=y
 CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
