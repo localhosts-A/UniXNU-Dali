@@ -39,6 +39,10 @@ class BootstrapConsoleTests(unittest.TestCase):
         final_source = added_file(final_patch, "osfmk/arm64/arm_vm_init.c")
         final_mapper = final_source[final_source.index("/* DALI_FINAL_CONSOLE_MAP_BEGIN"):
                                     final_source.index("/* DALI_FINAL_CONSOLE_MAP_END */")]
+        frontier = (ROOT / "patches/xnu/zzzzzzz-dali-startup-frontier.patch").read_text()
+        debug_source = added_file(frontier, "osfmk/kern/debug.c")
+        snapshot = debug_source[debug_source.index("/* DALI_PANIC_SNAPSHOT_BEGIN */"):
+                                debug_source.index("/* DALI_PANIC_SNAPSHOT_END */")]
         signature, capacity = 0x43474244, 0x200000 - 12
         console, pool = 0xaec0f000, 0x91000000
         flags = 0x006000000000060d  # Device MAIR index 3, AF, outer-shareable, PXN/UXN.
@@ -51,7 +55,8 @@ class BootstrapConsoleTests(unittest.TestCase):
             work = Path(directory)
             (work / "writer.c").write_text(writer)
             # Compile the final production writer, after both follow-up patches.
-            for filename in ("zzzzz-dali-vm-console.patch", "zzzzzz-dali-startup-console.patch"):
+            for filename in ("zzzzz-dali-vm-console.patch", "zzzzzz-dali-startup-console.patch",
+                             "zzzzzzz-dali-startup-frontier.patch"):
                 text = (ROOT / "patches/xnu" / filename).read_text()
                 marker = "--- a/osfmk/arm64/dali_bootstrap_log.c\n"
                 section = marker + text.split(marker, 1)[1]
@@ -170,6 +175,16 @@ high_entry:
   ldr x16, =0x91f00000
   ldr x16, [x16, #32]
   msr daif, x16
+  ldr x9, =0x96000004
+  msr esr_el1, x9
+  ldr x9, =0x12345000
+  msr far_el1, x9
+  ldr x9, =0x12345678
+  msr elr_el1, x9
+  bl fixture_panic_snapshot
+  cmp x0, #1
+  b.ne failed
+  check_daif
   adrp x0, message
   add x0, x0, :lo12:message
   bl dali_bootstrap_log
@@ -178,6 +193,21 @@ high_entry:
   add x0, x0, :lo12:stage_message
   bl dali_bootstrap_stage
   check_daif
+  adrp x0, value_label
+  add x0, x0, :lo12:value_label
+  mov x1, xzr
+  bl dali_bootstrap_value
+  check_daif
+  adrp x0, value_label
+  add x0, x0, :lo12:value_label
+  mov x1, #-1
+  bl dali_bootstrap_value
+  check_daif
+  adrp x0, boundary_label
+  add x0, x0, :lo12:boundary_label
+  mov x1, #1
+  bl dali_bootstrap_value
+  check_daif
   adrp x0, overlong
   add x0, x0, :lo12:overlong
   bl dali_bootstrap_log
@@ -185,6 +215,11 @@ high_entry:
   adrp x0, overlong
   add x0, x0, :lo12:overlong
   bl dali_bootstrap_stage
+  check_daif
+  adrp x0, overlong
+  add x0, x0, :lo12:overlong
+  mov x1, #1
+  bl dali_bootstrap_value
   check_daif
   ldr x16, =0x91f00000
   ldr x0, [x16, #24]
@@ -248,6 +283,12 @@ failed:
 .section .rodata
 message: .asciz "DALI:C0 fixture reached\n"
 stage_message: .asciz "fixture stage"
+value_label: .asciz "fixture"
+boundary_label:
+.rept 164
+.byte 97
+.endr
+.byte 0
 overlong:
 .rept 192
 .byte 120
@@ -279,6 +320,9 @@ vm_offset_t fixture_final_map(unsigned long mode) {
     real_avail_end = mode == 3 ? 0xb0804000 : 0xa0804000;
     cpu_tte = (tt_entry_t *)(0xfffffff007004000UL + 0x91004000UL - gPhysBase);
     return dali_console_map_final();
+}
+''' + '\nunsigned long fixture_panic_snapshot(void);\nunsigned long fixture_panic_snapshot(void) {\n' + snapshot + r'''
+    return esr == 0x96000004UL && far == 0x12345000UL && elr == 0x12345678UL;
 }
 ''')
             subprocess.run(["clang", "--target=aarch64-none-elf", "-c", work / "entry.S", "-o", work / "entry.o"], check=True)
@@ -336,11 +380,15 @@ vm_offset_t fixture_final_map(unsigned long mode) {
                         suffix = b"DALI:XM\n"
                     elif case == "mapped":
                         suffix = b"DALI:X7\nDALI:X8\nDALI:X9\nDALI:C0 fixture reached\nDALI:K fixture stage\n"
+                        suffix += b"DALI:E fixture=0x0000000000000000\nDALI:E fixture=0xffffffffffffffff\n"
+                        suffix += b"DALI:E " + b"a" * 164 + b"=0x0000000000000001\n"
                     elif case == "almost-full-ring":
                         suffix = b"DALI:X7\nDALI:X8\nDALI:X9\n"
                     elif case.startswith("final-") and case != "final-non-dali":
                         suffix = b"DALI:X7\nDALI:X8\nDALI:X9\nDALI:C0 fixture reached\n"
                         suffix += b"DALI:K fixture stage\n"
+                        suffix += b"DALI:E fixture=0x0000000000000000\nDALI:E fixture=0xffffffffffffffff\n"
+                        suffix += b"DALI:E " + b"a" * 164 + b"=0x0000000000000001\n"
                         if case == "final-mapped":
                             suffix += b"DALI:V8 fixture final TTBR1 live\nDALI:V9 fixture TTBR0 removed\n"
                         else:

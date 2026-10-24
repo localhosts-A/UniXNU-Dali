@@ -133,6 +133,16 @@ Android/root and all 18 hashes were restored again after manual fastboot. The
 next diagnostic continues through `machine_conf`, kernel bootstrap and IOKit;
 those later stages remain unverified.
 
+The next hardware cycle completed `machine_conf` and the kernel version print;
+its last persistent stage was `zalloc` inside VM bootstrap. The current diagnostic
+records startup callback entry/return addresses and zone initialization steps.
+It also records assertion file/expression pointers and line numbers, panic
+format/caller pointers, opaque context and raw ESR/FAR/ELR. Static pointers can be
+resolved on the host using the exact kernel artifact; the guest does not inspect
+panic format arguments or dereference the context. These records diagnose the
+stop and do not bypass allocator checks. Android/root and all 18 original hashes
+were restored after that cycle; full platform/GIC/timer acceptance is pending.
+
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
 keeps the prior UEFI-only test menu for firmware checks without an XNU artifact.

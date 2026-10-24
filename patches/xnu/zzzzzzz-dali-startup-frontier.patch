@@ -1,0 +1,218 @@
+--- a/osfmk/arm64/dali_bootstrap_log.c
++++ b/osfmk/arm64/dali_bootstrap_log.c
+@@ -12,6 +12,7 @@
+ void dali_bootstrap_log(const char *message);
+ void dali_bootstrap_log_end(void);
+ void dali_bootstrap_stage(const char *message);
++void dali_bootstrap_value(const char *label, unsigned long value);
+ 
+ void
+ dali_bootstrap_log(const char *message)
+@@ -80,3 +81,34 @@
+     line[at] = 0;
+     dali_bootstrap_log(line);
+ }
++
++/* Addresses are resolved on the host against this exact kernel artifact. */
++void
++dali_bootstrap_value(const char *label, unsigned long value)
++{
++    if (!dali_bootstrap_console) {
++        return;
++    }
++    char line[192];
++    const char prefix[] = "DALI:E ";
++    for (unsigned int index = 0; index < 7; index++) {
++        line[index] = prefix[index];
++    }
++    unsigned int at = 7, index = 0;
++    while (at < sizeof(line) - 21 && label[index]) {
++        line[at++] = label[index++];
++    }
++    if (label[index]) {
++        return;
++    }
++    line[at++] = '=';
++    line[at++] = '0';
++    line[at++] = 'x';
++    for (int shift = 60; shift >= 0; shift -= 4) {
++        unsigned int digit = (unsigned int)((value >> shift) & 15UL);
++        line[at++] = (char)(digit < 10 ? '0' + digit : 'a' + digit - 10);
++    }
++    line[at++] = '\n';
++    line[at] = 0;
++    dali_bootstrap_log(line);
++}
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -222,6 +222,7 @@
+ #if defined(__arm64__)
+ extern void dali_bootstrap_log(const char *message);
+ extern void dali_bootstrap_stage(const char *message);
++extern void dali_bootstrap_value(const char *label, unsigned long value);
+ #endif
+ 
+ static inline void
+@@ -421,7 +422,13 @@
+ 		}
+ 		startup_phase = cur->subsystem - 1;
+ 		kernel_startup_log(cur->subsystem);
++#if defined(__arm64__)
++		dali_bootstrap_value("startup enter", (unsigned long)cur->func);
++#endif
+ 		cur->func(cur->arg);
++#if defined(__arm64__)
++		dali_bootstrap_value("startup return", (unsigned long)cur->func);
++#endif
+ 		startup_entry_cur = ++cur;
+ 	}
+ 	kernel_startup_log(upto);
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -738,6 +738,12 @@
+ 	return ret;
+ }
+ 
++#if defined(__arm64__)
++extern volatile unsigned long dali_bootstrap_console;
++extern void dali_bootstrap_stage(const char *message);
++extern void dali_bootstrap_value(const char *label, unsigned long value);
++#endif
++
+ void __attribute__((noinline))
+ Assert(
+ 	const char      *file,
+@@ -754,6 +760,11 @@
+ 	}
+ #endif
+ 
++#if defined(__arm64__)
++	dali_bootstrap_value("assert file", (unsigned long)file);
++	dali_bootstrap_value("assert line", (unsigned long)line);
++	dali_bootstrap_value("assert expression", (unsigned long)expression);
++#endif
+ 	panic_plain("%s:%d Assertion failed: %s", file, line, expression);
+ }
+ 
+@@ -1133,6 +1144,27 @@
+     uint64_t panic_options_mask, void *panic_data_ptr, unsigned long panic_caller)
+ {
+ #pragma clang diagnostic pop
++
++#if defined(__arm64__)
++	if (dali_bootstrap_console) {
++		/* DALI_PANIC_SNAPSHOT_BEGIN */
++		unsigned long daif, esr, far, elr;
++		__asm__ volatile("mrs %0, daif\n\tmsr daifset, #3" : "=r" (daif) :: "memory");
++		__asm__ volatile("mrs %0, esr_el1\n\tmrs %1, far_el1\n\tmrs %2, elr_el1"
++		    : "=r" (esr), "=r" (far), "=r" (elr) :: "memory");
++		__asm__ volatile("msr daif, %0" :: "r" (daif) : "memory");
++		/* DALI_PANIC_SNAPSHOT_END */
++		/* Keep ctx opaque and never dereference panic format/va_list pointers. */
++		dali_bootstrap_stage("panic_trap_to_debugger");
++		dali_bootstrap_value("panic format", (unsigned long)panic_format_str);
++		dali_bootstrap_value("panic caller", panic_caller);
++		dali_bootstrap_value("panic context", (unsigned long)ctx);
++		dali_bootstrap_value("panic reason", reason);
++		dali_bootstrap_value("panic raw ESR_EL1", esr);
++		dali_bootstrap_value("panic raw FAR_EL1", far);
++		dali_bootstrap_value("panic raw ELR_EL1", elr);
++	}
++#endif
+ 
+ #if defined(__x86_64__) && (DEVELOPMENT || DEBUG)
+ 	read_lbr();
+--- a/osfmk/kern/zalloc.c
++++ b/osfmk/kern/zalloc.c
+@@ -10480,6 +10480,11 @@
+  * Global initialization of Zone Allocator.
+  * Runs after zone_bootstrap.
+  */
++#if defined(__arm64__)
++extern void dali_bootstrap_stage(const char *message);
++extern void dali_bootstrap_value(const char *label, unsigned long value);
++#endif
++
+ __startup_func
+ static void
+ zone_init(void)
+@@ -10487,6 +10492,12 @@
+ 	vm_size_t           remaining_size = ZONE_MAP_VA_SIZE;
+ 	mach_vm_offset_t    submap_min = 0;
+ 	uint64_t            denom = zone_submap_ratios_denom();
++#if defined(__arm64__)
++	dali_bootstrap_stage("zone_init entered");
++	dali_bootstrap_value("zone sane bytes", sane_size);
++	dali_bootstrap_value("zone wired pages", zone_pages_wired_max);
++	dali_bootstrap_value("zone meta bytes", zone_meta_size);
++#endif
+ 	/*
+ 	 * And now allocate the various pieces of VA and submaps.
+ 	 */
+@@ -10516,15 +10527,27 @@
+ 	 * Allocate the submaps
+ 	 */
+ 	for (zone_submap_idx_t idx = 0; idx < Z_SUBMAP_IDX_COUNT; idx++) {
++#if defined(__arm64__)
++		dali_bootstrap_value("zone submap enter", idx);
++#endif
+ 		if (submap_ratios[idx] == 0) {
+ 			zone_submaps[idx] = VM_MAP_NULL;
+ 		} else {
+ 			zone_submap_init(&submap_min, idx, submap_ratios[idx],
+ 			    &denom, &remaining_size);
+ 		}
+-	}
+-
++#if defined(__arm64__)
++		dali_bootstrap_value("zone submap return", idx);
++#endif
++	}
++
++#if defined(__arm64__)
++	dali_bootstrap_stage("zone_metadata_init enter");
++#endif
+ 	zone_metadata_init();
++#if defined(__arm64__)
++	dali_bootstrap_stage("zone_metadata_init returned");
++#endif
+ 
+ #if VM_TAG_SIZECLASSES
+ 	if (zone_tagging_on) {
+@@ -10535,6 +10558,9 @@
+ 	zone_create_flags_t kma_flags = ZC_NOCACHING | ZC_NOGC | ZC_NOCALLOUT |
+ 	    ZC_KASAN_NOQUARANTINE | ZC_KASAN_NOREDZONE | ZC_VM;
+ 
++#if defined(__arm64__)
++	dali_bootstrap_stage("zone permanent allocation enter");
++#endif
+ 	(void)zone_create_ext("vm.permanent", 1, kma_flags | ZC_NOTBITAG,
+ 	    ZONE_ID_PERMANENT, ^(zone_t z) {
+ 		z->z_permanent = true;
+@@ -10546,10 +10572,16 @@
+ 		z->z_elem_size = 1;
+ 	});
+ 
++#if defined(__arm64__)
++	dali_bootstrap_stage("zone permanent allocation returned");
++#endif
+ 	zc_magazine_zone = zone_create("zcc_magazine_zone", sizeof(struct zone_magazine) +
+ 	    zc_mag_size() * sizeof(vm_offset_t),
+ 	    ZC_VM | ZC_NOCACHING | ZC_ZFREE_CLEARMEM | ZC_PGZ_USE_GUARDS);
+ 	zone_raise_reserve(zc_magazine_zone, (uint16_t)(2 * zpercpu_count()));
++#if defined(__arm64__)
++	dali_bootstrap_stage("zone magazine ready; migrating statistics");
++#endif
+ 
+ 	/*
+ 	 * Now migrate the startup statistics into their final storage,
+@@ -10574,6 +10606,9 @@
+ #endif /* KASAN_TBI */
+ 		}
+ 	}
++#if defined(__arm64__)
++	dali_bootstrap_stage("zone_init returned");
++#endif
+ }
+ STARTUP(ZALLOC, STARTUP_RANK_FIRST, zone_init);
+ 
