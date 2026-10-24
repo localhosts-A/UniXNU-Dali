@@ -70,7 +70,7 @@
  volatile unsigned long dali_bootstrap_console;
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -1817,6 +1817,62 @@
+@@ -1817,6 +1817,63 @@
  #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
  #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
  
@@ -91,7 +91,8 @@
 +		return 0;
 +	}
 +#if !defined(__ARM_16K_PG__) && !XNU_MONITOR && !__ARM_KERNEL_PROTECT__
-+	const vm_map_address_t va = VM_MIN_KERNEL_ADDRESS + ARM_TT_L2_SIZE;
++	/* VM_MIN_KERNEL_ADDRESS is 64 GiB below low globals on this native ABI. */
++	const vm_map_address_t va = LOW_GLOBAL_BASE_ADDRESS + ARM_TT_L2_SIZE;
 +	if (dali_bootstrap_console != 0xAEC0F000UL ||
 +	    va + 2 * ARM_TT_L2_SIZE > gVirtBase ||
 +	    (gPhysBase < 0xAF000000ULL && real_avail_end > 0xAEC00000ULL)) {
@@ -133,7 +134,7 @@
  void
  arm_vm_init(uint64_t memory_size, boot_args * args)
  {
-@@ -1829,6 +1885,9 @@
+@@ -1829,6 +1886,9 @@
  	uint64_t         mem_segments;
  	vm_offset_t      ptpage_vaddr;
  	vm_map_address_t dynamic_memory_begin;
@@ -143,7 +144,7 @@
  
  	/*
  	 * Get the virtual and physical kernel-managed memory base from boot_args.
-@@ -1852,6 +1911,7 @@
+@@ -1852,6 +1912,7 @@
  	gPhysSize = mem_size = ((gPhysBase + args->memSize) & ~PAGE_MASK) - gPhysBase;
  
  	mem_actual = args->memSizeActual ? args->memSizeActual : mem_size;
@@ -151,7 +152,7 @@
  
  	if ((memory_size != 0) && (mem_size > memory_size)) {
  		mem_size = memory_size;
-@@ -1918,6 +1978,7 @@
+@@ -1918,6 +1979,7 @@
  		panic("Unsupported memory configuration %lx", mem_size);
  	}
  
@@ -159,7 +160,7 @@
  	boot_tte = (tt_entry_t *)&bootstrap_pagetables;
  	boot_ttep = kvtophys((vm_offset_t)boot_tte);
  
-@@ -1978,6 +2039,7 @@
+@@ -1978,6 +2040,7 @@
  	 *   the so called physical aperture should be statically mapped
  	 */
  	init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, TRUE, ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
@@ -167,7 +168,7 @@
  
  #if defined(ARM_LARGE_MEMORY)
  	/*
-@@ -2101,7 +2163,9 @@
+@@ -2101,7 +2164,9 @@
  	vm_prelink_sdata = segPRELINKDATAB;
  	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
  
@@ -177,7 +178,7 @@
  
  	/*
  	 * Initialize the page tables for the low globals:
-@@ -2147,8 +2211,15 @@
+@@ -2147,8 +2212,15 @@
  
  	arm_set_user_tbi();
  
@@ -193,7 +194,7 @@
  
  #if XNU_MONITOR
  	ml_enable_monitor();
-@@ -2157,6 +2228,7 @@
+@@ -2157,6 +2229,7 @@
  	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
  
  	flush_mmu_tlb();
@@ -201,7 +202,7 @@
  	kva_active = TRUE;
  	// global table pointers may need to be different due to physical aperture remapping
  	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
-@@ -2253,7 +2325,9 @@
+@@ -2253,7 +2326,9 @@
      }
  #endif
  #endif
@@ -211,7 +212,7 @@
  
  	disable_preemption();
  
-@@ -2377,9 +2451,11 @@
+@@ -2377,9 +2452,11 @@
  #if XNU_MONITOR
  	pmap_static_allocations_done();
  #endif

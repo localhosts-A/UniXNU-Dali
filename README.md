@@ -117,6 +117,13 @@ switch, TTBR0 removal and C writer, including conflicting tables, insufficient
 VA gaps and invalid or full rings. Hardware qualification of the final alias is
 pending.
 
+The next hardware cycle reached `V6` (final tables prepared), then safely refused
+the alias because the first implementation used `VM_MIN_KERNEL_ADDRESS`, which
+is 64 GiB below low globals in this XNU ABI. The mapper now uses
+`LOW_GLOBAL_BASE_ADDRESS`; the instruction fixture uses both distinct native
+constants. That cycle required manual fastboot and restored Android/root and all
+18 original partition hashes. The corrected alias still needs hardware testing.
+
 `package/unixnu.toml` selects the source-built kernel, with HelloPayload and a
 firmware-return action retained for diagnostics. `package/unixnu-uefi-test.toml`
 keeps the prior UEFI-only test menu for firmware checks without an XNU artifact.

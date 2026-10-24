@@ -67,7 +67,9 @@ class BootstrapConsoleTests(unittest.TestCase):
 #define ARM_TTE_TYPE_BLOCK 0
 #define ARM_TTE_EMPTY 0
 #define ARM_PGBYTES 4096
-#define VM_MIN_KERNEL_ADDRESS 0xfffffff000000000UL
+// Match pinned native pmap.h and vm_param.h: these differ by 64 GiB.
+#define VM_MIN_KERNEL_ADDRESS 0xffffffe000000000UL
+#define LOW_GLOBAL_BASE_ADDRESS 0xfffffff000000000UL
 #define ARM_TTE_BLOCK_AF 0x400
 #define ARM_TTE_BLOCK_SH(x) ((x) << 8)
 #define SH_OUTER_MEMORY 2
