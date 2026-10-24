@@ -22,6 +22,20 @@ def hardware_arguments():
     return arguments
 
 
+def validate_budget_refusal(refusal, kernel_sha256, kernel_args):
+    regions = refusal.get('entry_regions', {})
+    def argument_string(request):
+        return bytes.fromhex(regions.get(request, {}).get('bytes', '')).split(b'\0', 1)[0].decode()
+    # XNU Assert(file, line, expression) has three arguments. x3 is unrelated
+    # caller state, not a fatal/nonfatal flag.
+    if refusal.get('kernel_sha256') != kernel_sha256 or \
+            refusal.get('kernel_arguments') != kernel_args or \
+            refusal.get('bounded_timeout_interrupted') or refusal.get('stop_symbol') != '_Assert' or \
+            argument_string('0:0:40') != 'kalloc.c' or \
+            argument_string('2:0:60') != 'n_zones_sig + n_zones_type + 1 <= 32':
+        raise SystemExit('Default-budget control did not reproduce the real kalloc scratch-array assertion')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unixnu", type=Path, required=True)
@@ -111,16 +125,7 @@ def main():
     if result.returncode:
         raise SystemExit(f'Default kalloc budget control failed:\n{result.stdout[-5000:]}')
     refusal = json.loads((destination / 'gdb-stop.json').read_text())
-    regions = refusal.get('entry_regions', {})
-    def argument_string(request):
-        return bytes.fromhex(regions.get(request, {}).get('bytes', '')).split(b'\0', 1)[0].decode()
-    if refusal.get('kernel_sha256') != reports['platform']['kernel_sha256'] or \
-            refusal.get('kernel_arguments') != negative_args or \
-            refusal.get('bounded_timeout_interrupted') or refusal.get('stop_symbol') != '_Assert' or \
-            int(refusal.get('x3', '0'), 16) != 1 or \
-            argument_string('0:0:40') != 'kalloc.c' or \
-            argument_string('2:0:60') != 'n_zones_sig + n_zones_type + 1 <= 32':
-        raise SystemExit('Default-budget control did not reproduce the real kalloc scratch-array assertion')
+    validate_budget_refusal(refusal, reports['platform']['kernel_sha256'], negative_args)
 
     summary = {
         "kernel_sha256": hashes.pop(),
