@@ -61,7 +61,7 @@ int main() {
   State s;
   assert(daliIssueSoftwareReset(ops(s)));
   assert(s.writes == 2 && s.resets == 1 && s.fences == 3);
-  assert(s.mode == 0x135 && s.marker == 0x40002003 && strcmp(s.last, "returned") == 0);
+  assert(s.mode == 0x135 && s.marker == 0x40002003 && strcmp(s.last, "issue") == 0);
   for (uint32_t marker : {0U, 2U, 0xffffffffU}) {
     State t; t.marker = marker;
     assert(!daliIssueSoftwareReset(ops(t)) && t.writes == 0);

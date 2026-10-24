@@ -135,7 +135,13 @@ static void recoverToFastboot(IOMemoryMap *console, const char *token)
   RecoveryContext context = {static_cast<uintptr_t> (mapping->getVirtualAddress ()), console, token};
   DaliRecoveryOps ops = {&context, recoveryRead, recoveryWrite, recoveryFence, recoveryRecord};
   IODelay (1000000); // Bounded interval after the completed checkpoint record.
-  daliIssueSoftwareReset (ops);
+  if (daliIssueSoftwareReset (ops)) {
+    // The Linux restart loop allows a delay after SWRST. Completion of its
+    // MMIO store alone does not prove that reset has already asserted.
+    IODelay (100000);
+    recoveryRecord (&context, "returned", recoveryRead (&context, 0x24), recoveryRead (&context, 0));
+    recoveryFence (&context);
+  }
 }
 
 class DaliBootLog : public IOService {

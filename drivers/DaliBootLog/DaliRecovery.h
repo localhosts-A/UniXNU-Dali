@@ -45,7 +45,6 @@ static inline bool daliIssueSoftwareReset(const DaliRecoveryOps &ops)
   ops.fence(ops.context); // Commit the persistent record before resetting.
   ops.write(ops.context, 0x14, 0x1209);
   ops.fence(ops.context);
-  ops.record(ops.context, "returned", marker, readback);
-  return true; // A real successful reset does not return to this caller.
+  return true; // MMIO completion can precede reset assertion; caller waits.
 }
 #endif
