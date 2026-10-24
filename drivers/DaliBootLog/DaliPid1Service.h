@@ -15,6 +15,7 @@ struct DaliPid1Report {
   uint32_t active, offline, pid, sequence, readonlyRoot, failures, complete, reserved;
   uint64_t firstNs, elapsedNs;
 };
+static_assert (sizeof (DaliPid1Report) == 48, "PID1 observation ABI changed");
 extern volatile DaliPid1Report dali_pid1_report;
 volatile DaliPid1Report dali_pid1_report = {};
 }
@@ -76,7 +77,8 @@ static void pid1EndReset()
   }
   entry->release ();
   if (resetType != 0x80000201U) { return; }
-  if (!pid1Record ("end-reset-issue", 30, dali_pid1_report.elapsedNs)) { return; }
+  // The callback queries PSCI_FEATURES first and can refuse without RESET2.
+  if (!pid1Record ("end-reset-request", 30, dali_pid1_report.elapsedNs)) { return; }
   RecoveryContext context = {0, gPid1Console, gPid1Token, UINT32_MAX, UINT32_MAX, resetType};
   recoveryFence (&context);
   recoverySystemReset (&context);

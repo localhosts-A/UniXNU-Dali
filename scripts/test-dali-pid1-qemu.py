@@ -14,7 +14,8 @@ DEVICE = Path(__file__).resolve().parents[1]
 
 
 def validate_report(report, kernel_sha, process_sha, trust_sha):
-    if report.get('kernel_sha256') != kernel_sha or report.get('native_user_image_sha256') != process_sha or \
+    if report.get('boot_path') != 'uefi-unixnu-darwinboot' or \
+            report.get('kernel_sha256') != kernel_sha or report.get('native_user_image_sha256') != process_sha or \
             report.get('trust_cache_bundle_sha256') != trust_sha or report.get('bounded_timeout_interrupted') or \
             not report.get('native_user_el0_observed') or not report.get('native_user_4k_abi_observed'):
         raise ValueError('PID1 did not reach its real EL0 completion instruction with native 4K syscalls')
@@ -42,7 +43,8 @@ def validate_report(report, kernel_sha, process_sha, trust_sha):
     return {'kernel_sha256': kernel_sha, 'process_sha256': process_sha,
             'trust_cache_sha256': trust_sha, 'pid': 1, 'readonly_mockfs': True,
             'write_open_errno': 30, 'kernel_elapsed_ns': state['elapsed_ns'],
-            'heartbeats': 31, 'hardware_demonstrated': False}
+            'heartbeats': 31, 'runtime_trust_cache_provider': False,
+            'apple_trust_chain_verified': False, 'hardware_demonstrated': False}
 
 
 def main():

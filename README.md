@@ -1,8 +1,11 @@
 # UniXNU-Dali
 
 The next milestone is an owned static PID1 on a read-only mockfs RAM root.
-The source profile now includes mockfs and runtime loading of the one-entry
-test trust cache. `dali-pid1=1 dali-auto-fastboot=0` selects continuation after
+The source profile now includes mockfs. Its original BCM2837 development
+configuration has no Image4/AMFI provider, so trust-cache runtime initialization
+stays disabled: enabling it panics before platform start. The one-entry own
+test trust cache is a loader input; its runtime trust membership is unverified.
+`dali-pid1=1 dali-auto-fastboot=0` selects continuation after
 the platform checkpoint, retaining the single-CPU early diagnostic sink. The
 existing early-boot menu remains the hardware default until RAM-root packaging
 and the new path are qualified. Do not enable its 31-second recovery watchdog

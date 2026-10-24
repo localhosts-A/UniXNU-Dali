@@ -15,7 +15,8 @@ class Pid1Tests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('pid1_gate', path)
         gate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate)
-        report = {'kernel_sha256': 'a', 'native_user_image_sha256': 'b',
+        report = {'boot_path': 'uefi-unixnu-darwinboot',
+                  'kernel_sha256': 'a', 'native_user_image_sha256': 'b',
                   'trust_cache_bundle_sha256': 'c', 'native_user_el0_observed': True,
                   'native_user_4k_abi_observed': True,
                   'native_user_syscalls': {'pid': 1, 'sysctl_result': 0, 'page_size': 4096,
@@ -44,7 +45,7 @@ class Pid1Tests(unittest.TestCase):
             bad[group][key] = value
             with self.subTest(group=group, key=key), self.assertRaises(ValueError):
                 evaluate(bad)
-        for key in ('kernel_sha256', 'native_user_image_sha256', 'trust_cache_bundle_sha256'):
+        for key in ('boot_path', 'kernel_sha256', 'native_user_image_sha256', 'trust_cache_bundle_sha256'):
             bad = copy.deepcopy(report)
             bad[key] = 'wrong'
             with self.subTest(identity=key), self.assertRaises(ValueError):
