@@ -25,6 +25,7 @@ class PlatformTests(unittest.TestCase):
         cls.lib.memory_case.restype = C.c_bool
         cls.lib.dma_case.argtypes = [C.c_uint64]*4
         cls.lib.dma_case.restype = C.c_bool
+        cls.lib.scratch_policy_case.argtypes = [C.c_uint, C.POINTER(C.c_uint64)]
 
     @classmethod
     def tearDownClass(cls):
@@ -107,3 +108,13 @@ class PlatformTests(unittest.TestCase):
         for cpu,pa,n,span in ((0xfffffffffffff000,0x80000000,8192,8192),(0x10001,0x80000000,4096,4096),
                               (0x10000,0xfffff000,8192,8192),(0x10000,0x100000000,4096,4096),(0x10000,0x80000000,8192,4096)):
             self.assertFalse(self.lib.dma_case(cpu,pa,n,span))
+
+    def test_scratch_grant_binds_identity_geometry_and_exact_window(self):
+        def check(mode):
+            out = (C.c_uint64*2)(); self.lib.scratch_policy_case(mode, out); return tuple(out)
+        self.assertEqual(check(0), (1, 1))
+        self.assertEqual(check(26), (1, 1))  # Last block remains inside the window.
+        for mode in range(1, 11):
+            with self.subTest(invalid_grant=mode): self.assertEqual(check(mode), (0, 0))
+        for mode in range(11, 26):
+            with self.subTest(rejected_request=mode): self.assertEqual(check(mode), (1, 0))

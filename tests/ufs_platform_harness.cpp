@@ -93,3 +93,47 @@ extern "C" bool memory_case(uint64_t base,uint64_t cap,uint64_t at,uint64_t byte
   CacheSpan r;bool ok=cacheSpan(base,cap,at,bytes,line,r);out[0]=r.begin;out[1]=r.end;return ok;
 }
 extern "C" bool dma_case(uint64_t cpu,uint64_t pa,uint64_t bytes,uint64_t contiguous){return dmaSpan(cpu,pa,bytes,contiguous);}
+extern "C" void scratch_policy_case(unsigned mode,uint64_t *out){
+  ScratchGrant g{};g.enabled=true;strcpy(g.token,"0123456789abcdef0123456789abcdef");
+  memset(g.deviceBinding,1,sizeof g.deviceBinding);memset(g.candidateSha256,2,sizeof g.candidateSha256);
+  memset(g.sourceSha256,3,sizeof g.sourceSha256);memset(g.partitionGuid,4,sizeof g.partitionGuid);
+  g.lun=2;g.blockBytes=4096;g.capacityBlocks=64577536;g.bootStartLba=418560;g.bootBlocks=16384;
+  g.payloadEndBytes=5062656;g.scratchStartLba=434432;g.scratchBlocks=256;g.tailGuardBlocks=256;
+  ScratchObservation o{};o.identityVerified=true;o.gptVerified=true;o.writeProtected=false;o.lun=2;
+  strcpy(o.token,g.token);memcpy(o.deviceBinding,g.deviceBinding,sizeof g.deviceBinding);
+  memcpy(o.candidateSha256,g.candidateSha256,sizeof g.candidateSha256);
+  memcpy(o.sourceSha256,g.sourceSha256,sizeof g.sourceSha256);
+  memset(o.partitionGuid,4,sizeof o.partitionGuid);o.blockBytes=4096;o.capacityBlocks=64577536;
+  o.bootStartLba=418560;o.bootBlocks=16384;
+  uint64_t lba=g.scratchStartLba;uint32_t blocks=1;
+  switch(mode){
+    case 1:g.enabled=false;break;
+    case 2:g.token[0]='z';break;
+    case 3:memset(g.deviceBinding,0,sizeof g.deviceBinding);break;
+    case 4:memset(g.candidateSha256,0,sizeof g.candidateSha256);break;
+    case 5:memset(g.sourceSha256,0,sizeof g.sourceSha256);break;
+    case 6:memset(g.partitionGuid,0,sizeof g.partitionGuid);break;
+    case 7:g.blockBytes=0;break;
+    case 8:g.capacityBlocks=1;break;
+    case 9:g.scratchStartLba=g.bootStartLba+g.payloadEndBytes/g.blockBytes-1;break;
+    case 10:--g.tailGuardBlocks;break;
+    case 11:o.writeProtected=true;break;
+    case 12:o.lun=1;break;
+    case 13:--o.capacityBlocks;break;
+    case 14:o.blockBytes=512;break;
+    case 15:o.partitionGuid[0]^=1;break;
+    case 16:o.gptVerified=false;break;
+    case 17:o.identityVerified=false;break;
+    case 18:lba=g.scratchStartLba-1;break;
+    case 19:lba=g.scratchStartLba+g.scratchBlocks-1;blocks=2;break;
+    case 20:lba=g.scratchStartLba+g.scratchBlocks;break;
+    case 21:blocks=0;break;
+    case 22:o.token[0]='f';break;
+    case 23:o.deviceBinding[0]^=1;break;
+    case 24:o.candidateSha256[0]^=1;break;
+    case 25:o.sourceSha256[0]^=1;break;
+    case 26:lba=g.scratchStartLba+g.scratchBlocks-1;break;
+    default:break;
+  }
+  out[0]=scratchGrantValid(g);out[1]=scratchWriteAllowed(g,o,lba,blocks);
+}

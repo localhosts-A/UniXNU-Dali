@@ -12,6 +12,46 @@ bool tokenValid(const char *s) {
   for (unsigned i = 0; i < 32; ++i) if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return false;
   return s[32] == 0;
 }
+static bool nonzero(const uint8_t *bytes, size_t count) {
+  uint8_t value = 0; for (size_t i = 0; i < count; ++i) value |= bytes[i]; return value != 0;
+}
+bool scratchGrantValid(const ScratchGrant &g) {
+  constexpr uint64_t ScratchBytes = 1024 * 1024;
+  if (!g.enabled || !tokenValid(g.token) || g.lun >= 8 ||
+      !nonzero(g.deviceBinding, sizeof g.deviceBinding) ||
+      !nonzero(g.candidateSha256, sizeof g.candidateSha256) ||
+      !nonzero(g.sourceSha256, sizeof g.sourceSha256) ||
+      !nonzero(g.partitionGuid, sizeof g.partitionGuid)) return false;
+  if (g.blockBytes < 512 || g.blockBytes > 65536 || (g.blockBytes & (g.blockBytes - 1)) ||
+      ScratchBytes % g.blockBytes || !g.capacityBlocks || !g.bootBlocks || !g.payloadEndBytes) return false;
+  if (g.bootBlocks > UINT64_MAX / g.blockBytes) return false;
+  const uint64_t bootBytes = g.bootBlocks * g.blockBytes;
+  if (g.payloadEndBytes > bootBytes || g.bootStartLba >= g.capacityBlocks ||
+      g.bootBlocks > g.capacityBlocks - g.bootStartLba) return false;
+  const uint64_t expectedWindowBlocks = ScratchBytes / g.blockBytes;
+  if (g.scratchBlocks != expectedWindowBlocks || g.tailGuardBlocks != expectedWindowBlocks ||
+      g.scratchStartLba < g.bootStartLba) return false;
+  const uint64_t bootEndLba = g.bootStartLba + g.bootBlocks;
+  const uint64_t scratchOffsetBlocks = g.scratchStartLba - g.bootStartLba;
+  if (scratchOffsetBlocks > UINT64_MAX / g.blockBytes ||
+      scratchOffsetBlocks * g.blockBytes < g.payloadEndBytes ||
+      g.scratchStartLba > bootEndLba || g.scratchBlocks > bootEndLba - g.scratchStartLba ||
+      g.tailGuardBlocks != bootEndLba - g.scratchStartLba - g.scratchBlocks) return false;
+  return true;
+}
+bool scratchWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uint64_t lba, uint32_t blocks) {
+  if (!scratchGrantValid(g) || !o.identityVerified || !o.gptVerified || o.writeProtected ||
+      !tokenValid(o.token) || strcmp(g.token, o.token) ||
+      memcmp(o.deviceBinding, g.deviceBinding, sizeof g.deviceBinding) ||
+      memcmp(o.candidateSha256, g.candidateSha256, sizeof g.candidateSha256) ||
+      memcmp(o.sourceSha256, g.sourceSha256, sizeof g.sourceSha256) ||
+      o.lun != g.lun || o.blockBytes != g.blockBytes || o.capacityBlocks != g.capacityBlocks ||
+      o.bootStartLba != g.bootStartLba || o.bootBlocks != g.bootBlocks ||
+      memcmp(o.partitionGuid, g.partitionGuid, sizeof g.partitionGuid) || !blocks ||
+      lba < g.scratchStartLba) return false;
+  const uint64_t offset = lba - g.scratchStartLba;
+  return offset < g.scratchBlocks && blocks <= g.scratchBlocks - offset;
+}
 bool resourceValid(const void *p, size_t bytes) {
   if (!p || bytes != ResourceBytes || memcmp(p, ResourceWords, sizeof(ResourceWords))) return false;
   auto digest = static_cast<const uint8_t *>(p) + sizeof(ResourceWords);

@@ -24,6 +24,33 @@ struct Ops {
   void (*delay)(void *, uint32_t) = nullptr;
   uint64_t (*sip)(void *, uint32_t service, uint32_t selector, uint32_t a, uint32_t b) = nullptr;
 };
+
+// An opt-in, token-bound window for one synthetic scratch BlockIo. Normal LU
+// devices remain read-only; both admission and pre-doorbell checks use this.
+struct ScratchGrant {
+  bool enabled = false;
+  char token[33]{};
+  uint8_t deviceBinding[32]{}, candidateSha256[32]{}, sourceSha256[32]{};
+  uint8_t partitionGuid[16]{};
+  uint8_t lun = 0;
+  uint32_t blockBytes = 0;
+  uint64_t capacityBlocks = 0, bootStartLba = 0, bootBlocks = 0, payloadEndBytes = 0;
+  uint64_t scratchStartLba = 0, scratchBlocks = 0, tailGuardBlocks = 0;
+};
+
+struct ScratchObservation {
+  bool identityVerified = false, gptVerified = false, writeProtected = true;
+  char token[33]{};
+  uint8_t deviceBinding[32]{}, candidateSha256[32]{}, sourceSha256[32]{};
+  uint8_t lun = 0;
+  uint8_t partitionGuid[16]{};
+  uint32_t blockBytes = 0;
+  uint64_t capacityBlocks = 0, bootStartLba = 0, bootBlocks = 0;
+};
+
+bool scratchGrantValid(const ScratchGrant &);
+bool scratchWriteAllowed(const ScratchGrant &, const ScratchObservation &, uint64_t lba, uint32_t blocks);
+
 enum class Result : uint32_t { Off, Rejected, Busy, Timeout, Hardware, Uic, Sip, Ready, Stopped };
 enum class Stage : uint32_t { Validate, Power, ReferenceClock, HostReset, Hce, PreLink, LinkStartup, PostLink, DeviceReset };
 struct Snapshot {
