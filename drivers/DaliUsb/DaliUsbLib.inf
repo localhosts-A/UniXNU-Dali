@@ -14,6 +14,7 @@
   DaliUsbGpio.c
   DaliUsbI2c.c
   DaliUsbI2cPins.c
+  DaliUsbI2cClocks.c
   DaliUsbPhy.c
   DaliUsbDomains.c
   DaliUsbResources.c

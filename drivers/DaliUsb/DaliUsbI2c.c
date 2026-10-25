@@ -64,6 +64,13 @@ static int idle(struct dali_usb_i2c6 *i)
     }
     return result;
 }
+int dali_usb_i2c6_check_idle(const struct dali_i2c6_io *io)
+{
+    if (!io || !io->controller.read32 || !io->dma.read32) return USB_INVALID;
+    if (io->controller.size < 0xfc || io->dma.size < 0xc) return USB_RANGE;
+    struct dali_usb_i2c6 value = {.io=*io};
+    return idle(&value);
+}
 static int reset_owned(struct dali_usb_i2c6 *i)
 {
     int result = dma_idle(i); /* This driver never started DMA; never stop foreign DMA. */

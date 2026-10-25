@@ -22,6 +22,10 @@ struct dali_usb_i2c6 {
 /* Vendor speed_v2 duty/factor search with compensation disabled: never exceed
  * 400kHz. parent_hz must be the proven, enabled, stable controller clock rate. */
 int dali_i2c6_timing_400k(uint32_t parent_hz, struct dali_i2c6_timing *);
+/* Read-only current channel0/APDMA idle inspection. Requires powered mappings
+ * and serialized/excluded writers; does not acquire a bus or acknowledge/reset
+ * unowned state. Also usable before init has established software ownership. */
+int dali_usb_i2c6_check_idle(const struct dali_i2c6_io *);
 /* Zeroed persistent object, serialized worker; qualified requires validated
  * Dali FDT, exclusive WHOLE I2C6@13170000/APDMA@16410000 ownership (all remote
  * clients stopped), native MMIO, main/dma clocks and GPIO104/105 I2C pin states.

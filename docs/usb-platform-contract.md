@@ -642,3 +642,67 @@ or during every read. Two snapshots cannot detect transient/ABA changes or
 replace a persistent writer-exclusion lease. Native source/power/bus exclusion
 policy, electrical suitability, runtime I2C/repeater composition, DMA and
 controllers still require separate implementation and qualification.
+
+## Native I2C6 bus and physical gate binding
+
+Revision4 appends AcquireI2cBus/GetI2cBusStatus/ReleaseI2cBus while retaining the
+previous protocol prefix. The real UsbI2cLib binds native bounded MMIO/fences and
+TimerLib delays to the production FIFO I2C6, GPIO72 and NXP bus implementations.
+Only the first4KiB controller/APDMA windows are used; byte FIFO accesses use real
+8-bit MMIO. APDMA is reset for the FIFO engine, never used for data DMA. Entry
+still performs no register/pin/power action. Acquire resets/configures the idle
+controller but issues no peripheral START, NXP probe or GPIO reset transition.
+
+I2C6's virtual clock ID5 resolves to physical IMPW bit2 (statusE00, enableCLR
+E04, disableSET E08). APDMA virtual I2C ID42 shares physical PERAO bit26 with
+other clients including UART (status14, enableCLR30, disableSET2c). Both use
+ordinary setclr gates, enabled when clear. The portable gate owner saves two
+masked status captures, marks ownership before writes and restores only gates
+acquired here in reverse order; inherited enabled gates and neighbors survive.
+Failures retain ownership and prohibit new enable. No TOP/PLL/mux/HWV change
+or source-frequency claim is made.
+
+The persistent noncopyable address token serializes bus callbacks with VUSB and
+ReadI2cPins at BSP/application TPL. Immutable metadata getters take no lease.
+Calls cannot overlap ExitBootServices or execute on an AP. Same-token acquire
+only revalidates the live instance and cannot replace its policy or reset it.
+Copied bus callbacks expire on release; callers destroy every dependent
+NXP/PHY object before release or token/storage reuse. No stale copy may be used
+in a subsequent lease, including reuse of the same token address.
+
+The external policy must already hold powered mappings, selected/reference/
+optional ULPOSC sources, suitable pin electrical settings and exclusion of all
+I2C6/GPIO72/104/105 and physical shared-gate writers/consumers. Validate proves
+these for the entire lease; Quiesce additionally proves affected consumers
+stopped; Release additionally proves all dependent objects already destroyed.
+Each proof callback is nonblocking and bounded to500us; resource transitions
+must happen before it. The native implementation checks actual source rates,
+parents, pin snapshot, GPIO72 mode/state and leaf-clock readback around transfers,
+but none of those checks establishes physical stability or exclusion.
+
+Failed controller initialization that observed foreign activity is never adopted
+or reset just for cleanup: while both clocks are known on, Close uses a read-only
+idle check before releasing gates. After partial gate-enable failure, reading
+the potentially unclocked controller is unsafe; cleanup instead requires the
+external Quiesce proof before restoring gates. Denied proof retains token/gates.
+Partial owned controller-reset recovery also depends on the continuous entire-
+controller exclusion proof. A native board policy/consumer is still pending;
+these interfaces do not implement that proof or authorize an unqualified probe.
+
+Faults stop new transfers, retain controller/gates/pin context and latch uncertain
+peripheral writes without replay. Explicit recovery/reset-low/release can clean
+up, but cannot clear a live fault into new transfers. Close destroys the owned
+controller, drives initialized GPIO72 low, then restores acquired gates; any
+failed step retains later dependencies. EBS independently closes native access
+and retains unreleased ownership. Release must precede the final memory map.
+
+Combined production-C tests execute actual DXE callbacks, native library, clock
+rate/pin/gate/GPIO/I2C and NXP probe/host/device/destroy code against register,
+Boot Services and policy models. They cover token/reentry/TPL, source/pin/foreign
+activity, NACK/read/write timeout and uncertain writes, failed gate enable with
+denied cleanup proof, no unclocked controller access, and EBS before/after every
+modeled startup/read/write/reset/recover/release MMIO. Clang/GCC sanitizers and
+real AArch64 archives/full firmware remain separate evidence from physical
+behavior. Actual policy, installed NXP/PHY consumer, controllers/CDC/DMA/roles,
+native console/handoff and all source XNU gates remain pending;
+`hardware_qualified=false`.
