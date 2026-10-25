@@ -7,6 +7,7 @@
   LIBRARY_CLASS = DaliUsbLib
 [Sources]
   DaliUsbPmif.c
+  DaliUsbVusb.c
   DaliUsbTypec.c
   DaliUsbMt6379Repeater.c
   DaliUsbNxpRepeater.c

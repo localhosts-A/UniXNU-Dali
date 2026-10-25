@@ -550,9 +550,51 @@ allocation/event/publication failures, poisoned duplicate entry and repeated EBS
 The host ABI bridge only adapts EDK2 UINTN to Linux size_t for fdt_check_full;
 the actual AArch64 firmware build is the production EDK2 type/link/FV gate.
 
-This service does not read hardware registers, hold a PLL/source or power rail,
-grant shared-provider leases, qualify DMA, register an HC or start a controller.
+This service's entry does not read hardware registers, hold a PLL/source or power
+rail, qualify DMA, register an HC or start a controller. Explicit power methods
+added below are independent of entry and require a caller's exclusion guard.
 HWRSC ACK and double-read snapshots do not establish those separate conditions.
 I2C pin/clock, connector/ADC, qualified DMA, native controllers/CDC/roles, native
 console/EBS handoff and all source XNU gates remain required. Offline results
 keep `hardware_qualified=false`.
+
+## Explicit native MT6373 VUSB lease
+
+Revision 2 of the resource-context protocol appends copied VUSB resources and
+explicit AcquireVusb/ReleaseVusb methods; the existing status prefix is unchanged.
+The private FDT parser additionally validates the enabled PMIF provider, exact
+four windows, SID5 M-route, MT6373 CID tuple, enabled regulator graph and USB0's
+unique supply reference. It requires the board's always-on policy, 1.2–3.5V
+range, 720us ramp and modes 0/2. This metadata does not measure a live voltage.
+
+The MT6373 transport shares the actual DALI_PMIC_BUS_PROTOCOL instance with
+SID4/SID14 users. It validates CID 0x73 at address 9 and nonzero SWCID at 0xb;
+address 8 is retained as chip revision. Public VUSB reads are restricted to
+identity, enable/LP, selector and trim registers. Legacy MT6379 operations reject
+SID5, and VUSB operations reject SID14, without issuing a command.
+
+Only an explicit acquire may set enable bit0 at 0x1b95. It preserves all other
+bits and exposes no voltage, trim, LP or disable write. Stable masked snapshots
+of enable/LP, selector and trim surround the operation, with at least720us delay
+even for an inherited enabled rail. Returned microvolts are the nominal selector
+table value; trim and LP are reported separately and do not prove power-good or
+suitability for the USB PHY. Release never disables this always-on supply.
+
+The address-identified token and its guard/context remain persistent until a
+successful release. Calls require the BSP at application TPL. The guard must
+prove USB/PHY quiescence and exclude external enable/voltage/trim/LP writers for
+the full lease; a native provider for that policy remains pending. Guards and
+bus callbacks may fail or reenter, so the context serializes calls and retains
+failed ownership. An applied/pending PMIF error reserves the shared response for
+the same token until explicit guarded recovery. No acquire retries an uncertain
+enable write. EBS closes access, faults the native PMIF context independently of
+shared-bus event ordering and retains any unreleased context.
+
+Production-C tests use the real PMIF, rail, native PMIC library, shared bus DXE,
+resource DXE and pinned libfdt with register/Boot Services models. They inject
+before/after effects at all154 startup MMIO positions, all16 selectors, independent
+enable/LP/trim/selector drift, SID arbitration, retained responses, reentry,
+guard failures and EBS during acquisition/release. Saved Dali FDT validation and
+the AArch64 archive/full firmware builds are separate gates. Models establish
+software ordering only; physical power, external-writer exclusion, source-clock
+hold, I2C pins, DMA and native controllers remain unqualified.
