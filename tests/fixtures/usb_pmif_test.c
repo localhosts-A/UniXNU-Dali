@@ -16,7 +16,7 @@ struct model {
     uint64_t now, complete_at;
     unsigned commands, clears, reads, writes, acquired, released, spacings, fail_read;
     uint32_t fail_write;
-    bool locked, busy, hang, pending, nack, command_write, uncertain_command;
+    bool locked, busy, hang, pending, nack, command_write, uncertain_command, reserved;
     uint16_t address;
     size_t length;
 };
@@ -72,8 +72,8 @@ static int acquire(void *context)
     if (m->busy || m->locked) return USB_BUSY;
     m->locked = true; ++m->acquired; return USB_OK;
 }
-static void release(void *context)
-{ struct model *m = context; assert(m->locked); m->locked = false; ++m->released; }
+static void release(void *context, bool pending_owned)
+{ struct model *m = context; assert(m->locked); m->reserved = pending_owned; m->locked = false; ++m->released; }
 static int init(struct model *m, struct dali_usb_pmif *p, bool qualified, uint16_t mask)
 {
     struct usb_mmio mmio = {m, sizeof(m->registers), read32, write32, barrier, delay};
@@ -154,11 +154,11 @@ static void test_nack_and_late_response(void)
     m.nack = false; m.hang = true;
     uint64_t before = m.now;
     assert(dali_mt6379_read(&p, 0x400, bytes, 2) == USB_TIMEOUT && m.now - before == 100000);
-    assert(p.faulted && p.pending_owned && p.pending_read && m.clears == 1 && bytes[0] == 0xa5);
+    assert(p.faulted && p.pending_owned && p.pending_read && m.reserved && m.clears == 1 && bytes[0] == 0xa5);
     unsigned commands = m.commands, reads = m.reads;
     assert(dali_mt6379_read(&p, 0x400, bytes, 2) == USB_IO && m.commands == commands && m.reads == reads);
     m.hang = false;
-    assert(dali_usb_pmif_recover(&p) == USB_OK && !p.faulted && !p.pending_owned && m.clears == 2 && m.commands == commands);
+    assert(dali_usb_pmif_recover(&p) == USB_OK && !p.faulted && !p.pending_owned && !m.reserved && m.clears == 2 && m.commands == commands);
     assert(bytes[0] == 0xa5 && bytes[1] == 0x5a); /* Recovery discards, never returns a stale response. */
     assert(dali_mt6379_read(&p, 0x400, bytes, 2) == USB_OK);
     assert(m.acquired == m.released);
@@ -174,9 +174,9 @@ static void test_write_uncertainty_and_io_failures(void)
     assert(dali_usb_pmif_recover(&p) == USB_OK);
     m.nack = false; m.hang = true;
     assert(dali_mt6379_write(&p, 0x108, &byte, 1) == USB_TIMEOUT && p.pending_owned && !p.pending_read);
-    assert(dali_usb_pmif_recover(&p) == USB_TIMEOUT && p.pending_owned);
+    assert(dali_usb_pmif_recover(&p) == USB_TIMEOUT && p.pending_owned && m.reserved);
     m.hang = false;
-    assert(dali_usb_pmif_recover(&p) == USB_OK && !p.pending_owned && p.write_uncertain);
+    assert(dali_usb_pmif_recover(&p) == USB_OK && !p.pending_owned && !m.reserved && p.write_uncertain);
     prepare(&m, &p); m.fail_write = WDATA;
     assert(dali_mt6379_write(&p, 0x108, &byte, 1) == USB_IO && !m.commands && !p.pending_owned && !p.write_uncertain);
     assert(dali_usb_pmif_recover(&p) == USB_OK);

@@ -10,9 +10,12 @@ struct dali_pmif_lock {
     void *context;
     /* Shared, IRQ-safe arbitration for every user of PMIF-M SWINF2, including
      * keypad sampling. Return BUSY without waiting when it cannot be acquired.
-     * This is not the Android/device inspection lock. */
+     * This is not the Android/device inspection lock. The platform must reserve
+     * the channel for this persistent client when release reports pending_owned;
+     * other clients stay blocked until this owner recovers and releases false.
+     * Merely checking hardware idle cannot preserve response ownership. */
     int (*try_acquire)(void *);
-    void (*release)(void *);
+    void (*release)(void *, bool pending_owned);
 };
 struct dali_usb_pmif {
     struct usb_mmio registers;

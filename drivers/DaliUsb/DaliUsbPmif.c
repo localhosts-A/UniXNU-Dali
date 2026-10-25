@@ -29,7 +29,7 @@ static int enter(struct dali_usb_pmif *p)
     return result;
 }
 static void leave(struct dali_usb_pmif *p)
-{ p->lock.release(p->lock.context); __atomic_clear(&p->locked, __ATOMIC_RELEASE); }
+{ p->lock.release(p->lock.context, p->pending_owned); __atomic_clear(&p->locked, __ATOMIC_RELEASE); }
 static int poll_state(struct dali_usb_pmif *p, unsigned expected, uint32_t *last)
 {
     for (uint32_t elapsed = 0;; elapsed += 10) {
@@ -115,7 +115,7 @@ int dali_usb_pmif_init(struct dali_usb_pmif *p, const struct usb_mmio *mmio,
     if (!result && !(value & 1)) result = USB_UNSUPPORTED;
     if (!result) result = usb_mmio_read(mmio, STA, &value);
     if (!result && state(value) != 0) result = USB_BUSY;
-    lock->release(lock->context);
+    lock->release(lock->context, false);
     /* Preserve the acquired local flag until the complete configuration is
      * published. A whole-object assignment would momentarily unlock init. */
     if (!result) { p->registers = *mmio; p->lock = *lock; p->initialized = true; }

@@ -9,8 +9,12 @@ It preserves inherited PMIF clocks/routes and never resets the shared controller
 The platform must validate the saved/live FDT contract and provide a shared
 IRQ-safe try-lock covering every SWINF2 client, including the existing keypad.
 The transport's local atomic flag also serializes concurrent initialization and
-read/modify/write operations on the same object. Platform lock wiring remains
-required; the existing isolated firmware keypad code is unchanged at this stage.
+read/modify/write operations on the same object. Release reports whether an
+owned command is still pending; the platform must reserve the channel for this
+same persistent client until explicit recovery releases it. An ordinary mutex
+without this reservation can lose response ownership across timeout boundaries.
+The isolated firmware now has a singleton bus protocol and migrated SID4 keypad;
+the USB platform adapter still needs to bind these callbacks to that protocol.
 
 Initialization reads INIT_DONE and channel state only. Explicit identification
 reads MT6379 DEV_INFO and checks vendor nibble `0x70` before any PMIC write is
