@@ -21,6 +21,11 @@ pstore file and is a failed evidence capture; the retry passed snapshot scoring.
 The original complete `boot_b`, rooted Android B, all 18 original partition
 hashes, and the cleared pending-restore ledger were verified after both attempts.
 
+The extended version-2 run used firmware `dc401de`, generic `5899e85` and
+device `eca4fec`. Its 25-read fresh-token sequence passed, as did full original
+`boot_b` recovery, Android B/root/all 18 hashes and independent raw-evidence
+rescoring. Standard registers agreed with the version-1 snapshot.
+
 | Register | Observed raw value |
 | --- | --- |
 | CAP / version | `55c7051f` / `00000400` (UFSHCI 4.0) |
@@ -29,6 +34,8 @@ hashes, and the cleared pending-restore ledger were verified after both attempts
 | UTRL / UTMRL bases, doorbells and run bits | all `0` |
 | MCQCAP / MEMCFG / MCQCFG | `080b0207` / `0` / `00001f00` |
 | Both inspected AO clock-gate status registers | `0` |
+| MTK IP / reference-clock request and acknowledge | `10470000` / `00000003` |
+| XOUFS / OPT / OTSD | `00000102` / `10553070` / `00000410` |
 
 This snapshot shows a disabled HCI and cleared legacy queues at this handoff.
 It does not establish a working link, PHY state, MCQ queue ownership, DMA
@@ -86,7 +93,8 @@ Probe log version 2 additionally requires `mphy-ver=1` and reads the pinned MTK
 IP-version, reference-clock, XOUFS, option and outstanding-state registers. It
 does not issue UIC or secure-monitor calls. The runner validates each schema's
 exact read list; old version-1 captures remain usable without claiming these
-additional fields. Version 2 is host-tested and awaiting its own hardware run.
+additional fields. Version 2 has passed its own hardware register snapshot;
+it provides no DMA, command or media-I/O qualification.
 
 Packaging checks the generated enable/token PCDs and the actual compiled BDS
 module. It also extracts BDS through the final FD's FV/FFS/LZMA encapsulation
@@ -123,8 +131,13 @@ Its builder compiles the pinned public embedded target's 13 C++ files and the
 real IIG-generated DriverKit bridge using XNU's recorded compiler flags. It
 force-loads the archive, registers the block driver, GPT scheme and BSD media
 client, and checks their definitions and personalities in the final kernel.
-This integration is undergoing macOS CI validation; host command/ABI tests alone
-do not prove a successful Apple-toolchain build or a working block device.
+CI run `40167739634` passed the actual Apple-toolchain compile, archive and final
+kernel-link checks, including the test fixture. The subsequent one-core QEMU
+baseline stopped at `IOCatalogue::initialize`'s configuration-table assertion,
+before crypto initialization was observed, so the storage runtime step was
+skipped. The added GPT content-mask string contained an unquoted underscore,
+which the fixed XNU parser rejects. That string is now quoted; a new actual
+build and QEMU run must verify the correction.
 Build and link reports are separate from runtime and MT6991 qualification.
 
 `scripts/test-source-storage-qemu.py` boots two explicit software-device cases
@@ -135,7 +148,7 @@ dispatch/failure, and partial-transfer error propagation. The fixture requires
 an explicit QEMU test nub, QEMU model and boot argument; the normal device tree
 does not publish it. Its checkpoint is inspected after the actual kernel
 function returns, bound to the kernel hash and case arguments. These tests are
-implemented but still awaiting actual compilation and QEMU validation.
+compiled but still awaiting successful QEMU validation.
 
 ## Register-probe runner
 

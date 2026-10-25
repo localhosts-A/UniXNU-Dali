@@ -16,6 +16,11 @@ The device remains on its verified original Android B image after the probe.
   The exact token, source revisions, candidate and raw capture remain in the
   private run directory. Android B, root and all 18 original hashes passed
   after original `boot_b` restoration.
+- Extended version-2 console: `run-20261025T060856Z-1b8960e3`, SHA-256
+  `93e500d6f03620c5cec2618bc874d1d93a3f4778ddf7ef4e50480823c44a196d`.
+  Firmware `dc401de`, generic `5899e85`, device `eca4fec`; all 25 expected
+  register reads, original-image recovery and the cleared pending ledger were
+  independently verified. No UFS media commands were submitted.
 
 The earlier attempt `run-20261025T053337Z-36b9917f` had no surviving pstore
 file. It is not register evidence. Its original-image restoration passed.
@@ -33,8 +38,9 @@ file. It is not register evidence. Its original-image restoration passed.
 | Device VCC | `vcc-supply` resolves to `mt6363_vemc`, marked `regulator-always-on` | Live FDT supply identity is known; this property is not a measurement of actual rail voltage or handoff state. No PMIC write path is authorized by this table. |
 | Core supply | `dvfsrc-vcore-supply` resolves to the DVFSRC core regulator; minimum requested during scale-up is 650000 microvolts | Device modules `ufs-mediatek.c` clock-scaling path consumes the FDT value. Preserve inherited state until the relevant power contract is verified. |
 | Power domain / reference clock | `mediatek,ufs-rtff-mtcmos` is present | `ufs-mediatek.c:1686-1692` issues MTCMOS restore then power-on through SiP; `:391-455` brackets REFCLK requests with SiP notifications. The secure firmware handler and current domain state remain unverified. |
-| Reference-clock register | HCI `+0x144`, request bit 0, acknowledge bit 1 | `ufs-mediatek.h:48,113-118`; `ufs-mediatek.c:391-455` uses a 3000 microsecond acknowledgment deadline. This register was not read by the version-1 hardware probe. |
-| Hardware IP version | HCI `+0x2240` | `ufs-mediatek.c:1088-1113` normalizes old `01MMmmmm` numbering to `1MMMmmmm` before selecting quirks. Must read and validate the actual value before applying MT6991 version-dependent register settings. |
+| Reference-clock register | HCI `+0x144` reads `0x00000003`: request bit 0 and acknowledge bit 1 are set | `ufs-mediatek.h:48,113-118`; `ufs-mediatek.c:391-455` uses a 3000 microsecond acknowledgment deadline. The version-2 snapshot measures these bits, without establishing active PHY/link state. |
+| Hardware IP version | HCI `+0x2240` reads `0x10470000` | `ufs-mediatek.c:1088-1113` normalizes old `01MMmmmm` numbering to `1MMMmmmm` before selecting quirks. The observed value already uses the new encoding. Version-dependent writes remain untested. |
+| Vendor controls | HCI XOUFS `+0x140 = 0x102`, OPT `+0x160 = 0x10553070`, OTSD `+0x14c = 0x410` | Captured by version 2 using the fixed `ufs-mediatek.h` offsets. These raw values are observations, not an initialization recipe or completion status. |
 | DMA / IOMMU | No HCI `iommus` property; no Android `iommu_group` link was observed | This is topology evidence only. Linux uses its DMA API; UEFI/XNU address translation, bus firewall, DMA width and cache coherency remain unqualified. No global IOMMU bypass is permitted. |
 | Media | Android boot partition is LUN 2; logical/physical block size 4096; LU capacity 64577536 blocks | Read-only baseline cross-checks sysfs, unit descriptor, raw reciprocal GPT CRCs and original backup. Re-query after controller ownership changes. Never substitute LUN 0 or a fixed 4 KiB assumption. |
 | `boot_b` | Absolute LBA 418560, 16384 blocks; partition GUID `00000046-39c2-4488-9bb0-00cb43c9ccd4` | GPT disk GUID is zero in both original headers and cannot identify the device. Candidate-only scratch proposal is absolute LBA 434432 for 256 blocks, plus 256-block tail guard; runtime write authorization remains false. |
