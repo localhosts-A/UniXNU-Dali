@@ -252,8 +252,10 @@ def run_trial(args, lease):
     else:
         live_result = probe.collect_live_readonly_baseline(
             argparse.Namespace(serial=args.serial, backup=args.backup), run, expected)
-        if live_result['baseline_sha256'] != expected['baseline_sha256']:
-            raise cycle.CycleError('live device baseline differs from the preverified Android baseline')
+        # The live collector already compares the stable geometry, GPT,
+        # header and boot_b fields. Its JSON envelope has fresh timestamps,
+        # capture names and device identity metadata, so its overall digest is
+        # intentionally different from the offline preflight digest.
         fdt = cycle.adb_output(args.serial, 'cat /sys/firmware/fdt', timeout=30)
         if not fdt:
             raise cycle.CycleError('live UFS trial FDT is empty')
