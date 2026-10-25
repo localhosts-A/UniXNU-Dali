@@ -48,6 +48,10 @@ That profile builds `UsbCore.c` and `UsbHost.c`, including the hub coordinator,
 from the XNU C compile record into `libDaliUsbHost.a` and force-loads the archive.
 The existing `dali_defconfig`
 leaves `XNU_NATIVE_USB_HOST` unset, so its archive builder skips the USB core.
+The same profile passes `--usb-host` to the ADT generator when packaging a
+payload, adding the versioned xHCI resource node only after the saved live FDT
+matches the fixed MMIO and interrupt contract. The default profile omits that
+node. See `docs/usb-xnu-adt-resources.md` for its binary layout and limitations.
 The enabled source archive is not yet a registered XNU controller/class driver;
 its final link and runtime gates remain open until those consumers are connected.
 

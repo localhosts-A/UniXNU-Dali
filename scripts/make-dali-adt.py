@@ -117,6 +117,31 @@ def empty_nvram_proxy():
     ]
 
 
+def xhci_adt_node(tree, enabled):
+    """Describe the validated xHCI resource for the opt-in source-XNU host."""
+    if not enabled:
+        return None
+
+    path = "/soc/usb0@16701000/xhci0@16700000"
+    if b"mediatek,mtk-xhci" not in tree.string_list(path, "compatible"):
+        raise ValueError("runtime FDT xHCI compatible differs")
+    resources = tree.reg(path)
+    if resources != [(0x16700000, 0x1000)]:
+        raise ValueError(f"runtime FDT xHCI MMIO differs: {resources}")
+    interrupts = tree.cells(path, "interrupts")
+    if interrupts != (0, 600, 4, 0):
+        raise ValueError(f"runtime FDT xHCI interrupt differs: {interrupts}")
+
+    # The xHCI register window is outside the arm-io ranges mapping. Keep the
+    # checked absolute physical address and raw FDT GIC tuple in a versioned
+    # Dali property; do not misrepresent it as an arm-io-relative `reg`.
+    resources_v1 = struct.pack("<IQQ4I", 1, resources[0][0], resources[0][1], *interrupts)
+    return apple_node("xhci0", [
+        ("compatible", b"mediatek,mtk-xhci\0"),
+        ("resources-v1", resources_v1),
+    ])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -127,6 +152,8 @@ def main():
     parser.add_argument("--psci-method", choices=("smc", "hvc"), default="smc")
     parser.add_argument("--ramdisk", action="store_true", help="zero RAMDisk slot for DarwinBoot to fill")
     parser.add_argument("--trust-cache", action="store_true", help="zero TrustCache slot for the explicit own test input")
+    parser.add_argument("--usb-host", action="store_true",
+                        help="include the validated Dali xHCI resource node for the opt-in source-XNU host")
     args = parser.parse_args()
     if args.fdt is None:
         parser.error("a private live Dali FDT is required (--fdt or DALI_RUNTIME_FDT)")
@@ -198,6 +225,7 @@ def main():
         # No control-block or DDR reserve registers are written by this port.
         ("recovery-aee-reset-type", struct.pack("<I", 0x80000201)),
     ])
+    xhci = xhci_adt_node(tree, args.usb_host)
     dram_base = memory[0][0]
     chosen = apple_node("chosen", [
         ("random-seed", secrets.token_bytes(64)),
@@ -220,7 +248,7 @@ def main():
             ("#address-cells", struct.pack("<I", 2)),
             ("#size-cells", struct.pack("<I", 2)),
             ("ranges", struct.pack("<QQQ", 0, 0x0C000000, 0x01000000)),
-        ], [intc, boot_log]),
+        ], [intc, boot_log, *([xhci] if xhci is not None else [])]),
         apple_node("defaults", [("sleep-disabled", struct.pack("<I", 1))]),
         apple_node("options"),
         apple_node("product", [
