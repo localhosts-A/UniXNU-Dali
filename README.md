@@ -21,6 +21,10 @@ place and rejects unsupported entitlement-bearing programs. CI requires the
 actual kernel acceptance counter for the positive process and a separate signed
 entitlement-bearing process to be refused before EL0. This provides no AMFI
 implementation or Apple trust claim; actual qualification is pending.
+Task entitlement queries in this development profile return false when the
+provider is absent, including the privileged x18/UEXC ABI queries during exec.
+The real provider path remains in use when present. QEMU observes the compiled
+query-denial counter as well as the separate rejection of entitlement-bearing inputs.
 `dali-pid1=1 dali-auto-fastboot=0` selects continuation after
 the platform checkpoint, retaining the single-CPU early diagnostic sink. The
 existing early-boot menu remains the hardware default until RAM-root packaging

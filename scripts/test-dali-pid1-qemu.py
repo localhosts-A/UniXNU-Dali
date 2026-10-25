@@ -32,6 +32,7 @@ def validate_report(report, kernel_sha, process_sha, trust_sha):
         raise ValueError('Actual getpid/HW_PAGESIZE syscall values disagree with the EL0 flags')
     if report.get('amfi_interface_pointer') != 0 or \
             counter(report, '_source_entitlement_free_accepts') < 1 or \
+            counter(report, '_source_entitlement_free_query_denials') < 1 or \
             counter(report, '_source_entitlement_free_refusals') != 0 or \
             counter(report, '_source_entitlement_free_entitlement_refusals') != 0:
         raise ValueError('The actual source no-entitlement path did not accept precisely the supported input')
@@ -67,6 +68,7 @@ def validate_refused_report(denied, returncode, kernel_sha, process_sha, trust_s
             denied.get('native_user_el0_observed') is not False or denied.get('amfi_interface_pointer') != 0 or \
             counter(denied, '_source_entitlement_free_refusals') < 1 or \
             counter(denied, '_source_entitlement_free_entitlement_refusals') < 1 or \
+            counter(denied, '_source_entitlement_free_query_denials') != 0 or \
             counter(denied, '_source_entitlement_free_accepts') != 0:
         raise ValueError('Valid ad-hoc entitlement input was not genuinely refused before EL0')
     return {'unsupported_entitlements_refused': True}
@@ -97,6 +99,7 @@ def main():
                '--read-kernel-symbol', '_source_entitlement_free_accepts:8',
                '--read-kernel-symbol', '_source_entitlement_free_refusals:8',
                '--read-kernel-symbol', '_source_entitlement_free_entitlement_refusals:8',
+               '--read-kernel-symbol', '_source_entitlement_free_query_denials:8',
                '--read-user-symbol', '_pid1_failure:8', '--read-user-symbol', '_readonly_result:16',
                '--native-user-image', str(process), '--trust-cache', str(trust)]
     with (a.output_dir / 'probe.log').open('w') as log:

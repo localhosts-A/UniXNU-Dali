@@ -17,6 +17,7 @@ class Pid1Tests(unittest.TestCase):
         spec.loader.exec_module(gate)
         report = {'boot_path': 'uefi-unixnu-darwinboot',
                   'amfi_interface_pointer': 0,
+                  'entitlement_query_denials': 2,
                   'kernel_sha256': 'a', 'native_user_image_sha256': 'b',
                   'trust_cache_bundle_sha256': 'c', 'native_user_el0_observed': True,
                   'native_user_4k_abi_observed': True,
@@ -37,6 +38,7 @@ class Pid1Tests(unittest.TestCase):
                 '<8I2Q', *(state.get(k, 0) for k in fields)).hex(),
                 '_source_entitlement_free_accepts': (1).to_bytes(8, 'little').hex(),
                 '_source_entitlement_free_refusals': bytes(8).hex(),
+                '_source_entitlement_free_query_denials': data.pop('entitlement_query_denials').to_bytes(8, 'little').hex(),
                 '_source_entitlement_free_entitlement_refusals': bytes(8).hex()}
             return gate.validate_report(data, 'a', 'b', 'c')
         self.assertEqual(evaluate(report)['pid'], 1)
@@ -54,6 +56,11 @@ class Pid1Tests(unittest.TestCase):
             bad[key] = 'wrong'
             with self.subTest(identity=key), self.assertRaises(ValueError):
                 evaluate(bad)
+        for key, value in (('amfi_interface_pointer', 1), ('entitlement_query_denials', 0)):
+            bad = copy.deepcopy(report)
+            bad[key] = value
+            with self.subTest(observation=key), self.assertRaises(ValueError):
+                evaluate(bad)
 
     def test_entitlement_negative_requires_specific_valid_signature_refusal(self):
         path = Path(__file__).resolve().parents[1] / 'scripts/test-dali-pid1-qemu.py'
@@ -67,6 +74,7 @@ class Pid1Tests(unittest.TestCase):
                   'requested_kernel_symbols': {
                       '_source_entitlement_free_accepts': bytes(8).hex(),
                       '_source_entitlement_free_refusals': (1).to_bytes(8, 'little').hex(),
+                      '_source_entitlement_free_query_denials': bytes(8).hex(),
                       '_source_entitlement_free_entitlement_refusals': (1).to_bytes(8, 'little').hex()}}
         gate.validate_refused_report(report, 1, 'a', 'b', 'c')
         bad = copy.deepcopy(report)
