@@ -130,7 +130,8 @@ than assume W1S semantics. Eleven tests execute the production C with simulated
 MMIO/SiP, including stale completion, timeout and failed-stop cases.
 The core is not called by the boot or register-probe path yet. It has no DMA
 buffers, SCSI commands or physical-media qualification; the host-controller
-adapter, mappings and device commands remain to be implemented.
+adapter and device commands remain to be implemented; the mapping component
+described below still needs that integration.
 
 `Mt6991UfsDmaLib` now supplies the private DMA ownership component: strictly UC
 pages, owned common-buffer mappings, separate data bounce pages, checked full
