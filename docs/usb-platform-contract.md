@@ -87,7 +87,8 @@ only mode bits5:4 of register2. Dali has no nonzero NXP tuning properties. Full
 destroy asserts reset after USB quiesce and I2C recovery; partial failures retain
 the cleanup context and never replay an uncertain mode write. Its bus requires
 real combined/repeated-start byte reads and bounded I2C6/GPIO72 callbacks. Those
-platform callbacks are not implemented by this library. Repeater tests execute
+register backends are implemented separately below; installed resource-provider
+callbacks remain pending. Repeater tests execute
 production C against PMIC-byte/I2C/GPIO models, with per-operation faults in
 power-on, mode, pull-up, idle, wake and shutdown. They do not qualify real PMIF,
 I2C, GPIO or USB operation.
@@ -104,7 +105,7 @@ may be retried but enable stays refused after a fault. Destroy confirms reset
 low before clearing context. The actual GPIO/NXP combined fixture still models
 MMIO and I2C: it proves code order and neighboring-bit protection, not pad voltage.
 
-## I2C6 reference locator (backend pending)
+## I2C6 FIFO backend and reference locator
 
 The original sparse reference did not expand I2C/pinctrl; this was a checkout
 omission rather than missing source. Both directories now belong to the pinned
@@ -121,13 +122,38 @@ transaction uses CONTROL DIR_CHANGE/RS, two lengths and transaction-count2.
 The intended NXP requests are1+1-byte WRRD reads and2-byte writes; neither needs
 DMA. Polling masks interrupts only on its explicit FIFO path (`:1979-2007`).
 
-Before implementation main must read complete transfer/IRQ `:1838-2492`,
+The implementation derives from complete transfer/IRQ `:1838-2492`,
 register/accessor definitions `:155-292,767-866`, init/clock `:868-1104`,
 speed_v2 calculation/selection `:1352-1607` and DT/probe `:2508-2559,2681-2793`.
 The saved FDT gives400kHz, clock-div1, main/dma clocks, SPI343, controller
 `0x13170000/0x20000` and APDMA `0x16410000/0x10000`; it does not prove actual
 clock rate, inherited timing, stopped DMA or ownership. Generic Linux MT65xx
 similarity alone cannot qualify this newer vendor register version.
+
+`DaliUsbI2c.c` now implements the fixed4f slave's byte-register FIFO transport,
+using native byte DATA_PORT operations, v2 slave-address register, combined
+WRRD/repeated-start reads and two-byte writes. The vendor speed_v2 factor/duty
+search runs with compensation disabled to keep the bus at or below400kHz;
+it requires a proven stable parent rate rather than assuming130MHz. Completion
+wait is bounded5ms plus at most100us for START to clear. The controller remains
+polling-only with interrupts masked. APDMA-v2 local handshake reset and its
+reference0x1000 sentinel are reproduced, but no data DMA is enabled or mapped.
+
+Init checks active DMA, shadow/channel mode, START, pending interrupts and FIFO
+before changing registers. Transfers repeat these idle checks, refuse foreign
+state without clearing it, and mark ownership before configuring/starting their
+own work. Post-configuration errors latch a fault and retain dirty/pending state;
+failed reads never publish bytes and uncertain writes are never replayed. Only
+explicit USB-quiesced owned recovery may reset the channel; active foreign DMA
+still refuses recovery. A recovered fault stays latched until destroy/reinit.
+
+`dali_nxp_io_bind` joins the actual I2C6 and GPIO72 implementations to the NXP
+bus API. Its combined production-C fixture covers CID/mode/reset, normal and
+fault teardown, per-operation initialization/transfer failures, timeout, NACK,
+arbitration/config errors, short reads, late errors, applied-but-error START and
+runtime foreign-state rejection. These are register models. The installed
+UEFI/XNU resource provider, validated FDT/clocks/pinmux and exclusive-controller
+qualification are still required before any physical access.
 
 `drivers/phy/mediatek/phy-mtk-xsphy.c` initializes/powers/modes the repeater list
 in order (`:2512-2520,2570-2583,2604-2618,2643-2654`). USB2 mode sets/clears
