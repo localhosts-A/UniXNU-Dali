@@ -1,7 +1,7 @@
 # Native USB2 host engine
 
 The isolated USB board now pins firmware
-a3b00646730a9ffa756dccaef261aad4cead8f3c. This checkpoint carries forward
+5b9c884cfe0a2fffe3089a179c50571d5361cd30. This checkpoint carries forward
 native-only MTK USB2 periodic endpoint scheduling and adds EDK2 source-hub
 activation of a valid high-speed multi-TT alternate setting. The host library
 compiles actual Mu transfer/register/schedule/memory source, owns the HC
@@ -35,6 +35,8 @@ Mu source, and the actual EDK2 archive checks its definition and UsbHub caller.
 No test yet executes a Configure Endpoint failure after the hub accepted alt 1.
 The native host fail-stops on that command error and does not attempt an
 automatic alt0 rollback through uncertain context.
+Firmware rebuilds reverse the owned Mu patch list before reapplying it, so
+overlapping source patches return to the exact reviewed patch set.
 The loader must call PrepareHandoff before the final memory map and refuse
 failed halt; this DarwinBoot wiring is still pending. Native-path QEMU,
 CDC/platform role integration and source-only XNU work are also pending.
