@@ -19,7 +19,7 @@ CLOCK_NAMES = ('ufs_sel', 'ufs_sel_min_src', 'ufs_sel_max_src', 'ufs_fde',
 RESOURCE_WORDS = (0x31534655494c4144, 1, 0x16810000, 0x2a00, 0x168a0000, 0x1000,
                   0x16800000, 0x10000, 0x10000000, 0x800, 0, 0x1000000000, 1, 7, 14, 7)
 SCRATCH_GRANT_MAGIC = b'DALIUFSW'
-SCRATCH_GRANT_BYTES = 224
+SCRATCH_GRANT_BYTES = 232
 
 
 def resource_contract(tree, raw_fdt):
@@ -108,6 +108,8 @@ def encode_scratch_grant(document):
     This validates the grant's shape only. A scratch runner must independently
     bind the finished candidate, source, device baseline and fresh token before
     injecting this wire value; the encoder alone does not authenticate provenance.
+    candidate_sha256 identifies the XNU kernel payload; the final boot-image hash
+    belongs in the durable host lease because the embedded grant changes that image.
     """
     if isinstance(document, (str, bytes, bytearray)):
         try:
@@ -171,6 +173,7 @@ def encode_scratch_grant(document):
     scratch_start = integer('scratch_start_lba')
     scratch_blocks = integer('scratch_blocks', positive=True)
     tail_blocks = integer('tail_guard_blocks', positive=True)
+    sequence = integer('sequence', positive=True)
     if lun >= 8 or block_bytes < 512 or block_bytes > 65536 or block_bytes & (block_bytes - 1):
         raise ValueError('unsupported scratch grant LUN or block size')
     if (1024 * 1024) % block_bytes or scratch_blocks != (1024 * 1024) // block_bytes or tail_blocks != scratch_blocks:
@@ -178,18 +181,19 @@ def encode_scratch_grant(document):
     if boot_start >= capacity or boot_blocks > capacity - boot_start or boot_blocks > ((1 << 64) - 1) // block_bytes:
         raise ValueError('scratch grant boot_b range exceeds the LU')
     boot_end = boot_start + boot_blocks
-    if scratch_start < boot_start or scratch_start > boot_end or scratch_blocks > boot_end - scratch_start:
-        raise ValueError('scratch grant exceeds boot_b')
+    if (scratch_start < boot_start or scratch_start > boot_end or scratch_blocks > boot_end - scratch_start or
+            sequence > scratch_blocks // 2):
+        raise ValueError('scratch grant exceeds the two-block-per-sequence scratch window')
     if tail_blocks != boot_end - scratch_start - scratch_blocks:
         raise ValueError('scratch grant tail guard does not end at boot_b boundary')
     relative = scratch_start - boot_start
     if relative > ((1 << 64) - 1) // block_bytes or relative * block_bytes < payload_end:
         raise ValueError('scratch grant overlaps payload or overflows')
 
-    wire = struct.pack('<8sII32s32s32s32s16sIIQQQQQQQ', SCRATCH_GRANT_MAGIC, 1, 1,
+    wire = struct.pack('<8sII32s32s32s32s16sIIQQQQQQQQ', SCRATCH_GRANT_MAGIC, 2, 1,
                        token.encode('ascii'), device, candidate, source, guid.bytes,
                        lun, block_bytes, capacity, boot_start, boot_blocks, payload_end,
-                       scratch_start, scratch_blocks, tail_blocks)
+                       scratch_start, scratch_blocks, tail_blocks, sequence)
     if len(wire) != SCRATCH_GRANT_BYTES:
         raise AssertionError('scratch-grant wire size changed')
     return wire

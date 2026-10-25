@@ -58,10 +58,10 @@ class ScratchAuthorizationTests(unittest.TestCase):
             original_path, _, baseline, candidate = self.fixture(temp)
             kernel = b"verified source-only XNU kernel artifact"
             grant, wire, proposal = auth.build_xnu_scratch_grant(
-                serial="DALI123", token="0123456789abcdef0123456789abcdef", baseline=baseline,
+                serial="DALI123", token="0123456789abcdef0123456789abcdef", sequence=1, baseline=baseline,
                 source_manifest=source_manifest(kernel), kernel_bytes=kernel,
                 candidate_image=candidate, original_boot_b=original_path)
-        self.assertEqual(len(wire), 224)
+        self.assertEqual(len(wire), 232)
         self.assertEqual((grant["lun"], grant["block_bytes"], grant["scratch_start_lba"],
                           grant["scratch_blocks"], grant["tail_guard_blocks"]), (2, 4096, 434432, 256, 256))
         self.assertEqual(grant["candidate_sha256"], hashlib.sha256(kernel).hexdigest())
@@ -74,7 +74,7 @@ class ScratchAuthorizationTests(unittest.TestCase):
             candidate = kernel_image()
             kernel = b"verified source-only XNU kernel artifact"
             args = dict(serial="DALI123", token="0123456789abcdef0123456789abcdef", baseline=baseline,
-                        source_manifest=source_manifest(kernel), kernel_bytes=kernel,
+                        sequence=1, source_manifest=source_manifest(kernel), kernel_bytes=kernel,
                         candidate_image=candidate, original_boot_b=original_path)
             bad = [dict(args, serial="OTHER"), dict(args, token="bad"),
                    dict(args, baseline=dict(baseline, ufs_device_binding_sha256="00" * 32)),

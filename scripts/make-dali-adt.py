@@ -248,7 +248,7 @@ def main():
         ], [intc, boot_log, *([apple_node("dali-ufs", [
             ("compatible", b"localhosts,dali-ufs\0"),
             ("resources-v1", ufs_resources),
-            *([("scratch-grant-v1", scratch_grant)] if scratch_grant is not None else []),
+            *([("scratch-grant-v2", scratch_grant)] if scratch_grant is not None else []),
         ])] if ufs_resources is not None else [])]),
         apple_node("defaults", [("sleep-disabled", struct.pack("<I", 1))]),
         apple_node("options"),

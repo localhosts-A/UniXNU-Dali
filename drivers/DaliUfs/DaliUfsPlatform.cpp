@@ -21,11 +21,17 @@ static uint32_t little32(const uint8_t *p) {
 static uint64_t little64(const uint8_t *p) {
   return uint64_t(little32(p)) | uint64_t(little32(p + 4)) << 32;
 }
+static void store32(uint8_t *p, uint32_t value) {
+  for (unsigned i = 0; i < 4; ++i) p[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+static void store64(uint8_t *p, uint64_t value) {
+  for (unsigned i = 0; i < 8; ++i) p[i] = static_cast<uint8_t>(value >> (8 * i));
+}
 bool decodeScratchGrant(const void *data, size_t bytes, ScratchGrant &g) {
   static const uint8_t magic[8] = {'D','A','L','I','U','F','S','W'};
   const auto p = static_cast<const uint8_t *>(data);
   if (!p || bytes != ScratchGrantWireBytes || memcmp(p, magic, sizeof magic) ||
-      little32(p + 8) != 1 || little32(p + 12) != 1) return false;
+      little32(p + 8) != 2 || little32(p + 12) != 1) return false;
   ScratchGrant candidate{};
   candidate.enabled = true;
   memcpy(candidate.token, p + 16, 32); candidate.token[32] = 0;
@@ -44,6 +50,7 @@ bool decodeScratchGrant(const void *data, size_t bytes, ScratchGrant &g) {
   candidate.scratchStartLba = little64(p + 200);
   candidate.scratchBlocks = little64(p + 208);
   candidate.tailGuardBlocks = little64(p + 216);
+  candidate.sequence = little64(p + 224);
   if (!scratchGrantValid(candidate)) return false;
   g = candidate;
   return true;
@@ -54,6 +61,32 @@ bool scratchAbsoluteLba(const ScratchGrant &g, uint64_t relativeLba, uint32_t bl
       blocks > g.scratchBlocks - relativeLba || relativeLba > UINT64_MAX - g.scratchStartLba) return false;
   absoluteLba = g.scratchStartLba + relativeLba;
   return true;
+}
+bool scratchSequenceLbas(const ScratchGrant &g, uint64_t &markerRelativeLba, uint64_t &payloadRelativeLba) {
+  markerRelativeLba = payloadRelativeLba = 0;
+  if (!scratchGrantValid(g) || g.sequence - 1 > UINT64_MAX / 2) return false;
+  const uint64_t marker = (g.sequence - 1) * 2;
+  if (marker >= g.scratchBlocks || g.scratchBlocks - marker < 2) return false;
+  markerRelativeLba = marker; payloadRelativeLba = marker + 1; return true;
+}
+bool makeScratchAttemptMarker(const char *token, uint64_t sequence, uint32_t blockBytes,
+                              const uint8_t payloadDigest[32], uint8_t *bytes) {
+  constexpr uint32_t HeaderBytes = 88, CommitBytes = 8;
+  static const uint8_t magic[8] = {'D','A','L','I','A','T','T','1'};
+  if (!tokenValid(token) || !sequence || blockBytes < HeaderBytes + CommitBytes ||
+      blockBytes > 65536 || !payloadDigest || !bytes) return false;
+  memset(bytes, 0, blockBytes); memcpy(bytes, magic, sizeof magic);
+  store32(bytes + 8, 1); store64(bytes + 12, sequence); memcpy(bytes + 20, token, 32);
+  store32(bytes + 52, blockBytes); memcpy(bytes + 56, payloadDigest, 32);
+  memcpy(bytes + blockBytes - CommitBytes, "DALI-CM1", CommitBytes); return true;
+}
+ScratchMarkerAction scratchMarkerAction(bool allZero, bool matchesExpected) {
+  if (allZero) return ScratchMarkerAction::WriteMarker;
+  return matchesExpected ? ScratchMarkerAction::ReadbackOnly : ScratchMarkerAction::Refuse;
+}
+ScratchPayloadAction scratchPayloadAction(bool markerCreatedThisBoot, bool allZero, bool matchesExpected) {
+  if (markerCreatedThisBoot) return allZero ? ScratchPayloadAction::WritePayload : ScratchPayloadAction::Refuse;
+  return matchesExpected ? ScratchPayloadAction::ReadbackOnly : ScratchPayloadAction::Refuse;
 }
 static int hexDigit(char c) {
   if (c >= '0' && c <= '9') return c - '0';
@@ -78,7 +111,7 @@ bool scratchGrantValid(const ScratchGrant &g) {
   if (!g.enabled || !tokenValid(g.token) || g.lun >= 8 ||
       !nonzero(g.deviceBinding, sizeof g.deviceBinding) ||
       !nonzero(g.candidateSha256, sizeof g.candidateSha256) ||
-      !nonzero(g.sourceSha256, sizeof g.sourceSha256) ||
+      !nonzero(g.sourceSha256, sizeof g.sourceSha256) || !g.sequence ||
       !nonzero(g.partitionGuid, sizeof g.partitionGuid)) return false;
   if (g.blockBytes < 512 || g.blockBytes > 65536 || (g.blockBytes & (g.blockBytes - 1)) ||
       ScratchBytes % g.blockBytes || !g.capacityBlocks || !g.bootBlocks || !g.payloadEndBytes) return false;
@@ -88,6 +121,7 @@ bool scratchGrantValid(const ScratchGrant &g) {
       g.bootBlocks > g.capacityBlocks - g.bootStartLba) return false;
   const uint64_t expectedWindowBlocks = ScratchBytes / g.blockBytes;
   if (g.scratchBlocks != expectedWindowBlocks || g.tailGuardBlocks != expectedWindowBlocks ||
+      g.sequence > g.scratchBlocks / 2 ||
       g.scratchStartLba < g.bootStartLba) return false;
   const uint64_t bootEndLba = g.bootStartLba + g.bootBlocks;
   const uint64_t scratchOffsetBlocks = g.scratchStartLba - g.bootStartLba;

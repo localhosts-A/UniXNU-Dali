@@ -38,7 +38,7 @@ def source_binding_sha256(manifest):
     return hashlib.sha256(b"DALI-UFS-SOURCE-V1\0" + canonical).hexdigest()
 
 
-def build_xnu_scratch_grant(*, serial, token, baseline, source_manifest, kernel_bytes,
+def build_xnu_scratch_grant(*, serial, token, sequence, baseline, source_manifest, kernel_bytes,
                             candidate_image, original_boot_b):
     """Validate offline inputs, then return grant/wire/proposal bound to one XNU token.
 
@@ -50,6 +50,8 @@ def build_xnu_scratch_grant(*, serial, token, baseline, source_manifest, kernel_
         raise ValueError("invalid device serial")
     if not isinstance(token, str) or not TOKEN.fullmatch(token):
         raise ValueError("invalid fresh scratch run token")
+    if type(sequence) is not int or sequence <= 0:
+        raise ValueError("scratch sequence must be a positive integer")
     if not isinstance(baseline, dict) or baseline.get("kind") != "dali-ufs-android-read-only-baseline":
         raise ValueError("verified Android UFS baseline is required")
     if (baseline.get("serial") != serial or baseline.get("all_partition_hashes_match") is not True or
@@ -136,6 +138,7 @@ def build_xnu_scratch_grant(*, serial, token, baseline, source_manifest, kernel_
         "boot_start_lba": part["first_lba"], "boot_blocks": boot_blocks,
         "payload_end_bytes": payload_end, "scratch_start_lba": scratch_start,
         "scratch_blocks": scratch_blocks, "tail_guard_blocks": tail_guard_blocks,
+        "sequence": sequence,
     }
     wire = encode_scratch_grant(grant)
     return grant, wire, dict(proposal, original_avb=avb)

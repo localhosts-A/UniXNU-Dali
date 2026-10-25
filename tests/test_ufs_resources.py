@@ -58,7 +58,7 @@ def scratch_grant(**updates):
         'partition_guid': '00000046-39c2-4488-9bb0-00cb43c9ccd4',
         'lun': 2, 'block_bytes': 4096, 'capacity_blocks': 64577536,
         'boot_start_lba': 418560, 'boot_blocks': 16384, 'payload_end_bytes': 5062656,
-        'scratch_start_lba': 434432, 'scratch_blocks': 256, 'tail_guard_blocks': 256,
+        'scratch_start_lba': 434432, 'scratch_blocks': 256, 'tail_guard_blocks': 256, 'sequence': 1,
     }
     value.update(updates)
     return value
@@ -130,17 +130,17 @@ class ResourceTests(unittest.TestCase):
 
     def test_explicit_scratch_grant_wire_and_profile_validation(self):
         value=scratch_grant();wire=encode_scratch_grant(value)
-        self.assertEqual(len(wire),224)
-        self.assertEqual(wire[:16],b'DALIUFSW'+struct.pack('<II',1,1))
+        self.assertEqual(len(wire),232)
+        self.assertEqual(wire[:16],b'DALIUFSW'+struct.pack('<II',2,1))
         self.assertEqual(wire[16:48],value['token'].encode())
         self.assertEqual(wire[48:80],bytes.fromhex('11'*32))
         self.assertEqual(wire[144:160],uuid.UUID(value['partition_guid']).bytes)
-        self.assertEqual(struct.unpack_from('<IIQQQQQQQ',wire,160),
-                         (2,4096,64577536,418560,16384,5062656,434432,256,256))
+        self.assertEqual(struct.unpack_from('<IIQQQQQQQQ',wire,160),
+                         (2,4096,64577536,418560,16384,5062656,434432,256,256,1))
         invalid=(
             {'write_authorized':False}, {'media_writes':False}, {'token':'bad'},
             {'lun':8}, {'block_bytes':512}, {'scratch_blocks':255},
-            {'tail_guard_blocks':1}, {'scratch_start_lba':434431},
+            {'tail_guard_blocks':1}, {'scratch_start_lba':434431}, {'sequence':0}, {'sequence':129},
             {'device_binding_sha256':'00'*32}, {'partition_guid':'00000000-0000-0000-0000-000000000000'},
         )
         for change in invalid:

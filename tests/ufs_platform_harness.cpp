@@ -99,6 +99,7 @@ extern "C" void scratch_policy_case(unsigned mode,uint64_t *out){
   memset(g.sourceSha256,3,sizeof g.sourceSha256);memset(g.partitionGuid,4,sizeof g.partitionGuid);
   g.lun=2;g.blockBytes=4096;g.capacityBlocks=64577536;g.bootStartLba=418560;g.bootBlocks=16384;
   g.payloadEndBytes=5062656;g.scratchStartLba=434432;g.scratchBlocks=256;g.tailGuardBlocks=256;
+  g.sequence=1;
   ScratchObservation o{};o.identityVerified=true;o.gptVerified=true;o.writeProtected=false;o.scratchMediaReady=true;o.lun=2;
   strcpy(o.token,g.token);memcpy(o.deviceBinding,g.deviceBinding,sizeof g.deviceBinding);
   memcpy(o.candidateSha256,g.candidateSha256,sizeof g.candidateSha256);
@@ -143,12 +144,13 @@ extern "C" void scratch_wire_case(unsigned mode,uint64_t *out){
   const uint8_t magic[8]={'D','A','L','I','U','F','S','W'};memcpy(wire,magic,8);
   auto put32=[](uint8_t *p,uint32_t v){for(unsigned i=0;i<4;++i)p[i]=uint8_t(v>>(8*i));};
   auto put64=[](uint8_t *p,uint64_t v){for(unsigned i=0;i<8;++i)p[i]=uint8_t(v>>(8*i));};
-  put32(wire+8,1);put32(wire+12,1);memcpy(wire+16,"0123456789abcdef0123456789abcdef",32);
+  put32(wire+8,2);put32(wire+12,1);memcpy(wire+16,"0123456789abcdef0123456789abcdef",32);
   memset(wire+48,1,32);memset(wire+80,2,32);memset(wire+112,3,32);memset(wire+144,4,16);
   put32(wire+160,2);put32(wire+164,4096);put64(wire+168,64577536);put64(wire+176,418560);
   put64(wire+184,16384);put64(wire+192,5062656);put64(wire+200,434432);put64(wire+208,256);put64(wire+216,256);
+  put64(wire+224,1);
   size_t length=sizeof wire;
-  switch(mode){case 1:wire[0]^=1;break;case 2:put32(wire+8,2);break;case 3:put32(wire+12,0);break;
+  switch(mode){case 1:wire[0]^=1;break;case 2:put32(wire+8,3);break;case 3:put32(wire+12,0);break;
     case 4:wire[16]='z';break;case 5:put32(wire+160,8);break;case 6:memset(wire+48,0,32);break;
     case 7:put64(wire+200,UINT64_MAX);break;case 8:length--;break;default:break;}
   ScratchGrant g{};out[0]=decodeScratchGrant(wire,length,g);out[1]=g.enabled;out[2]=g.lun;out[3]=g.scratchStartLba;out[4]=g.scratchBlocks;
@@ -158,6 +160,25 @@ extern "C" void scratch_wire_case(unsigned mode,uint64_t *out){
 extern "C" bool scratch_wire_decode_case(const uint8_t *wire,size_t length,uint64_t *out){
   ScratchGrant g{};bool ok=decodeScratchGrant(wire,length,g);out[0]=ok;out[1]=g.enabled;out[2]=g.lun;
   out[3]=g.scratchStartLba;out[4]=g.scratchBlocks;out[5]=g.capacityBlocks;out[6]=g.blockBytes;
-  uint64_t absolute=0;out[7]=ok&&scratchAbsoluteLba(g,255,1,absolute);out[8]=absolute;return ok;
+  uint64_t absolute=0;out[7]=ok&&scratchAbsoluteLba(g,255,1,absolute);out[8]=absolute;out[9]=g.sequence;return ok;
+}
+extern "C" void scratch_sequence_case(unsigned mode,uint64_t *out){
+  ScratchGrant g{};g.enabled=true;strcpy(g.token,"0123456789abcdef0123456789abcdef");
+  memset(g.deviceBinding,1,sizeof g.deviceBinding);memset(g.candidateSha256,2,sizeof g.candidateSha256);
+  memset(g.sourceSha256,3,sizeof g.sourceSha256);memset(g.partitionGuid,4,sizeof g.partitionGuid);
+  g.lun=2;g.blockBytes=4096;g.capacityBlocks=64577536;g.bootStartLba=418560;g.bootBlocks=16384;
+  g.payloadEndBytes=5062656;g.scratchStartLba=434432;g.scratchBlocks=256;g.tailGuardBlocks=256;g.sequence=1;
+  if(mode==1)g.sequence=128; if(mode==2)g.sequence=129;
+  uint64_t marker=UINT64_MAX,payload=UINT64_MAX;bool valid=scratchSequenceLbas(g,marker,payload);
+  out[0]=valid;out[1]=marker;out[2]=payload;out[3]=static_cast<uint64_t>(scratchMarkerAction(true,false));
+  out[4]=static_cast<uint64_t>(scratchMarkerAction(false,true));out[5]=static_cast<uint64_t>(scratchMarkerAction(false,false));
+  out[6]=static_cast<uint64_t>(scratchPayloadAction(true,true,false));
+  out[7]=static_cast<uint64_t>(scratchPayloadAction(true,false,true));
+  out[8]=static_cast<uint64_t>(scratchPayloadAction(false,false,true));
+  out[9]=static_cast<uint64_t>(scratchPayloadAction(false,true,false));
+  uint8_t digest[32];memset(digest,0xa5,sizeof digest);uint8_t bytes[512];
+  bool made=makeScratchAttemptMarker(g.token,g.sequence,512,digest,bytes);
+  out[10]=made;out[11]=made&&!memcmp(bytes,"DALIATT1",8);out[12]=made&&bytes[512-8]=='D';
+  out[13]=made&&bytes[56]==0xa5;out[14]=made&&bytes[88]==0;
 }
 extern "C" bool guid_case(const char *text,uint8_t *out){return parsePartitionGuid(text,out);}

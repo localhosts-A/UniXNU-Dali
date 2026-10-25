@@ -13,12 +13,19 @@ constexpr uint64_t ResourceWords[] = {
   1, 7, 14, 7
 };
 constexpr size_t ResourceBytes = sizeof(ResourceWords) + 32;
-constexpr size_t ScratchGrantWireBytes = 224;
+constexpr size_t ScratchGrantWireBytes = 232;
 struct ScratchGrant;
+enum class ScratchMarkerAction : uint8_t { Refuse, WriteMarker, ReadbackOnly };
+enum class ScratchPayloadAction : uint8_t { Refuse, WritePayload, ReadbackOnly };
 bool resourceValid(const void *, size_t);
 bool tokenValid(const char *);
 bool decodeScratchGrant(const void *, size_t, ScratchGrant &);
 bool scratchAbsoluteLba(const ScratchGrant &, uint64_t relativeLba, uint32_t blocks, uint64_t &absoluteLba);
+bool scratchSequenceLbas(const ScratchGrant &, uint64_t &markerRelativeLba, uint64_t &payloadRelativeLba);
+bool makeScratchAttemptMarker(const char *token, uint64_t sequence, uint32_t blockBytes,
+                              const uint8_t payloadDigest[32], uint8_t *bytes);
+ScratchMarkerAction scratchMarkerAction(bool allZero, bool matchesExpected);
+ScratchPayloadAction scratchPayloadAction(bool markerCreatedThisBoot, bool allZero, bool matchesExpected);
 bool parsePartitionGuid(const char *, uint8_t output[16]);
 
 struct Ops {
@@ -31,15 +38,17 @@ struct Ops {
 };
 
 // An opt-in, token-bound window for one synthetic scratch BlockIo. The grant is
-// copied from the explicit scratch-grant-v1 ADT property; missing means deny.
+// copied from the explicit scratch-grant-v2 ADT property; missing means deny.
 struct ScratchGrant {
   bool enabled = false;
   char token[33]{};
+  // candidateSha256 names the exact source-XNU kernel payload; the final boot
+  // image digest is sealed separately by the host lease to avoid self-hashing.
   uint8_t deviceBinding[32]{}, candidateSha256[32]{}, sourceSha256[32]{};
   uint8_t partitionGuid[16]{};
   uint8_t lun = 0;
   uint32_t blockBytes = 0;
-  uint64_t capacityBlocks = 0, bootStartLba = 0, bootBlocks = 0, payloadEndBytes = 0;
+  uint64_t capacityBlocks = 0, bootStartLba = 0, bootBlocks = 0, payloadEndBytes = 0, sequence = 0;
   uint64_t scratchStartLba = 0, scratchBlocks = 0, tailGuardBlocks = 0;
 };
 

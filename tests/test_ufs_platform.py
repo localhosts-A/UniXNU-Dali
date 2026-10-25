@@ -32,6 +32,7 @@ class PlatformTests(unittest.TestCase):
         cls.lib.scratch_policy_case.argtypes = [C.c_uint, C.POINTER(C.c_uint64)]
         cls.lib.scratch_wire_case.argtypes = [C.c_uint, C.POINTER(C.c_uint64)]
         cls.lib.scratch_wire_decode_case.argtypes = [C.POINTER(C.c_uint8), C.c_size_t, C.POINTER(C.c_uint64)]
+        cls.lib.scratch_sequence_case.argtypes = [C.c_uint, C.POINTER(C.c_uint64)]
         cls.lib.guid_case.argtypes = [C.c_char_p, C.POINTER(C.c_uint8)]
         cls.lib.guid_case.restype = C.c_bool
 
@@ -135,6 +136,13 @@ class PlatformTests(unittest.TestCase):
         for mode in range(1,9):
             with self.subTest(invalid_wire=mode):self.assertEqual(check(mode)[:2],(0,0))
 
+    def test_scratch_attempt_marker_and_two_boot_policy_are_at_most_once(self):
+        def check(mode):
+            out=(C.c_uint64*15)();self.lib.scratch_sequence_case(mode,out);return tuple(out)
+        self.assertEqual(check(0), (1,0,1,1,2,0,1,0,2,0,1,1,1,1,1))
+        self.assertEqual(check(1)[:3], (1,254,255))
+        self.assertEqual(check(2)[:3], (0,0,0))
+
     def test_python_grant_encoder_wire_is_accepted_by_runtime_decoder(self):
         grant = {
             'profile':'boot-b-scratch-write-test-v1','write_authorized':True,'media_writes':True,
@@ -143,13 +151,13 @@ class PlatformTests(unittest.TestCase):
             'partition_guid':'00000046-39c2-4488-9bb0-00cb43c9ccd4','lun':2,'block_bytes':4096,
             'capacity_blocks':64577536,'boot_start_lba':418560,'boot_blocks':16384,
             'payload_end_bytes':5062656,'scratch_start_lba':434432,'scratch_blocks':256,
-            'tail_guard_blocks':256,
+            'tail_guard_blocks':256,'sequence':1,
         }
         wire = encode_scratch_grant(grant)
         raw = (C.c_uint8 * len(wire)).from_buffer_copy(wire)
-        out = (C.c_uint64 * 9)()
+        out = (C.c_uint64 * 10)()
         self.assertTrue(self.lib.scratch_wire_decode_case(raw, len(wire), out))
-        self.assertEqual(list(out), [1,1,2,434432,256,64577536,4096,1,434687])
+        self.assertEqual(list(out), [1,1,2,434432,256,64577536,4096,1,434687,1])
 
     def test_partition_guid_parser_uses_canonical_text_byte_order(self):
         out=(C.c_uint8*16)()
