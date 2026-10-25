@@ -126,7 +126,7 @@ It validates the reset binding and DMA range, refuses inherited active queues,
 and implements the fixed SiP/reset/HCE/UIC link sequence with bounded polls,
 first-failure diagnostics, poisoned failure state and idempotent controller
 stop. TI reset writes use the source driver's masked read/modify/write rather
-than assume W1S semantics. Eleven tests execute the production C with simulated
+than assume W1S semantics. Fifteen tests execute the production C with simulated
 MMIO/SiP, including stale completion, timeout and failed-stop cases.
 The default-disabled physical-host diagnostic now calls this core after BDS
 prepares the live FDT. The register-only probe remains separate. This integration
@@ -166,7 +166,7 @@ selects the extra boot_b sample, which must match the current candidate's first
 block. Read and flush operations recheck media identity. Flush success also
 requires exactly one new validated device-SYNC completion, excluding a no-op.
 
-147 firmware host tests pass, including 9 wire-policy, 12 production PassThru,
+151 firmware host tests pass, including 15 controller, 9 wire-policy, 12 production PassThru,
 8 ScsiDisk media/sync, 8 BlockIo diagnostic, 4 host sync-completion and 5
 physical-profile packaging tests. The device suite has 88 passing tests,
 including 9 new physical-runner lifecycle/metadata regressions.
@@ -320,9 +320,19 @@ is fatal; LINK_STARTUP may also produce a PA generic/LINERESET indication. This
 run did not capture the layer-error registers and cannot establish that cause.
 The source comparison also identified the missing initial device-reset sequence:
 the MTK callback asserts the SiP device-reset line, stops HBA, waits 10–15 us,
-releases reset, then waits 10–15 ms before the initial HCI enable. The next
-controller revision must add that source-backed prerequisite and preserve the
-first failure's detailed UIC status; a fix has not yet been hardware-qualified.
+releases reset, then waits 10–15 ms before the initial HCI enable.
+
+The controller now implements that pulse using SiP selector 2, a bounded HCE
+stop during reset low, 10 us low and 15 ms settling after release. Assertion or
+HCE-stop failure attempts one cleanup release while preserving the first fault;
+a failed release is never replayed. The first initialized startup UIC failure
+also saves IS/HCS/HCE, three UIC arguments and all five layer-error registers
+before any stop write. Read-clear registers are sampled once; early power/HCE
+and standalone stop failures do not sample them. Separate `DALI-UFS-CONTROL`
+logs preserve the strict existing qualification trace. Native tests execute
+the actual pulse, failure/cleanup and capture-order paths. The error mask is
+unchanged. Neither this correction nor the cause of the previous IS=4 has been
+hardware-qualified.
 
 ## Completion
 
