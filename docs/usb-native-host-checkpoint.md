@@ -1,7 +1,7 @@
 # Native USB2 host engine
 
 The isolated USB board now pins firmware
-5b9c884cfe0a2fffe3089a179c50571d5361cd30. This checkpoint carries forward
+97f743aaed072d2163026f441dd37a78a92e45f3. This checkpoint carries forward
 native-only MTK USB2 periodic endpoint scheduling and adds EDK2 source-hub
 activation of a valid high-speed multi-TT alternate setting. The host library
 compiles actual Mu transfer/register/schedule/memory source, owns the HC
@@ -37,8 +37,14 @@ The native host fail-stops on that command error and does not attempt an
 automatic alt0 rollback through uncertain context.
 Firmware rebuilds reverse the owned Mu patch list before reapplying it, so
 overlapping source patches return to the exact reviewed patch set.
-The loader must call PrepareHandoff before the final memory map and refuse
-failed halt; this DarwinBoot wiring is still pending. Native-path QEMU,
-CDC/platform role integration and source-only XNU work are also pending.
+The native host now publishes the shared `DaliUsbNativeHostHandoff` protocol.
+DarwinBoot enumerates all USB2 host-controller handles after closing input files
+and before the final memory map. It calls `PrepareHandoff` for native hosts and
+uses standard `SetState(Halt)` for other controllers; unknown protocol revisions
+or failed halt proofs refuse boot. The native callback is idempotent and runs
+outside DarwinBoot's GetMemoryMap/EBS retry loop. Source QEMU tests exercise a
+one-shot mock native provider and the standard-host fallback; these tests do not
+emulate the native controller. Native-path QEMU, CDC/platform role integration
+and source-only XNU work remain pending.
 Existing PCI xHCI QEMU coverage is a separate gate, not native-path proof.
 hardware_qualified=false; no physical device or medium was used.
