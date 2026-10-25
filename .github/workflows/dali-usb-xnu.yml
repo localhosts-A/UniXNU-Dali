@@ -1,0 +1,161 @@
+name: Dali USB source-only XNU build
+
+on:
+  push:
+    branches: [codex/dali-usb-otg-offline]
+    paths:
+      - '.github/workflows/dali-usb-xnu.yml'
+      - 'board.toml'
+      - 'configs/dali_usb_defconfig'
+      - 'drivers/DaliUsbStorage/**'
+      - 'patches/xnu/**'
+      - 'references/usb-sources.toml'
+      - 'scripts/build-dali-usb-host.py'
+      - 'scripts/build-dali-usb-storage.py'
+      - 'scripts/fetch-usb-references.py'
+      - 'tests/test_dali_usb_storage_builder.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dali-usb-source-xnu-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-xnu:
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      UNIXNU_OUT: ${{ github.workspace }}/UniXNU/out
+      JOBS: '4'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: UniXNU-Dali
+          persist-credentials: false
+
+      - name: Resolve the pinned generic source commit
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$GITHUB_WORKSPACE/UniXNU-Dali/board.toml" >> "$GITHUB_OUTPUT" <<'PY'
+          import sys, tomllib
+          with open(sys.argv[1], "rb") as source:
+              value = tomllib.load(source).get("firmware", {}).get("unixnu_commit", "")
+          if len(value) != 40 or any(ch not in "0123456789abcdef" for ch in value):
+              raise SystemExit("board.toml must pin the generic source revision")
+          print(f"unixnu_commit={value}")
+          PY
+
+      - name: Check out pinned generic UniXNU and its submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: localhosts-A/UniXNU
+          ref: ${{ steps.pins.outputs.unixnu_commit }}
+          path: UniXNU
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.13'
+
+      - name: Select and verify Xcode 26.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d /Applications/Xcode_26.6.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version | tee "$RUNNER_TEMP/xcode-version.txt"
+          grep -Fqx 'Xcode 26.6' <(head -n 1 "$RUNNER_TEMP/xcode-version.txt")
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphoneos --find clang++
+
+      - name: Install XNU host tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install cmake ninja unifdef llvm lld qemu
+          printf '%s\n' "$(brew --prefix llvm)/bin" "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+
+      - name: Test the USB production core and builder contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          python3 -m unittest discover -s tests/usb -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-core-tests.log"
+          python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_dali_usb_*builder.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-builder-tests.log"
+
+      - name: Fetch fixed USB and storage source references
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/fetch-usb-references.py" \
+            --output "$RUNNER_TEMP/usb-references" \
+            --jobs 3 > "$RUNNER_TEMP/usb-reference-manifest.json"
+
+      - name: Configure the isolated source-only USB profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu defconfig -D "$GITHUB_WORKSPACE/UniXNU-Dali" dali_usb_defconfig
+
+      - name: Build and verify the source-only USB XNU kernel
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          XNU_NATIVE_USB_HOST: '1'
+          XNU_SOURCE_STORAGE_FAMILY: '1'
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu build kernel --source-only -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS" 2>&1 | tee "$RUNNER_TEMP/dali-usb-xnu-build.log"
+          tree="$UNIXNU_OUT/dali/tree"
+          kernel="$tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+          python3 "$tree/scripts/build-dali-usb-storage.py" --verify-kernel "$kernel"
+          python3 "$tree/scripts/build-source-storage.py" --verify-kernel "$kernel"
+
+      - name: Summarize source build scope
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Dali source-only USB XNU build'
+            echo
+            echo "- Generic commit: `${{ steps.pins.outputs.unixnu_commit }}`"
+            echo "- Xcode: `$(head -n 1 "$RUNNER_TEMP/xcode-version.txt" 2>/dev/null || echo unavailable)`"
+            echo '- Profile: `dali_usb_defconfig`'
+            echo '- Hardware qualification: `false`'
+            echo '- Device access and physical media tests: none'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bounded source build evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-usb-source-xnu-evidence
+          path: |
+            ${{ runner.temp }}/dali-usb-xnu-build.log
+            ${{ runner.temp }}/usb-core-tests.log
+            ${{ runner.temp }}/usb-builder-tests.log
+            ${{ runner.temp }}/usb-reference-manifest.json
+            UniXNU/out/dali/logs/kernel-bootstrap.log
+            UniXNU/out/dali/logs/archive-*.log
+            UniXNU/out/dali/logs/kernel.log
+            UniXNU/out/dali/logs/source-storage-link.log
+            UniXNU/out/dali/tree/build/dali-usb-host/*.json
+            UniXNU/out/dali/tree/build/dali-usb-host/*.log
+            UniXNU/out/dali/tree/build/dali-usb-storage/*.json
+            UniXNU/out/dali/tree/build/dali-usb-storage/*.log
+            UniXNU/out/dali/tree/build/source-storage/*.json
+            UniXNU/out/dali/tree/build/source-storage/*.log
+          if-no-files-found: warn
+          retention-days: 7

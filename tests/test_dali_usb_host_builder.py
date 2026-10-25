@@ -76,7 +76,7 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
                          ["UsbCore.c", "UsbHost.c", "UsbStorage.c"])
         self.assertTrue({"usb_host_hub_start", "usb_host_hub_poll",
                          "usb_host_hub_child_route", "usb_host_hub_stop",
-                         "usb_block_io_init", "usb_block_io_transfer",
+                        "usb_bot_read_only", "usb_block_io_init", "usb_block_io_transfer",
                          "usb_block_io_sync", "usb_block_io_quiesce",
                          "usb_block_io_detach"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))

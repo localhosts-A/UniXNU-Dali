@@ -48,8 +48,27 @@ That profile builds `UsbCore.c`, `UsbHost.c`, and the serialized BOT block-I/O
 adapter from the XNU C compile record into `libDaliUsbHost.a` and force-loads
 the archive. The adapter bounds/chunks IOStorage requests, keeps BOT commands
 serialized, reports only complete chunks, and closes admission before cache
-synchronization or detach. It is protocol code; it does not create an IOKit
-block service or provide the missing xHCI endpoint/DMA owner.
+synchronization or detach. SCSI MODE SENSE(6) probes the device write-protect
+bit; it tries page `0x3f`, falls back to page `0`, and follows the common disk
+policy by treating two rejected probes as writable while preserving failures
+from the BOT transport itself.
+
+The same profile now builds and force-loads `libDaliUsbStorage.a`, a concrete
+source-XNU `IOBlockStorageDevice` child for BOT LUN 0. The host owner can publish
+it with `dali_usb_storage_publish()`, then must call `dali_usb_storage_quiesce()`
+before stopping the controller, prove endpoint/slot DMA has stopped before
+`dali_usb_storage_detach(..., true)`, and terminate it only after that proof.
+The service owns its 64 KiB bounce buffer and refuses to free it without the
+controller-stop proof. No production XNU host owner calls this API yet, so this
+archive does not claim USB enumeration, filesystem access, or runtime binding.
+
+`build-dali-usb-storage.py` compiles against the fixed public IOStorageFamily
+header using XNU's C++ compile record; after the kernel link,
+`--verify-kernel` checks the concrete class, public publication API, BOT
+adapter, and source `IOBlockStorageDevice` definitions in the actual Mach-O.
+The `dali-usb-xnu.yml` macOS workflow builds the opt-in source-only profile and
+retains bounded text evidence. It performs no device access or physical-media
+test.
 The existing `dali_defconfig`
 leaves `XNU_NATIVE_USB_HOST` unset, so its archive builder skips the USB core.
 The same profile passes `--usb-host` to the ADT generator when packaging a
@@ -57,7 +76,9 @@ payload, adding the versioned xHCI resource node only after the saved live FDT
 matches the fixed MMIO and interrupt contract. The default profile omits that
 node. See `docs/usb-xnu-adt-resources.md` for its binary layout and limitations.
 The enabled source archive is not yet a registered XNU controller/class driver;
-its final link and runtime gates remain open until those consumers are connected.
+the block service is linked but is not instantiated until a production host
+owner is connected. The XNU USB controller, HID report service, runtime FAT32
+test, and native USB QEMU path remain open gates.
 
 The device tree also contains a production SID14 PMIF-M transport under
 `drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,

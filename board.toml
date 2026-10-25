@@ -8,8 +8,8 @@ kit = "Dali"
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-unixnu_commit = "a4c83f86bd71b83d08fa7bb13ab02b9abe5b1364"
-uefi_commit = "d581028dd56202ab72a72793dd024c74d2a11f7b"
+unixnu_commit = "739fb3616cf1de9c7d6e27f2b6f6f0120e5918d2"
+uefi_commit = "0b2da6215e7d807fe4477c233d198eb83b89ab39"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
 packages = [
@@ -36,6 +36,7 @@ archives = [
   "build-mockfs-fixture.py",
   "build-source-storage.py",
   "build-dali-usb-host.py",
+  "build-dali-usb-storage.py",
   "build-dali-xnu-platform.py",
 ]
 
