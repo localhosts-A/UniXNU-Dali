@@ -69,6 +69,13 @@ adapter, and source `IOBlockStorageDevice` definitions in the actual Mach-O.
 The `dali-usb-xnu.yml` macOS workflow builds the opt-in source-only profile and
 retains bounded text evidence. It performs no device access or physical-media
 test.
+The macOS 26/Xcode 26.6 [source-only build 40243105789](https://github.com/localhosts-A/UniXNU-Dali/actions/runs/40243105789)
+passes at device commit `0a9a1d1c977c61e7bcdab7d743a1d30c2171b059`.
+It compiles the actual USB C core, this C++ child, and public IOStorageFamily,
+then verifies their definitions in the linked source XNU kernel (SHA-256
+`e580ea62f9f9468d60535a3af7664580c9e2c707c4e7771323813116d6d2cd36`).
+The retained CI evidence contains reports and logs; kernel/archive binaries
+are not uploaded. Runtime binding and hardware remain unqualified.
 The existing `dali_defconfig`
 leaves `XNU_NATIVE_USB_HOST` unset, so its archive builder skips the USB core.
 The same profile passes `--usb-host` to the ADT generator when packaging a
