@@ -395,7 +395,7 @@ def run_trial(a, lease):
     try:
         cycle.flash_boot_b(a.fastboot_serial, private_image)
         cycle.fastboot_command(a.fastboot_serial, 'reboot', timeout=20)
-        print('PROBE RUNNING: after the menu appears choose Exit, then hold Volume Down in the 10s recovery window.', flush=True)
+        print('PROBE RUNNING: choose Return to firmware diagnostics and confirm with Power, then hold ONLY Volume Down during the 10s recovery window.', flush=True)
         disconnected = cycle.wait_fastboot_disconnect(a.fastboot_serial, 15)
         if not disconnected or not cycle.wait_fastboot(a.fastboot_serial, a.wait_seconds):
             raise cycle.CycleError('manual fastboot observation expired; original restore is pending')

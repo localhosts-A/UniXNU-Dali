@@ -112,8 +112,8 @@ python3 scripts/run-ufs-probe.py --serial SERIAL \
 ```
 
 Dry-run uses the saved verified FDT without contacting the device. Remove
-`--dry-run` only when the operator is present: select Exit after the menu
-appears, then hold Volume Down during the firmware's 10-second recovery window.
+`--dry-run` only when the operator is present: select `Return to firmware diagnostics` after the menu
+appears, confirm with Power, then hold only Volume Down during the firmware's 10-second recovery window.
 This runner requires the same verified Android/fastboot serial. All output
 stays outside the source repositories, immutable backup and sealed candidate.
 
