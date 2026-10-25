@@ -11,12 +11,15 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 OBJECTS = ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837"
 OUT = ROOT / "build/dali-usb-host"
-SOURCES = (ROOT / "drivers/UsbCore/UsbCore.c", ROOT / "drivers/UsbCore/UsbHost.c")
+SOURCES = (ROOT / "drivers/UsbCore/UsbCore.c", ROOT / "drivers/UsbCore/UsbHost.c",
+           ROOT / "drivers/UsbCore/UsbStorage.c")
 REQUIRED_SYMBOLS = (
     "usb_host_enumerate", "usb_host_start_storage", "usb_host_poll_input",
     "usb_host_disconnect", "usb_host_hub_start", "usb_host_hub_poll",
     "usb_host_hub_child_route", "usb_host_hub_stop",
-    "usb_parse_configuration", "usb_bot_command",
+    "usb_parse_configuration", "usb_bot_command", "usb_block_io_init",
+    "usb_block_io_transfer", "usb_block_io_sync", "usb_block_io_quiesce",
+    "usb_block_io_detach",
 )
 
 
@@ -88,26 +91,26 @@ def compile_command(record_path, record, source, output, include):
 def validate_object(path):
     data = path.read_bytes()
     if len(data) < 32:
-        raise ValueError("Truncated USB host object: " + str(path))
+        raise ValueError("Truncated USB host/storage object: " + str(path))
     magic, cpu, subtype, filetype, ncmds, sizeofcmds, _, _ = struct.unpack_from("<8I", data)
     if (magic, cpu, subtype, filetype) != (0xfeedfacf, 0x100000c, 0, 1) or 32 + sizeofcmds > len(data):
-        raise ValueError("USB host object is not an arm64 XNU MH_OBJECT: " + str(path))
+        raise ValueError("USB host/storage object is not an arm64 XNU MH_OBJECT: " + str(path))
     offset, platform = 32, None
     for _ in range(ncmds):
         if offset + 8 > 32 + sizeofcmds:
-            raise ValueError("Truncated USB host object load command")
+            raise ValueError("Truncated USB host/storage object load command")
         command, size = struct.unpack_from("<II", data, offset)
         if size < 8 or offset + size > 32 + sizeofcmds:
-            raise ValueError("Invalid USB host object load command")
+            raise ValueError("Invalid USB host/storage object load command")
         if command == 0x32:
             if size < 24:
-                raise ValueError("Truncated USB host object build-version command")
+                raise ValueError("Truncated USB host/storage object build-version command")
             platform, minimum = struct.unpack_from("<II", data, offset + 8)
             if (platform, minimum) != (2, 0x110000):
-                raise ValueError("USB host object does not target the kernel iOS 17 ABI")
+                raise ValueError("USB host/storage object does not target the kernel iOS 17 ABI")
         offset += size
     if offset != 32 + sizeofcmds or platform != 2:
-        raise ValueError("USB host object lacks the expected iOS build version")
+        raise ValueError("USB host/storage object lacks the expected iOS build version")
 
 
 def run_logged(command, directory, log):
@@ -135,7 +138,7 @@ def build():
     objects, object_rows = [], []
     for source in SOURCES:
         if not source.is_file():
-            raise ValueError("USB host core source is missing: " + str(source))
+            raise ValueError("USB host/storage core source is missing: " + str(source))
         obj = OUT / (source.name + ".o")
         obj.unlink(missing_ok=True)
         command, cwd = compile_command(record_path, record, source, obj, include)
@@ -154,7 +157,7 @@ def build():
     normalized = {line.split()[-1].lstrip("_") for line in symbols.splitlines() if line.split()}
     missing = sorted(set(REQUIRED_SYMBOLS) - normalized)
     if missing:
-        raise ValueError("USB host archive lacks production symbols: " + ", ".join(missing))
+        raise ValueError("USB host/storage archive lacks production symbols: " + ", ".join(missing))
     report = {
         "compile_record": str(record_path.relative_to(ROOT)),
         "compile_record_sha256": digest(record_path),
@@ -168,13 +171,13 @@ def build():
         "hardware_qualified": False,
     }
     (OUT / "build-report.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("PASS: Dali USB host core archive built from the XNU C compile record; runtime remains unqualified")
+    print("PASS: Dali USB host/storage core archive built from the XNU C compile record; runtime remains unqualified")
 
 
 def main():
     enabled = os.environ.get("XNU_NATIVE_USB_HOST", "0")
     if enabled == "0":
-        print("SKIP: source-only USB host core disabled")
+        print("SKIP: source-only USB host/storage core disabled")
     elif enabled == "1":
         build()
     else:

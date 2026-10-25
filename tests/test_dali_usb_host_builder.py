@@ -62,7 +62,7 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
              patch.object(BUILDER, "build", side_effect=AssertionError("disabled builder must not run")), \
              redirect_stdout(output):
             BUILDER.main()
-        self.assertEqual(output.getvalue().strip(), "SKIP: source-only USB host core disabled")
+        self.assertEqual(output.getvalue().strip(), "SKIP: source-only USB host/storage core disabled")
 
     def test_usb_core_profile_is_opt_in_and_runs_its_builder(self):
         default = (ROOT / "configs/dali_defconfig").read_text()
@@ -72,8 +72,13 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
         self.assertIn("CONFIG_XNU_NATIVE_USB_HOST=y", usb)
         self.assertIn("build/dali-usb-host/libDaliUsbHost.a", usb)
         self.assertIn("build-dali-usb-host.py", board["kernel"]["archives"])
+        self.assertEqual([source.name for source in BUILDER.SOURCES],
+                         ["UsbCore.c", "UsbHost.c", "UsbStorage.c"])
         self.assertTrue({"usb_host_hub_start", "usb_host_hub_poll",
-                         "usb_host_hub_child_route", "usb_host_hub_stop"} <=
+                         "usb_host_hub_child_route", "usb_host_hub_stop",
+                         "usb_block_io_init", "usb_block_io_transfer",
+                         "usb_block_io_sync", "usb_block_io_quiesce",
+                         "usb_block_io_detach"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))
 
 

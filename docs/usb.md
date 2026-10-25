@@ -44,8 +44,12 @@ it in its own output root:
 ./unixnu build kernel --source-only -D ../UniXNU-Dali --out out/dali-usb
 ```
 
-That profile builds `UsbCore.c` and `UsbHost.c`, including the hub coordinator,
-from the XNU C compile record into `libDaliUsbHost.a` and force-loads the archive.
+That profile builds `UsbCore.c`, `UsbHost.c`, and the serialized BOT block-I/O
+adapter from the XNU C compile record into `libDaliUsbHost.a` and force-loads
+the archive. The adapter bounds/chunks IOStorage requests, keeps BOT commands
+serialized, reports only complete chunks, and closes admission before cache
+synchronization or detach. It is protocol code; it does not create an IOKit
+block service or provide the missing xHCI endpoint/DMA owner.
 The existing `dali_defconfig`
 leaves `XNU_NATIVE_USB_HOST` unset, so its archive builder skips the USB core.
 The same profile passes `--usb-host` to the ADT generator when packaging a
