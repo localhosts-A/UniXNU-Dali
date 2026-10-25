@@ -301,13 +301,14 @@ void DaliUfs::partitions(uint8_t lun, IORegistryEntry *root, unsigned depth, uns
   auto entries = root->getChildIterator(gIOServicePlane); if (!entries) return;
   while (auto e = entries->getNextObject()) {
     if (++count > 512) break;
-    auto media = OSDynamicCast(IOMedia, e);
+    auto entry = OSDynamicCast(IORegistryEntry, e); if (!entry) continue;
+    auto media = OSDynamicCast(IOMedia, entry);
     if (media && !media->isWhole()) {
       record("partition", lun, media->getBase(), media->getSize()); textRecord(1, media->getName());
       auto uuid = OSDynamicCast(OSString, media->getProperty(kIOMediaUUIDKey)); if (uuid) textRecord(2, uuid->getCStringNoCopy());
       if (!bootSample && strcmp(media->getName(), "boot_b") == 0) bootSample = sample(lun, media, 0, "boot_b");
     }
-    partitions(lun, e, depth + 1, count, bootSample);
+    partitions(lun, entry, depth + 1, count, bootSample);
   }
   entries->release();
 }
