@@ -36,6 +36,8 @@ class DaliUfs : public IOService {
   uint32_t frequency_ = 0;
   bool prepared_ = false, exposed_ = false, online_ = false, closed_ = false;
   Status stopSync_ = Status::Success;
+  dali_ufs::ScratchGrant scratchGrant_{};
+  dali_ufs::ScratchObservation scratchObservation_{};
   dali_ufs::Controller controller_{};
   unixnu_ufs::Transport transport_{};
   static void worker(void *, wait_result_t);
@@ -47,6 +49,7 @@ class DaliUfs : public IOService {
   static uint64_t sip(void *, uint32_t, uint32_t, uint32_t, uint32_t);
   static bool portRead(void *, uint32_t, uint32_t *);
   static bool portWrite(void *, uint32_t, uint32_t);
+  static bool allowWrite(void *, uint8_t, const unixnu_ufs::Geometry &, uint64_t, uint32_t);
   static bool cache(void *, void *, uint32_t, unixnu_ufs::Cache);
   static uint64_t micros(void *);
   static bool exclusive(void *);
@@ -161,6 +164,16 @@ __attribute__((noinline)) uint64_t DaliUfs::sip(void *, uint32_t service, uint32
 bool DaliUfs::portRead(void *p, uint32_t off, uint32_t *v) { if (off > 0x2a00 - 4 || (off & 3) || !v) return false; *v = read(p, dali_ufs::Hci + off); return *v != UINT32_MAX; }
 bool DaliUfs::portWrite(void *p, uint32_t off, uint32_t v) { return off <= 0x2a00 - 4 && !(off & 3) && write(p, dali_ufs::Hci + off, v); }
 bool DaliUfs::exclusive(void *p) { auto s = static_cast<DaliUfs *>(p); return s->controller_.ready() && read(p, dali_ufs::Hci + 0x300) == 0; }
+bool DaliUfs::allowWrite(void *p, uint8_t lun, const unixnu_ufs::Geometry &geometry, uint64_t lba, uint32_t blocks) {
+  auto s = static_cast<DaliUfs *>(p);
+  // Transport calls are serialized by gate_; no lock recursion here. These
+  // fields remain default-off until the validated GPT/profile parser is wired.
+  if (!s->online_ || s->closed_ || !geometry.valid) return false;
+  auto observed = s->scratchObservation_;
+  observed.lun = lun; observed.blockBytes = geometry.blockBytes;
+  observed.capacityBlocks = geometry.blocks; observed.writeProtected = geometry.writeProtected;
+  return dali_ufs::scratchWriteAllowed(s->scratchGrant_, observed, lba, blocks);
+}
 uint64_t DaliUfs::micros(void *p) {
   auto s = static_cast<DaliUfs *>(p); uint64_t ticks; __asm__ volatile("isb\n\tmrs %0, cntpct_el0" : "=r"(ticks) :: "memory");
   return (ticks / s->frequency_) * 1000000 + (ticks % s->frequency_) * 1000000 / s->frequency_;
@@ -234,7 +247,7 @@ bool DaliUfs::initialize() {
   staging_ = static_cast<uint8_t *>(IOMallocZero(unixnu_ufs::DataMax)); if (!staging_) return false;
   bzero(cpu, dmaBytes_);
   record("dma", dmaPhysical_, dmaBytes_, line_);
-  unixnu_ufs::Port port{this, portRead, portWrite, cache, micros, delay, exclusive, nullptr}; // No write grant.
+  unixnu_ufs::Port port{this, portRead, portWrite, cache, micros, delay, exclusive, allowWrite};
   exposed_ = true; // Conservative: keep allocations even if a doorbell/base write becomes uncertain.
   Status status = transport_.start(port, {cpu, dmaPhysical_, UINT32_MAX, dmaBytes_});
   if (status == Status::Success) status = transport_.initializeDevice();
