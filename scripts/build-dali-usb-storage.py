@@ -14,6 +14,7 @@ OBJECTS = ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837"
 SOURCE = ROOT / "drivers/DaliUsbStorage/DaliUsbStorage.cpp"
 USB_INCLUDE = ROOT / "drivers/UsbCore/include"
 STORAGE_SOURCE = ROOT / "refer/IOStorageFamily"
+STORAGE_INCLUDE = ROOT / "build/storage-abi/include"
 OUT = ROOT / "build/dali-usb-storage"
 REVISION = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
 ARCHIVE = OUT / "libDaliUsbStorage.a"
@@ -49,7 +50,8 @@ def source_path(record, record_path):
 
 
 def compiler_record(objects=OBJECTS):
-    for path in sorted(objects.rglob("*.cpo.json")):
+    preferred = objects / "iokit/DEVELOPMENT/IOService.cpo.json"
+    for path in [preferred, *sorted(objects.rglob("*.cpo.json"))]:
         try:
             record = json.loads(path.read_text().strip().rstrip(","))
         except (OSError, ValueError):
@@ -96,7 +98,9 @@ def compile_command(record_path, record, source, output, include_paths):
     # IOStorageFamily revision even if the base XNU tree has a private header.
     for path in include_paths:
         command += ["-iquote", str(path.resolve())]
-    command += ["-I", str(USB_INCLUDE.resolve()), "-o", str(output.resolve())]
+    command += ["-I", str(STORAGE_INCLUDE.resolve()),
+                "-I", str((ROOT / ".cache/xnu-work/iokit").resolve()),
+                "-I", str(USB_INCLUDE.resolve()), "-o", str(output.resolve())]
     return command, directory
 
 
@@ -161,6 +165,8 @@ def build():
         raise ValueError("Public IOStorageFamily revision differs from the fixed source pin")
     if subprocess.check_output(["git", "-C", str(STORAGE_SOURCE), "status", "--porcelain"], text=True).strip():
         raise ValueError("Public IOStorageFamily source must be clean")
+    if not (STORAGE_INCLUDE / "IOKit/storage/IOStorageDeviceCharacteristics.h").is_file():
+        raise ValueError("Prepared public storage headers are required; run prepare-storage-headers.py first")
     record_path, record = compiler_record()
     source_record = source_path(record, record_path)
     if not source_record.is_file() or not SOURCE.is_file():

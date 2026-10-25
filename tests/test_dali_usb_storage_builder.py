@@ -40,6 +40,8 @@ class DaliUsbStorageBuilderTests(unittest.TestCase):
             self.assertNotIn("old.d", command)
             self.assertIn("-iquote", command)
             self.assertIn(str((root / "pinned-storage").resolve()), command)
+            self.assertIn(str(BUILDER.STORAGE_INCLUDE.resolve()), command)
+            self.assertIn(str((BUILDER.ROOT / ".cache/xnu-work/iokit").resolve()), command)
             self.assertEqual(command[-2:], ["-o", str((root / "new.o").resolve())])
 
     def test_requires_one_cpp_source_in_compile_record(self):
