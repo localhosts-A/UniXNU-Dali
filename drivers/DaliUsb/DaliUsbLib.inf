@@ -12,6 +12,7 @@
   DaliUsbNxpRepeater.c
   DaliUsbGpio.c
   DaliUsbI2c.c
+  DaliUsbPhy.c
 [Packages]
   MdePkg/MdePkg.dec
   UsbCore/UsbCore.dec

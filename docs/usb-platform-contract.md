@@ -163,6 +163,35 @@ offsets. SoC register bases include ACR0 `0x300`, ACR6 `0x318`, DTM0/1
 Init, power-on/off and mode sequences are in `:1784-1950`; eFuse and calibration
 paths are in `:1492-1512,1693-1749,2047-2111,2338-2456`.
 
+`DaliUsbPhy.c` composes the actual NXP and MT6379 implementations with SoC USB2
+PHY0. Read-only init captures intr/term field bits from330/334 and refuses an
+inherited active meter. The qualified provider must supply real chipid.sw_ver
+and nvmem words1d4/1d8; masks f00000/7c00/f8000 produce HSRX term and TX N/P
+calibration. Zero acquired efuse fields preserve hardware values. Missing
+acquisition or unknown clocks never imply zero/default calibration.
+
+Dali sets reference-clock select, software PLL LPM parameters25/30/30,
+VREF7/FS7 and the revision0 CHP-disable quirk. It has no SoC eye, host or
+intr/term offset overrides. Cold startup follows reference init, repeater power,
+SoC power and calibration, then role mode. Role changes detach MT6379 pull-up
+before changing NXP, tune both repeaters and apply the SoC IDDIG controls.
+
+Slew calibration uses26MHz*17*1024/FM, rounds by1000, and orders meter/free-clock
+off before slew write before oscillator-off. Unlike the source's ignored timeout
+and default3 fallback, invalid/zero/out-of-range measurements refuse startup.
+Failed cleanup retains FM ownership for explicit shutdown. Power-off uses the
+reference valid-USB-role suspend sequence with BC1.1 disabled; charger/L2 analog
+policy remains owned by the connector/role layer. Dependencies/clocks stay held
+on failure, and a fault requires full teardown before restart.
+
+The XS-PHY fixture executes production SoC and both repeater code against SoC
+register/PMIC-byte/NXP-I2C seams. It checks revisions, efuse/zero preservation,
+calibration order, cold restart, detach order, per-operation on/mode/pullup/off
+failures and FM cleanup retry. This does not qualify physical calibration or
+the production PMIF/I2C transport (tested separately). DTM1 session indicators
+are logical controls, not external-voltage evidence; actual TCPC/charger checks,
+held clocks/domains, DMA and installed OS/controller providers remain required.
+
 ## Clock, power, bus protection and IPPC
 
 | Resource | Fixed reference location |
