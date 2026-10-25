@@ -445,3 +445,37 @@ references/names, IDs, same-frequency wrong provider, ambiguous aliases,
 translation, missing tags, structural corruption and unchanged error output.
 A separate local run succeeds on the saved Dali FDT without publishing its raw
 ATAG payload. Real EDK2 compilation verifies the actual new object/definition.
+
+## Actual source UEFI host-stack QEMU and FV gate
+
+Firmware `tools/dali/build_usb_qemu.py` builds actual pinned Mu xHCI, USB bus,
+keyboard/mouse, BOT, DiskIo, partition and FAT drivers plus a separate test EFI
+application. `run_usb_qemu.py` creates fresh GPT/FAT32 image files and exercises
+the source stack through actual QEMU xHCI USB2 ports and its full-speed hub.
+Platform services still come from an explicitly hashed external AArch64 UEFI
+image; this is not a boot of Dali's hardware-specific firmware in QEMU.
+
+The app detaches the platform USB drivers, explicitly rebinds source drivers at
+each layer, and verifies actual BY_DRIVER agents. It requires one xHCI, one
+direct hub, one keyboard/mouse/BOT disk under that hub, and the tagged GPT volume
+under that same disk. Reserved test files must be absent before application
+writes. QMP supplies key press/release and mouse movement/button press/release;
+the app checks SimpleTextIn/SimplePointer and a complete zero keyboard report.
+FAT cases create/modify/flush/rename, remove the filesystem via BOT disconnect,
+reconnect/remount and read the exact file, then create/flush/delete a nonempty
+file. After shutdown, mtools verifies the complete modified data's SHA256 and
+persistent directory entries. The report requires ordered milestones, records
+source-tree changes/untracked files/submodules and firmware/initial-vars hashes,
+and keeps `hardware_qualified=false`. Only new ordinary image files are written.
+
+`DALI_USB_HOST_STACK=true` opts the Dali FV into xHCI/bus/HID/BOT/partition and
+console aggregation; the flag defaults false in both DSC and DeviceBuild. Some
+modules remain inherited DSC compile inputs when the FV flag is false. Full
+opt-in firmware build/package succeeds, and `verify_usb_fv.py` extracts all ten
+expected PE modules from the final compressed FD and matches them byte-for-byte
+to the corresponding compiled images. The QEMU test app never enters Dali FV.
+
+This verifies source class-stack behavior and opt-in FV assembly. Native
+MT6991 MMIO registration, resource/connector/ADC/DMA qualification, CDC/role
+worker, firmware menu/pointer behavior and EBS handoff remain separate required
+implementation gates, along with the source XNU/IOHID/msdosfs/macOS gates.
