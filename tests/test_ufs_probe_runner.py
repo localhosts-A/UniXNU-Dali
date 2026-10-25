@@ -14,23 +14,45 @@ SPEC.loader.exec_module(runner)
 TOKEN = '1234567890abcdef' * 2
 
 
-def snapshot(*, mcq=False, token=TOKEN):
+def snapshot(*, mcq=False, token=TOKEN, schema=1):
     prefix = 'DALI-UFS: run=' + token + ' '
     offsets = [0, 8, 0x34, 0x30, 0x20, 0x24, 0x18, 0x50, 0x54, 0x58, 0x60, 0x70, 0x74, 0x78, 0x80]
     if mcq:
         offsets += [4, 0x300, 0x380]
+    if schema == 2:
+        offsets += [0x2240, 0x144, 0x140, 0x160, 0x14c]
     reads = [0x168a0104, 0x168a0004] + [0x16810000 + at for at in offsets]
-    lines = ['begin version=1 mode=read-only writes=0']
+    lines = [f'begin version={schema} mode=read-only writes=0']
     lines += [f'read32={at:X}' for at in reads]
     lines += ['gates=00000000,00000000 iommu-property-bytes=0 result=4',
               f'cap={0x40000000 if mcq else 0:08X} ver=00000400 hce=00000001 hcs=00000001 is=00000000 ie=00000000 ahit=00000000',
               'utrl=0000000012345000 db=00000000 rs=00000001 utmrl=0000000012346000 db=00000000 rs=00000001',
-              f'mcq-read={int(mcq)} mcqcap=00000000 memcfg=00000000 mcqcfg=00000000',
-              'end result=4 dma-qualified=0 media-qualified=0']
+              f'mcq-read={int(mcq)} mcqcap=00000000 memcfg=00000000 mcqcfg=00000000']
+    if schema == 2:
+        lines += ['mtk-ip=01460000 refclk=00000003 xoufs=00000080 opt=00000000 otsd=00000000 mphy-ver=1']
+    lines += ['end result=4 dma-qualified=0 media-qualified=0']
     return '\n'.join(prefix + line for line in lines)
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_v2_vendor_read_order_and_schema_are_required_without_upgrading_v1(self):
+        for mcq in (False, True):
+            log = snapshot(mcq=mcq, schema=2)
+            result = runner.score_snapshot(log, TOKEN)
+            self.assertTrue(result['snapshot_pass'])
+            self.assertEqual(result['probe_log_version'], 2)
+            self.assertEqual(result['mtk_ip_version'], 0x01460000)
+            self.assertEqual(result['reference_clock'], 3)
+            self.assertFalse(result['dma_qualified'])
+            for bad in (log.replace('version=2', 'version=1'), log.replace('version=2', 'version=3'),
+                        log.replace('read32=16812240', 'read32=16812244'), log.replace('mphy-ver=1', 'mphy-ver=0'),
+                        '\n'.join(line for line in log.splitlines() if 'mtk-ip=' not in line)):
+                with self.subTest(mcq=mcq, bad=bad[-60:]):
+                    self.assertFalse(runner.score_snapshot(bad, TOKEN)['snapshot_pass'])
+        old = runner.score_snapshot(snapshot(), TOKEN)
+        self.assertTrue(old['snapshot_pass'])
+        self.assertNotIn('mtk_ip_version', old)
+
     def test_complete_legacy_and_mcq_remain_unqualified_for_media(self):
         for mcq in (False, True):
             with self.subTest(mcq=mcq):

@@ -196,21 +196,25 @@ def score_snapshot(text, token):
         raise cycle.CycleError('invalid snapshot token')
     lines = [line for line in text.splitlines() if line.startswith('DALI-UFS: run=' + token + ' ')]
     prefix = 'DALI-UFS: run=' + token + ' '
-    begin = [i for i, line in enumerate(lines) if line == prefix + 'begin version=1 mode=read-only writes=0']
+    begin = [(i, re.fullmatch(re.escape(prefix) + r'begin version=([12]) mode=read-only writes=0', line))
+             for i, line in enumerate(lines) if line.startswith(prefix + 'begin ')]
     end = [(i, re.fullmatch(re.escape(prefix) + r'end result=([0-4]) dma-qualified=0 media-qualified=0', line))
            for i, line in enumerate(lines) if line.startswith(prefix + 'end ')]
     result = {'run_token': token, 'snapshot_pass': False, 'observation_complete': False,
               'dma_qualified': False, 'physical_ufs_qualified': False, 'media_writes_qualified': False}
-    if len(begin) != 1 or len(end) != 1 or not end[0][1] or begin[0] >= end[0][0]:
+    if len(begin) != 1 or not begin[0][1] or len(end) != 1 or not end[0][1] or begin[0][0] >= end[0][0]:
         return dict(result, failure='missing/duplicate/truncated current-token begin/end')
+    start, schema = begin[0][0], int(begin[0][1][1])
     code = int(end[0][1][1])
-    result.update(observation_complete=True, probe_result=code)
+    result.update(observation_complete=True, probe_result=code, probe_log_version=schema)
     if code != 4:
         return dict(result, failure='probe refused or clocks/registers unavailable', records=lines)
     patterns = [r'gates=([0-9a-f]{8}),([0-9a-f]{8}) iommu-property-bytes=(\d+) result=4',
                 r'cap=([0-9a-f]{8}) ver=([0-9a-f]{8}) hce=([0-9a-f]{8}) hcs=([0-9a-f]{8}) is=([0-9a-f]{8}) ie=([0-9a-f]{8}) ahit=([0-9a-f]{8})',
                 r'utrl=([0-9a-f]{16}) db=([0-9a-f]{8}) rs=([0-9a-f]{8}) utmrl=([0-9a-f]{16}) db=([0-9a-f]{8}) rs=([0-9a-f]{8})',
                 r'mcq-read=([01]) mcqcap=([0-9a-f]{8}) memcfg=([0-9a-f]{8}) mcqcfg=([0-9a-f]{8})']
+    if schema == 2:
+        patterns.append(r'mtk-ip=([0-9a-f]{8}) refclk=([0-9a-f]{8}) xoufs=([0-9a-f]{8}) opt=([0-9a-f]{8}) otsd=([0-9a-f]{8}) mphy-ver=1')
     matches, positions = [], []
     for pattern in patterns:
         found = [(i, re.fullmatch(re.escape(prefix) + pattern, line, re.I)) for i, line in enumerate(lines)]
@@ -219,7 +223,8 @@ def score_snapshot(text, token):
             return dict(result, failure='missing or duplicate register snapshot record')
         positions.append(found[0][0])
         matches.append(found[0][1])
-    if not begin[0] < positions[0] < positions[1] < positions[2] < positions[3] < end[0][0]:
+    order = [start, *positions, end[0][0]]
+    if not all(a < b for a, b in zip(order, order[1:])):
         return dict(result, failure='snapshot records out of order')
     gates = [int(matches[0][i], 16) for i in (1, 2)]
     cap, version = int(matches[1][1], 16), int(matches[1][2], 16)
@@ -233,12 +238,18 @@ def score_snapshot(text, token):
     offsets = [0, 8, 0x34, 0x30, 0x20, 0x24, 0x18, 0x50, 0x54, 0x58, 0x60, 0x70, 0x74, 0x78, 0x80]
     if mcq:
         offsets += [4, 0x300, 0x380]
+    if schema == 2:
+        offsets += [0x2240, 0x144, 0x140, 0x160, 0x14c]
     expected = [0x168a0104, 0x168a0004] + [0x16810000 + at for at in offsets]
     if (gates[0] & 1 or gates[1] & 0x18 or 0xffffffff in gates or cap == 0xffffffff or
             version in (0, 0xffffffff) or bool(int(matches[3][1])) != mcq or reads != expected or
-            len(lines) != len(expected) + 6 or begin[0] != 0 or end[0][0] != len(lines) - 1 or
-            not read_positions or read_positions[0] <= begin[0] or read_positions[-1] >= positions[0]):
+            len(lines) != len(expected) + len(patterns) + 2 or start != 0 or end[0][0] != len(lines) - 1 or
+            not read_positions or read_positions[0] <= start or read_positions[-1] >= positions[0]):
         return dict(result, failure='register gate/read sequence mismatch')
+    if schema == 2:
+        result.update(mtk_ip_version=int(matches[4][1], 16), reference_clock=int(matches[4][2], 16),
+                      xoufs_control=int(matches[4][3], 16), options_control=int(matches[4][4], 16),
+                      outstanding_control=int(matches[4][5], 16), mphy_version=1)
     return dict(result, snapshot_pass=True, cap=cap, version=version,
                 hce=int(matches[1][3], 16), hcs=int(matches[1][4], 16),
                 utrl_address=int(matches[2][1], 16), utrl_doorbell=int(matches[2][2], 16),

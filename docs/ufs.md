@@ -82,6 +82,12 @@ clocks are already enabled. MCQ registers additionally require the capability
 and version. It does not enable clocks, reset hardware, allocate DMA or submit
 storage commands. Each bounded log line carries the build's unique token.
 
+Probe log version 2 additionally requires `mphy-ver=1` and reads the pinned MTK
+IP-version, reference-clock, XOUFS, option and outstanding-state registers. It
+does not issue UIC or secure-monitor calls. The runner validates each schema's
+exact read list; old version-1 captures remain usable without claiming these
+additional fields. Version 2 is host-tested and awaiting its own hardware run.
+
 Packaging checks the generated enable/token PCDs and the actual compiled BDS
 module. It also extracts BDS through the final FD's FV/FFS/LZMA encapsulation
 and requires identical module bytes. This prevents a stale or mixed FD from
