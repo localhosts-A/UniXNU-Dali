@@ -1,10 +1,13 @@
 # UniXNU-Dali
 
-The active milestone is the [unattended diagnostic cycle](docs/unattended-cycle.md):
-source-XNU checkpoints, PSCI cold/warm plus retained ramoops, automatic fastboot,
-and verified original Android recovery. AEE research follows only if needed;
-UFS logging and the Linux USB reader are deferred. Official MiCode base/device/vendor-module
-inputs are pinned in [the source inventory](references/mt6991-linux.toml).
+The active storage milestone is [Dali UFS read/write](docs/ufs.md): physical UEFI
+BlockIo, source-only XNU block reads, and bounded boot_b scratch writes, sync and
+cross-reset readback. The Android baseline collector and opt-in firmware register
+snapshot are implemented and host-tested; physical driver qualification is pending.
+The [unattended diagnostic cycle](docs/unattended-cycle.md) retains reset research,
+the Linux USB reader and automatic recovery, and will consume the UFS interfaces.
+Official MiCode base/device/vendor-module inputs are pinned in
+[the source inventory](references/mt6991-linux.toml).
 The RAM-root/PID1 milestone below and full native USB/OTG work are paused.
 No Dali physical UFS writer, Linux reader or complete unattended cycle is qualified.
 

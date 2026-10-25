@@ -2,8 +2,10 @@
 
 The active first implementation retests PSCI cold/warm resets with retained
 ramoops and original Android recovery. If both fail, investigate the verified
-AEE reset type `0x80000201` using source and device evidence. UFS persistence and
-the Linux USB reader below are deferred fallback work. RAM-root/PID1 and full
+AEE reset type `0x80000201` using source and device evidence. Hardware UFS,
+scratch writing/sync and persistence now belong to the independent
+[UFS milestone](ufs.md); they no longer wait for this plan's reset results.
+The Linux USB reader below remains deferred consumer work. RAM-root/PID1 and full
 native USB/OTG remain paused. No complete unattended cycle has passed on Dali.
 
 The reference is the [sheng unattended cycle](https://unixnu.com/devices/sheng-unattended-test).
@@ -27,7 +29,8 @@ Follow the [porting overview](https://unixnu.com/porting/),
 checkout does not contain the latest upstream porting-record checker. Do not
 claim its record check has passed or silently migrate all board/profile pins.
 
-Device resources, write policy, Linux reader and host runner belong here.
+UFS resources and write policy belong to the independent UFS milestone.
+The Linux reader and automatic-cycle host runner belong here.
 UEFI integration and boot-image packing belong in UEFI-Dali. Reusable transport
 implementations belong in the generic stack or a separately pinned component;
 ShengUfs constants and persistence policy must not be imported as Dali defaults.
@@ -75,14 +78,15 @@ confirm the menu in the older PSCI cold/warm rounds. Those original observations
 remain recorded, but neither round counts as completely unattended. A short
 menu confirmation is not evidence of a held Power forced reset.
 
-## Deferred storage/reader cycle
+## Reader cycle after UFS qualification
 
 1. Verify the device, slot B, original backups, live FDT and all 18 protected
    partition hashes. Produce one candidate and one identity-bound recovery record.
 2. Boot the candidate and obtain the actual single-core XNU checkpoint. Capture
    available diagnostic and kernel-message data with the current host token.
-3. Commit that round's bounded log to its allocated scratch area. Verify the
-   medium commit before requesting the selected MT6991/PSCI fastboot reset.
+3. Use the independently qualified UFS API to commit that round's bounded log to
+   its authorized scratch area. Require its medium-commit result before requesting
+   the selected MT6991/PSCI fastboot reset; do not implement another raw writer.
 4. Start the qualified Linux reader without losing the scratch data. Copy the
    log to RAM, export over USB CDC ACM, and validate token, source/image identity,
    sequence, length and digest on the host. Mount no storage filesystems.
@@ -95,13 +99,12 @@ first payload. PID1 execution, Apple userspace and a UFS root filesystem are
 separate milestones. USB enumeration or a reset-request log alone cannot pass
 the cycle. A timeout followed by manual recovery is a failed unattended cycle.
 
-## Deferred first gate: scratch and reader switching
+## Deferred reader-switching gate
 
-The only writable partition is boot_b. The proposed log allocation is 1 MiB
-inside the test image, with a further 1 MiB tail guard. Packing must establish
-its bounds relative to the actual partition geometry and all boot-v4 payload,
-signature and AVB metadata. It is not free space merely because a compressed
-candidate is short. Other partitions and GPT remain excluded.
+The independent UFS milestone owns actual partition geometry, scratch allocation,
+boot-v4/AVB bounds and runtime write authorization. Its 1 MiB proposal and 1 MiB
+tail guard are not automatically qualified by this document. This reader must
+consume that exact authorized range and may not widen it or add media writers.
 
 Fastboot's erase range when flashing a shorter boot_b image is currently
 unknown. A full original-image restore necessarily replaces the scratch data.
