@@ -126,7 +126,7 @@ It validates the reset binding and DMA range, refuses inherited active queues,
 and implements the fixed SiP/reset/HCE/UIC link sequence with bounded polls,
 first-failure diagnostics, poisoned failure state and idempotent controller
 stop. TI reset writes use the source driver's masked read/modify/write rather
-than assume W1S semantics. Fifteen tests execute the production C with simulated
+than assume W1S semantics. Twenty-two tests execute the production C with simulated
 MMIO/SiP, including stale completion, timeout and failed-stop cases.
 The default-disabled physical-host diagnostic now calls this core after BDS
 prepares the live FDT. The register-only probe remains separate. This integration
@@ -166,7 +166,7 @@ selects the extra boot_b sample, which must match the current candidate's first
 block. Read and flush operations recheck media identity. Flush success also
 requires exactly one new validated device-SYNC completion, excluding a no-op.
 
-151 firmware host tests pass, including 15 controller, 9 wire-policy, 12 production PassThru,
+158 firmware host tests pass, including 22 controller, 9 wire-policy, 12 production PassThru,
 8 ScsiDisk media/sync, 8 BlockIo diagnostic, 4 host sync-completion and 5
 physical-profile packaging tests. The device suite has 88 passing tests,
 including 9 new physical-runner lifecycle/metadata regressions.
@@ -333,6 +333,27 @@ logs preserve the strict existing qualification trace. Native tests execute
 the actual pulse, failure/cleanup and capture-order paths. The error mask is
 unchanged. Neither this correction nor the cause of the previous IS=4 has been
 hardware-qualified.
+
+The next hardware run, `run-20261025T103415Z-a61e87bc`, used firmware `923acb7`,
+device `5b05f20` and generic `2ab7dfd`. It confirmed successful reset assertion
+and release. The saved first LINK_STARTUP failure was IS=4/HCS=8/HCE=1,
+arguments zero and layer errors `80000010/0/0/0/0`. Raw console hash, fresh
+baseline, candidate binding, quiesce/HCE=0 and original Android B/root/all 18
+partition hashes were independently rechecked; pending restoration is cleared
+and the token remains consumed. It still returned before DMA/media I/O.
+
+The pinned Linux source identifies PA `0x80000010` as generic/LINERESET. During
+link startup it enables UCCS separately from UIC_ERROR, waits for the UIC result
+and device presence, then reads UECPA before making the HBA operational.
+The controller now has a stricter bounded equivalent for the observed event:
+only one exact isolated indication after this LINK_STARTUP submission may be
+saved and acknowledged. W1C clears only IS bit 2, preserving simultaneous UCCS;
+the unchanged 500 ms deadline still requires a real UCCS, result zero and then
+device presence. Other layers/lanes/fatal/reserved bits, repeated/sticky events,
+preexisting/non-link events, failed ACK, absent completion, nonzero result or
+missing device presence all fail closed, with no command resubmission. Native
+tests include delayed completion, exact-deadline success and completion 10 us
+too late. This event handling has not been hardware-qualified.
 
 ## Completion
 
