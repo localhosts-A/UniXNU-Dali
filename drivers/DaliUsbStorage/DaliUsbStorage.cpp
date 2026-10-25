@@ -229,7 +229,7 @@ extern "C" IOService *dali_usb_storage_publish(IOService *provider, struct usb_b
 {
   if (provider == nullptr || bot == nullptr || !bot->present) { return nullptr; }
   auto storage = new DaliUsbStorage;
-  if (storage == nullptr || !storage->init()) {
+  if (storage == nullptr || !storage->init(nullptr)) {
     if (storage != nullptr) { storage->release(); }
     return nullptr;
   }
