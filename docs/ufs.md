@@ -173,6 +173,18 @@ packaging still refuses enabled physical hosts. A separate candidate verifier/
 runner, actual BlockIo read/sync evidence, scratch writes and hardware DMA
 qualification remain pending.
 
+`scripts/ufs_readonly_evidence.py` now provides the offline evidence checker for
+that future runner. It revalidates raw baseline capture hashes, reciprocal GPT
+CRCs and all partition records, bound to the original boot_b image and expected
+serial. It requires one ordered current-token diagnostic trace, the complete
+baseline LUN partition set, known GPT-header and current-candidate block hashes,
+actual SYNC completions with monotonic per-LUN counts, and successful HCE=0 stop.
+Eleven host tests cover corrupt and mixed evidence, both logical block sizes,
+sync variants and prior connection syncs. The saved Android baseline's 96
+partitions also pass raw revalidation. The checker does not identify a connected
+phone from console text; the dedicated runner must bind the device and candidate
+to the fresh token. It remains unwired, and no hardware qualification is claimed.
+
 The current NativeUfs implementation is sheng/SM8550-specific, including LUN 0,
 4 KiB assumptions and board persistence windows. Its command validation and
 tests are references; copying its hardware constants or windows is not a Dali
