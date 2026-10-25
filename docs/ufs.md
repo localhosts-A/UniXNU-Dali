@@ -14,6 +14,30 @@ are implemented and host-tested, including a complete firmware build.
 No Dali physical UEFI/XNU UFS driver, DMA takeover, scratch writer or cross-reset
 persistence has been qualified. The existing firmware payload remains a RAM disk.
 
+The 2026-10-25 register-only hardware probe captured one complete fresh-token
+read sequence in the raw console. The source-bound candidate used firmware
+`f057924`, generic `e3033a0`, and device `33228ca`. The first attempt retained no
+pstore file and is a failed evidence capture; the retry passed snapshot scoring.
+The original complete `boot_b`, rooted Android B, all 18 original partition
+hashes, and the cleared pending-restore ledger were verified after both attempts.
+
+| Register | Observed raw value |
+| --- | --- |
+| CAP / version | `55c7051f` / `00000400` (UFSHCI 4.0) |
+| HCE / HCS | `0` / `0` |
+| IS / IE / AHIT | `0` / `0` / `0` |
+| UTRL / UTMRL bases, doorbells and run bits | all `0` |
+| MCQCAP / MEMCFG / MCQCFG | `080b0207` / `0` / `00001f00` |
+| Both inspected AO clock-gate status registers | `0` |
+
+This snapshot shows a disabled HCI and cleared legacy queues at this handoff.
+It does not establish a working link, PHY state, MCQ queue ownership, DMA
+translation or cache policy. The next controller stage must verify initialization
+from the pinned MT6991 implementation rather than assume an active LK link.
+The console records the real exit action and a warm-reset request; the operator
+confirmed fastboot. This is manual recovery evidence, without an automatic-reset
+or automatic-fastboot qualification claim.
+
 `scripts/collect-ufs-baseline.py` requires the complete original private backup,
 rooted Android B, and all 18 protected partition hashes before and after capture.
 It reads both GPT headers and partition arrays from the parent SCSI LUN, checks
