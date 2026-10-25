@@ -1,7 +1,7 @@
 # Native USB2 host engine
 
 The isolated USB board now pins firmware
-34de90d44f488085493ddc5b3933723b04e2f47e. Its DaliUsbNativeHostLib composes the
+6be2e23, which carries the current DaliUsbNativeHostLib checkpoint. The library composes the
 actual Mu transfer/register/schedule/memory source with the checked MMIO/DMA
 adapter, owns the HC lifecycle and publishes a standard USB2 HC/path pair.
 Default board USB remains disabled. No UFS or kernel profile changed.
@@ -22,8 +22,10 @@ for API and lifecycle details.
 
 This checkpoint does not install a Dali hardware controller worker in the FV.
 Actual board source/power/electrical/shared ownership and real DMA mapping
-remain external qualifications. MTK periodic endpoint/TT scheduling and its
-short-event quirk need binding before this generic engine can be used on Dali.
+remain external qualifications. The native-only MTK post-short-transfer event
+filter is now implemented and source-model tested. MTK periodic endpoint/TT
+bandwidth scheduling still needs a native binding before this engine can be
+used on Dali.
 The loader must call PrepareHandoff before the final memory map and refuse
 failed halt; this DarwinBoot wiring is still pending. Native-path QEMU,
 CDC/platform role integration and source-only XNU work are also pending.
