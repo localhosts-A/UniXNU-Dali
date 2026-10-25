@@ -17,6 +17,30 @@ host/hub/OS integration, FAT/HID source archives, complete
 firmware/macOS builds and QEMU USB gates are still pending. Nothing in this
 milestone enables USB in the ordinary boot profile. `hardware_qualified=false`.
 
+The generic repository now also contains an OS-independent USB host coordinator
+for xHCI-style address assignment, bounded configuration-descriptor parsing,
+boot keyboard/mouse selection, interrupt report delivery and Mass Storage BOT
+routing. Its Clang/GCC ASan/UBSan model covers short/overlong descriptors,
+high-speed packet intervals/transactions, failed endpoint setup, key release,
+BOT read/write/flush and retained device state after failed stop. It is protocol
+core only: it does not reset hub ports, implement an xHCI controller, publish
+IOHIDDevice/IOBlockStorageDevice services, or establish Dali DMA resources.
+
+An opt-in source-only XNU host-core profile is available separately from the
+ordinary Dali early-boot profile. On the macOS XNU build host, configure and build
+it in its own output root:
+
+```sh
+./unixnu defconfig dali_usb_defconfig -D ../UniXNU-Dali --out out/dali-usb
+./unixnu build kernel --source-only -D ../UniXNU-Dali --out out/dali-usb
+```
+
+That profile builds `UsbCore.c` and `UsbHost.c` from the XNU C compile record into
+`libDaliUsbHost.a` and force-loads the archive. The existing `dali_defconfig`
+leaves `XNU_NATIVE_USB_HOST` unset, so its archive builder skips the USB core.
+The enabled source archive is not yet a registered XNU controller/class driver;
+its final link and runtime gates remain open until those consumers are connected.
+
 The device tree also contains a production SID14 PMIF-M transport under
 `drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,
 bounded completion/error handling, late-response ownership and explicit write
