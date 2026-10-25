@@ -238,6 +238,28 @@ jobs:
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu"
 
+      - name: Test actual source storage media interfaces in QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/test-source-storage-qemu.py" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
+            --output-dir "$RUNNER_TEMP/dali-source-storage-qemu"
+
+      - name: Upload source storage QEMU evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-source-storage-qemu
+          path: |
+            ${{ runner.temp }}/dali-source-storage-qemu/result.json
+            ${{ runner.temp }}/dali-source-storage-qemu/*.log
+            ${{ runner.temp }}/dali-source-storage-qemu/*/gdb-stop.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Test readonly RAM root, real PID1 syscalls and 30-second heartbeats
         if: env.VALIDATION_PROFILE == 'pid1'
         shell: bash

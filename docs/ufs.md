@@ -121,6 +121,16 @@ This integration is undergoing macOS CI validation; host command/ABI tests alone
 do not prove a successful Apple-toolchain build or a working block device.
 Build and link reports are separate from runtime and MT6991 qualification.
 
+`scripts/test-source-storage-qemu.py` boots two explicit software-device cases
+through the real source `IOBlockStorageDriver` and `IOMedia`: writable 4096-byte
+RAM blocks and readonly 512-byte RAM blocks. It checks byte counts and content,
+out-of-range rejection, readonly rejection before transport, synchronization
+dispatch/failure, and partial-transfer error propagation. The fixture requires
+an explicit QEMU test nub, QEMU model and boot argument; the normal device tree
+does not publish it. Its checkpoint is inspected after the actual kernel
+function returns, bound to the kernel hash and case arguments. These tests are
+implemented but still awaiting actual compilation and QEMU validation.
+
 ## Register-probe runner
 
 `scripts/run-ufs-probe.py` runs one register-only candidate with a 120-second
