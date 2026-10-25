@@ -5,10 +5,14 @@ logging, host/hub keyboards and mice, BOT external disks with FAT32 file
 read/write, and MT6379 Type-C role selection. The UFS controller, its scratch
 policy and the Linux unattended reader retain their existing ownership.
 
-Current implementation consists of the portable protocol/ownership core and
-MTU3 QMU queue adapter in the pinned generic repository, plus the source and
-saved-FDT resource verification tools here. Actual controller/PHY/PMIF/TCPC
-initialization, EP0 and host/hub/OS integration, FAT/HID source archives, complete
+Current implementation consists of the portable protocol/ownership core,
+MTU3 QMU queue adapter, CDC EP0 register/FIFO state machine and nonzero endpoint
+CSR/FIFO configuration in the pinned generic repository, plus the source and
+saved-FDT resource verification tools here. Four production C fixtures pass
+Clang/GCC ASan/UBSan and freestanding AArch64 compilation. EP0 applies settings
+after status ACK and discards aborted transactions; endpoint changes refuse
+active queues. Actual controller composition, PHY/PMIF/TCPC initialization,
+host/hub/OS integration, FAT/HID source archives, complete
 firmware/macOS builds and QEMU USB gates are still pending. Nothing in this
 milestone enables USB in the ordinary boot profile. `hardware_qualified=false`.
 
