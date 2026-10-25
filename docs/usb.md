@@ -87,6 +87,17 @@ the block service is linked but is not instantiated until a production host
 owner is connected. The XNU USB controller, HID report service, runtime FAT32
 test, and native USB QEMU path remain open gates.
 
+The opt-in profile now selects `XNU_SOURCE_HID_FAMILY` and the fixed public
+IOHIDFamily-2031.120.4 source build. The builder follows the Embedded target's
+source phase, generates its three real IIG bridges, and requires public SDK
+declarations omitted from Apple's source import. It records those SDK header
+hashes and refuses absent inputs. The private FastPath user-client source is
+absent from the fixed public Git tree; an explicit source port leaves unknown
+client types to the superclass rather than supplying a replacement class.
+This HID build is under CI validation. Actual keyboard/mouse publication and
+USB report delivery remain pending until the real family compile/link passes
+and a controller/child owner is connected.
+
 The device tree also contains a production SID14 PMIF-M transport under
 `drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,
 bounded completion/error handling, late-response ownership and explicit write

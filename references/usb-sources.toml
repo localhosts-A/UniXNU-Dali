@@ -19,8 +19,8 @@ required = ["drivers/usb/mtu3/mtu3_plat.c", "drivers/usb/mtu3/mtu3_dr.c", "drive
 name = "IOHIDFamily"
 git = "https://github.com/apple-oss-distributions/IOHIDFamily.git"
 commit = "b126cf696bf1c6eede740b92d3bfca7e62d09c06"
-paths = ["IOHIDFamily/", "IOHIDSystem/", "IOHIDFamily.xcodeproj/", "kext.xcconfig"]
-required = ["IOHIDFamily/IOHIDDevice.cpp", "IOHIDFamily/IOHIDDevice.h", "IOHIDSystem/IOHIDDescriptorParser/HIDParseDescriptor.c"]
+paths = ["IOHIDFamily/", "IOHIDSystem/", "IOHIDFamily.xcodeproj/", "HIDDriverKit/", "kext.xcconfig"]
+required = ["IOHIDFamily/IOHIDDevice.cpp", "IOHIDFamily/IOHIDDevice.h", "IOHIDFamily/IOHIDDeviceTypes.h", "IOHIDFamily/IOHIDFamily.xcconfig", "IOHIDFamily.xcodeproj/project.pbxproj", "HIDDriverKit/IOHIDDevice.iig", "HIDDriverKit/IOHIDInterface.iig", "HIDDriverKit/IOHIDEventService.iig", "IOHIDSystem/IOHIDDescriptorParser/HIDParseDescriptor.c"]
 
 [[source]]
 name = "msdosfs"

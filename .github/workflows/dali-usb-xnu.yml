@@ -91,6 +91,7 @@ jobs:
           set -euo pipefail
           cd UniXNU
           python3 -m unittest discover -s tests/usb -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-core-tests.log"
+          python3 -m unittest discover -s tests/unixnu -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/source-builder-tests.log"
           python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_dali_usb_*builder.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-builder-tests.log"
 
       - name: Fetch fixed USB and storage source references
@@ -100,6 +101,8 @@ jobs:
           python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/fetch-usb-references.py" \
             --output "$RUNNER_TEMP/usb-references" \
             --jobs 3 > "$RUNNER_TEMP/usb-reference-manifest.json"
+          XNU_SOURCE_HID_FAMILY=1 python3 "$GITHUB_WORKSPACE/UniXNU/scripts/build-source-hid.py" \
+            --audit-inputs "$RUNNER_TEMP/usb-references/IOHIDFamily"
 
       - name: Configure the isolated source-only USB profile
         shell: bash
@@ -114,6 +117,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           XNU_NATIVE_USB_HOST: '1'
           XNU_SOURCE_STORAGE_FAMILY: '1'
+          XNU_SOURCE_HID_FAMILY: '1'
         run: |
           set -euo pipefail
           cd UniXNU
@@ -122,6 +126,7 @@ jobs:
           kernel="$tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
           python3 "$tree/scripts/build-dali-usb-storage.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-storage.py" --verify-kernel "$kernel"
+          python3 "$tree/scripts/build-source-hid.py" --verify-kernel "$kernel"
 
       - name: Summarize source build scope
         if: always()
@@ -146,16 +151,35 @@ jobs:
             ${{ runner.temp }}/dali-usb-xnu-build.log
             ${{ runner.temp }}/usb-core-tests.log
             ${{ runner.temp }}/usb-builder-tests.log
+            ${{ runner.temp }}/source-builder-tests.log
             ${{ runner.temp }}/usb-reference-manifest.json
+            UniXNU/build/source-hid/input-audit.json
             UniXNU/out/dali/logs/kernel-bootstrap.log
             UniXNU/out/dali/logs/archive-*.log
             UniXNU/out/dali/logs/kernel.log
             UniXNU/out/dali/logs/source-storage-link.log
+            UniXNU/out/dali/logs/source-hid-link.log
             UniXNU/out/dali/tree/build/dali-usb-host/*.json
             UniXNU/out/dali/tree/build/dali-usb-host/*.log
             UniXNU/out/dali/tree/build/dali-usb-storage/*.json
             UniXNU/out/dali/tree/build/dali-usb-storage/*.log
             UniXNU/out/dali/tree/build/source-storage/*.json
             UniXNU/out/dali/tree/build/source-storage/*.log
+            UniXNU/out/dali/tree/build/source-hid/*.json
+            UniXNU/out/dali/tree/build/source-hid/*.log
           if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload source-built USB kernel and archives
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-usb-source-kernel
+          path: |
+            UniXNU/out/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf
+            UniXNU/out/dali/tree/build/dali-usb-host/*.a
+            UniXNU/out/dali/tree/build/dali-usb-storage/*.a
+            UniXNU/out/dali/tree/build/source-storage/*.a
+            UniXNU/out/dali/tree/build/source-hid/*.a
+          if-no-files-found: error
           retention-days: 7
