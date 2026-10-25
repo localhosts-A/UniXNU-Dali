@@ -78,7 +78,7 @@ def private_candidate(args, run, kernel, kernel_manifest, adt, live_fdt, token, 
     sealed.mkdir(mode=0o700)
     copies = {
         'UniXNU-dali-uefi-boot.img': image,
-        'SILICIUM_UEFI.fd': args.uefi / 'Mu_Basecore/Build/daliPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd',
+        'SILICIUM_UEFI.fd': args.uefi / 'Build/daliPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd',
         'payload.img': args.uefi / 'out/payload.img',
         'runtime-live.dtb': live_fdt,
         'source-kernel.macho': kernel,

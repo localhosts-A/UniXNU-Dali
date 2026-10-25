@@ -38,6 +38,43 @@ def manifest_for(token, kernel_sha, fdt_sha):
 
 
 class SourceXnuRunnerTests(unittest.TestCase):
+    def test_private_candidate_seals_firmware_volume_from_uefi_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); run = root / 'run'; run.mkdir()
+            uefi = root / 'UEFI-Dali';
+            actual_fd = uefi / 'Build/daliPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd'
+            actual_fd.parent.mkdir(parents=True); actual_fd.write_bytes(b'actual final FD')
+            decoy = uefi / 'Mu_Basecore/Build/daliPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd'
+            decoy.parent.mkdir(parents=True); decoy.write_bytes(b'wrong nested path')
+            (uefi / 'out').mkdir(); (uefi / 'out/payload.img').write_bytes(b'FAT payload')
+            kernel = root / 'kernel.macho'; kernel.write_bytes(b'kernel')
+            adt = root / 'kernel.macho.adt'; adt.write_bytes(b'ADT')
+            fdt = root / 'runtime.dtb'; fdt.write_bytes(b'FDT')
+            token = '1234567890abcdef' * 2
+            manifest = {'sha256': hashlib.sha256(b'candidate image').hexdigest(),
+                'payload': {'xnu_adt_sha256': hashlib.sha256(adt.read_bytes()).hexdigest()}}
+
+            def build(*args, **kwargs):
+                packed = args[6]; image = packed / 'UniXNU-dali-uefi-boot.img'
+                image.write_bytes(b'candidate image')
+                return image, manifest
+
+            def verify(directory, *_):
+                self.assertEqual((directory / 'SILICIUM_UEFI.fd').read_bytes(), actual_fd.read_bytes())
+                self.assertNotEqual((directory / 'SILICIUM_UEFI.fd').read_bytes(), decoy.read_bytes())
+                return directory / 'UniXNU-dali-uefi-boot.img', json.loads((directory / 'manifest.json').read_text())
+
+            args = argparse.Namespace(backup=root / 'backup', uefi=uefi, unixnu=root / 'UniXNU')
+            records = {'boot_b': {'bytes': 4096}}
+            kernel_manifest = {'kernel_sha256': hashlib.sha256(kernel.read_bytes()).hexdigest(), 'recovery': {}}
+            with mock.patch.object(runner.cycle, 'build_candidate', side_effect=build), \
+                 mock.patch.object(runner, 'candidate_binding'), \
+                 mock.patch.object(runner.probe, 'verify_candidate', side_effect=verify):
+                sealed, checked = runner.private_candidate(args, run, kernel, kernel_manifest, adt,
+                                                            fdt, token, records)
+            self.assertEqual(checked, manifest)
+            self.assertEqual((sealed / 'SILICIUM_UEFI.fd').read_bytes(), actual_fd.read_bytes())
+
     def test_build_candidate_sets_both_readonly_owners_and_binds_final_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
