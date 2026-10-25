@@ -388,6 +388,22 @@ read-clear/ACK, unchanged deadline, completion exactly at deadline, completion
 actually injected 10 us late during stop, and status arriving before ACK.
 162 firmware tests pass. This revision still has no hardware qualification.
 
+The e2e5c78/2bc4334/2ab7dfd trial, run-20261025T120056Z-49a0b99b,
+showed firmware text/color bars and never reached the menu within 120 seconds.
+The main runner exited with original restoration pending. After the operator
+forced fastboot, the original-only recovery entry completed successfully:
+full original boot_b, Android B/root and all 18 hashes match. An independent
+audit rehashed all 18 backup images and checked the recovery, fresh-baseline/
+candidate bindings and cleared pending ledger; the token remains consumed.
+No raw console survived forced recovery. Controller/DMA/media progress is
+unknown, and no read/sync/diagnostic-stop qualification is claimed.
+
+The following candidate adds visible progress before existing control-plane
+SiP/HCE/UIC requests and at DMA initialization, host installation/connection,
+BlockIo diagnostics and stop boundaries. It adds no hardware reads/commands,
+poll-loop output or media-write permission. If the RAM menu does not appear,
+the last visible line can narrow the failure; it cannot prove completed I/O.
+
 ## Storage handoff consumer
 
 The isolated `codex/dali-ufs-handoff` integration uses generic `b54db17` and
