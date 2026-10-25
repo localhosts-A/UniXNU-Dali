@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""One UEFI register-only UFS probe, with bounded original-boot_b restoration.
+"""One explicitly selected UEFI UFS diagnostic, with original-boot_b restoration.
 
-The candidate contains no XNU or physical storage commands. Manual menu/fastboot
-keys are allowed. Snapshot success never qualifies DMA, media I/O or persistence.
+The default register mode contains no physical storage commands. The separate
+read-only-blockio mode submits bounded reads/sync, never media writes. Neither
+candidate contains XNU. Manual menu/fastboot keys are allowed. Register snapshot
+success never qualifies DMA/media; read-only success never qualifies persistence.
 Dry-run validates saved inputs without ADB/fastboot. Restore-only never loads a
 candidate and needs neither its source revision nor a new build.
 """
@@ -24,11 +26,21 @@ import tempfile
 import tomllib
 
 DEVICE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(DEVICE / 'scripts'))
+import ufs_readonly_evidence as readonly
 spec = importlib.util.spec_from_file_location('ufs_probe_cycles', DEVICE / 'scripts/run-bootb-cycles.py')
 cycle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cycle)
 STATE_ROOT = DEVICE.parent / 'device-backups/.ufs-device-state'
 TOKEN = re.compile(r'[0-9a-f]{32}')
+KINDS = {'registers': 'dali-ufs-register-probe', 'read-only-blockio': 'dali-ufs-read-only-blockio'}
+
+
+def selected_mode(a):
+    mode = getattr(a, 'mode', 'registers')
+    if mode not in KINDS:
+        raise cycle.CycleError('unknown UFS diagnostic mode')
+    return mode
 
 
 def durable_json(path, value):
@@ -109,7 +121,7 @@ class DeviceLease(AbstractContextManager):
         durable_json(self.path, self.data)
 
 
-def verify_candidate(directory, uefi, unixnu, backup):
+def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     manifest = json.loads((directory / 'manifest.json').read_text())
     if not isinstance(manifest, dict):
         raise cycle.CycleError('invalid probe manifest')
@@ -118,12 +130,28 @@ def verify_candidate(directory, uefi, unixnu, backup):
     probe = manifest.get('ufs_probe', {})
     if not isinstance(probe, dict):
         raise cycle.CycleError('invalid probe metadata')
-    token = probe.get('run_token', '')
-    if (not isinstance(token, str) or not TOKEN.fullmatch(token) or probe.get('enabled') is not True or
-            probe.get('mode') != 'read-only-registers' or probe.get('controller_commands') is not False or
-            probe.get('mmio_writes') is not False or probe.get('physical_storage_qualified') is not False or
-            probe.get('bds_verified_in_final_fd') is not True or manifest.get('target') != 'dali'):
-        raise cycle.CycleError('candidate is not a bound UEFI register-only probe')
+    if mode == 'read-only-blockio':
+        host = manifest.get('ufs_host', {})
+        if not isinstance(host, dict):
+            raise cycle.CycleError('invalid physical UFS host metadata')
+        token = host.get('run_token', '')
+        if (host.get('enabled') is not True or host.get('mode') != mode or host.get('log_version') != 1 or
+                host.get('controller_commands') is not True or host.get('mmio_writes') is not True or
+                host.get('media_writes') is not False or host.get('write_authorized') is not False or
+                host.get('physical_storage_qualified') is not False or host.get('host_verified_in_final_fd') is not True or
+                probe.get('enabled') is not False or probe.get('mode') != 'off' or probe.get('run_token') is not None):
+            raise cycle.CycleError('candidate is not an explicit physical read-only diagnostic')
+    elif mode == 'registers':
+        token = probe.get('run_token', '')
+        if (probe.get('enabled') is not True or probe.get('mode') != 'read-only-registers' or
+                probe.get('controller_commands') is not False or probe.get('mmio_writes') is not False):
+            raise cycle.CycleError('candidate is not a bound UEFI register-only probe')
+    else:
+        raise cycle.CycleError('unknown candidate diagnostic mode')
+    if (not isinstance(token, str) or not TOKEN.fullmatch(token) or
+            probe.get('physical_storage_qualified') is not False or probe.get('bds_verified_in_final_fd') is not True or
+            manifest.get('target') != 'dali'):
+        raise cycle.CycleError('invalid diagnostic identity/token/evidence metadata')
     payload = manifest.get('payload', {})
     if not isinstance(payload, dict) or not isinstance(payload.get('recovery'), dict):
         raise cycle.CycleError('invalid probe payload/recovery metadata')
@@ -131,7 +159,10 @@ def verify_candidate(directory, uefi, unixnu, backup):
             payload.get('recovery', {}).get('auto_fastboot') is not False or
             payload.get('recovery', {}).get('reset_method') is not None):
         raise cycle.CycleError('probe candidate contains XNU/root or competing reset policy')
-    for key, path in (('uefi_commit', uefi), ('unixnu_commit', unixnu), ('device_commit', DEVICE)):
+    # The packager's historic --mu argument names this firmware workspace;
+    # Mu_Basecore itself is separately checked against its pinned gitlink/patches.
+    for key, path in (('uefi_commit', uefi), ('unixnu_commit', unixnu), ('device_commit', DEVICE),
+                      ('mu_commit', uefi), ('upstream_commit', uefi)):
         if manifest.get(key) != cycle.run_capture(['git', 'rev-parse', 'HEAD'], cwd=path).strip():
             raise cycle.CycleError('probe source revision mismatch: ' + key)
     pins = tomllib.loads((DEVICE / 'board.toml').read_text())['firmware']
@@ -168,10 +199,15 @@ def verify_candidate(directory, uefi, unixnu, backup):
     package_spec = importlib.util.spec_from_file_location('ufs_probe_package', uefi / 'tools/dali/package.py')
     package = importlib.util.module_from_spec(package_spec)
     package_spec.loader.exec_module(package)
-    if package.ufs_probe_metadata(build / 'AARCH64', token, fd=fd) != probe:
-        raise cycle.CycleError('probe differs from local compiled PCD/BDS inputs')
+    if mode == 'read-only-blockio':
+        expected_probe, expected_host = package.ufs_read_only_metadata(build / 'AARCH64', token, fd=fd)
+    else:
+        expected_probe = package.ufs_probe_metadata(build / 'AARCH64', token, fd=fd)
+        expected_host = package.ufs_host_off_metadata(build / 'AARCH64', fd=fd)
+    if expected_probe != probe or expected_host != manifest.get('ufs_host'):
+        raise cycle.CycleError('diagnostic differs from local compiled PCD/modules/FD inputs')
     module = extract_bds(fd)
-    if cycle.sha256(module) != probe.get('bds_sha256') or token.encode() + b'\0' not in module:
+    if cycle.sha256(module) != probe.get('bds_sha256') or (mode == 'registers' and token.encode() + b'\0' not in module):
         raise cycle.CycleError('final candidate BDS/token does not match manifest')
     # Rebuild the small entry shim from the clean pinned source, independently
     # of both the supplied candidate and its self-reported manifest hashes.
@@ -188,6 +224,84 @@ def verify_candidate(directory, uefi, unixnu, backup):
         if raw[:4096] != (temp / 'shim.bin').read_bytes():
             raise cycle.CycleError('candidate entry shim differs from rebuilt pinned source')
     return image, manifest
+
+
+def prepare_readonly_baseline(a, run):
+    """Snapshot only verified raw captures; never copy arbitrary bundle contents."""
+    expected = readonly.load_baseline(a.baseline_dir, serial=a.serial, original_boot_b=a.backup / 'boot_b.img')
+    report_bytes = (a.baseline_dir / 'baseline.json').read_bytes()
+    if cycle.sha256(report_bytes) != expected['baseline_sha256']:
+        raise cycle.CycleError('baseline changed during verification')
+    report = json.loads(report_bytes)
+    output = run / 'baseline'
+    output.mkdir(mode=0o700)
+    for label in ('primary_header', 'primary_entries', 'backup_header', 'backup_entries', 'boot_b_first_block', 'live_fdt'):
+        record = report['captures'][label]
+        source = (a.baseline_dir / record['file']).resolve()
+        if a.baseline_dir.resolve() not in source.parents:
+            raise cycle.CycleError('baseline capture escaped during copy')
+        with source.open('rb') as stream:
+            data = stream.read(4 * 1024 * 1024 + 1)
+        if len(data) != record['bytes'] or cycle.sha256(data) != record['sha256']:
+            raise cycle.CycleError('baseline capture changed during copy')
+        name = label + '.bin'
+        with (output / name).open('xb') as target:
+            os.chmod(target.name, 0o600)
+            target.write(data)
+        record['file'] = name
+    durable_json(output / 'baseline.json', report)
+    return readonly.load_baseline(output, serial=a.serial, original_boot_b=a.backup / 'boot_b.img')
+
+
+def collect_live_readonly_baseline(a, run, expected):
+    baseline_spec = importlib.util.spec_from_file_location('ufs_live_baseline', DEVICE / 'scripts/collect-ufs-baseline.py')
+    collector = importlib.util.module_from_spec(baseline_spec)
+    baseline_spec.loader.exec_module(collector)
+    collector.collect(a.serial, a.backup, run / 'live-baseline')
+    live = readonly.load_baseline(run / 'live-baseline', serial=a.serial, original_boot_b=a.backup / 'boot_b.img')
+    for key in ('lun', 'block_size', 'last_lba', 'boot_b_lba', 'boot_b_blocks', 'partitions', 'header_hashes', 'original_boot_b_sha256'):
+        if live[key] != expected[key]:
+            raise cycle.CycleError('live Android UFS baseline changed: ' + key)
+    return live
+
+
+def trial_scorer(a, run, state):
+    if state.get('kind', KINDS['registers']) == KINDS['registers']:
+        return score_snapshot
+
+    def score(text, token):
+        failure = {'run_token': token, 'uefi_read_only_pass': False, 'observation_complete': False,
+                   'physical_ufs_qualified': False, 'media_writes_qualified': False,
+                   'uefi_read_only_qualified': False, 'persistence_qualified': False}
+        try:
+            if (state.get('kind') != KINDS['read-only-blockio'] or state.get('serial') != a.serial or
+                    state.get('backup') != str(a.backup) or state.get('token') != token or
+                    state.get('baseline_folder') not in ('baseline', 'live-baseline')):
+                raise ValueError('read-only run identity/baseline mismatch')
+            baseline = readonly.load_baseline(run / state['baseline_folder'], serial=a.serial,
+                                              original_boot_b=a.backup / 'boot_b.img')
+            if (baseline['baseline_sha256'] != state.get('baseline_sha256') or
+                    baseline['original_boot_b_sha256'] != state.get('original_boot_b_sha256')):
+                raise ValueError('read-only baseline/original binding changed')
+            record_bytes = (run / 'candidate.json').read_bytes()
+            manifest = json.loads(record_bytes)
+            candidate = (run / 'candidate-boot.img').read_bytes()
+            if (cycle.sha256(record_bytes) != state.get('candidate_record_sha256') or
+                    manifest.get('sha256') != state.get('candidate_sha256') or
+                    cycle.sha256(candidate) != state.get('candidate_sha256') or
+                    manifest.get('ufs_host', {}).get('run_token') != token):
+                raise ValueError('read-only candidate/token binding changed')
+            result = readonly.score_readonly(text, token, baseline, candidate)
+            bound = (state.get('dry_run') is False and state.get('device_verified_before_flash') is True and
+                     state.get('candidate_verified_before_flash') is True and state['baseline_folder'] == 'live-baseline')
+            result.update(device_identity_bound_to_run=bound, candidate_bound_to_run=bound,
+                          uefi_read_only_qualified=bool(bound and result['uefi_read_only_pass']),
+                          uefi_sync_command_qualified=bool(bound and result.get('uefi_sync_command_pass')),
+                          diagnostic_stop_qualified=bool(bound and result.get('diagnostic_stop_pass')))
+            return result
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+            return dict(failure, binding_error=str(error))
+    return score
 
 
 def score_snapshot(text, token):
@@ -260,7 +374,7 @@ def score_snapshot(text, token):
                 iommu_property_bytes=int(matches[0][3]), records=lines)
 
 
-def cached_snapshot(output, token):
+def cached_snapshot(output, token, scorer=score_snapshot):
     old = json.loads((output / 'result.json').read_text())
     if not isinstance(old, dict) or old.get('run_token') != token or not isinstance(old.get('files'), list):
         raise ValueError('invalid cached probe collection')
@@ -276,20 +390,20 @@ def cached_snapshot(output, token):
         if len(data) != record.get('bytes') or cycle.sha256(data) != record.get('sha256'):
             raise ValueError('cached raw evidence changed')
         chunks.append(data.decode('utf-8', errors='replace'))
-    result = score_snapshot('\n'.join(chunks), token)
+    result = scorer('\n'.join(chunks), token)
     if not result['observation_complete']:
         raise ValueError('cached collection is incomplete; retry raw capture')
     return dict(result, files=files)
 
 
-def collect_now(serial, run, token):
+def _collect_now(serial, run, token, scorer=score_snapshot):
     output = run / 'collect'
     output.mkdir(exist_ok=True, mode=0o700)
     existing = output / 'result.json'
     if existing.exists():
         try:
-            return cached_snapshot(output, token)
-        except (OSError, ValueError, AttributeError, TypeError):
+            return cached_snapshot(output, token, scorer)
+        except (OSError, ValueError, AttributeError, TypeError, KeyError):
             pass  # Keep partial raw captures and retry into a new private folder.
     chunks, files = [], []
     try:
@@ -307,24 +421,43 @@ def collect_now(serial, run, token):
                 os.fsync(target.fileno())
             files.append({'name': str(path.relative_to(output)), 'bytes': len(data), 'sha256': cycle.sha256(data)})
             chunks.append(data.decode('utf-8', errors='replace'))
-        result = score_snapshot('\n'.join(chunks), token)
+        result = scorer('\n'.join(chunks), token)
     except Exception as error:
         result = {'run_token': token, 'snapshot_pass': False, 'collection_error': str(error),
-                  'dma_qualified': False, 'physical_ufs_qualified': False, 'media_writes_qualified': False}
+                  'dma_qualified': False, 'physical_ufs_qualified': False, 'media_writes_qualified': False,
+                  'uefi_read_only_pass': False, 'uefi_read_only_qualified': False}
     result['files'] = files
     durable_json(existing, result)
     return result
 
 
+def collect_now(serial, run, token, scorer=score_snapshot):
+    # Diagnostics are best effort during original-only recovery. In particular,
+    # mkdir/cache/result-write failures must not prevent the restore operation.
+    try:
+        return _collect_now(serial, run, token, scorer)
+    except Exception as error:
+        return {'run_token': token, 'snapshot_pass': False, 'observation_complete': False,
+                'collection_store_error': str(error), 'files': [], 'dma_qualified': False,
+                'physical_ufs_qualified': False, 'media_writes_qualified': False,
+                'uefi_read_only_pass': False, 'uefi_read_only_qualified': False,
+                'persistence_qualified': False}
+
+
 def finish_restore(a, run, state, records, lease):
-    callback = lambda: collect_now(a.serial, run, state['token'])
+    scorer = trial_scorer(a, run, state)
+    callback = lambda: collect_now(a.serial, run, state['token'], scorer)
     cycle.restore_android_safely(a.serial, a.fastboot_serial, a.backup, records, a.wait_seconds, post_boot=callback)
     hashes = cycle.compare_partition_hashes(a.serial, records)
     android = cycle.current_android(a.serial)
+    return record_restored_result(a, run, state, hashes, android, lease)
+
+
+def record_restored_result(a, run, state, hashes, android, lease):
     durable_json(run / 'recovery-verification.json', {'android': android, 'partition_hashes': hashes,
                  'all_partition_hashes_match': True, 'original_boot_b_restored': True})
     lease.restored(run, state)
-    snapshot = collect_now(a.serial, run, state['token'])
+    snapshot = collect_now(a.serial, run, state['token'], trial_scorer(a, run, state))
     result = dict(snapshot, android_restored=True, all_partition_hashes_match=True,
                   complete_ufs_read_write_pass=False, manual_keys_allowed=True)
     durable_json(run / 'probe-result.json', result)
@@ -334,7 +467,7 @@ def finish_restore(a, run, state, records, lease):
 def restore_pending(a, lease):
     run = a.restore_run.resolve()
     state = json.loads((run / 'restore-state.json').read_text())
-    if (not isinstance(state, dict) or state.get('kind') != 'dali-ufs-register-probe' or state.get('dry_run') is not False or
+    if (not isinstance(state, dict) or state.get('kind') != KINDS[selected_mode(a)] or state.get('dry_run') is not False or
             state.get('serial') != a.serial or state.get('fastboot_serial') != a.fastboot_serial or
             state.get('backup') != str(a.backup) or not isinstance(state.get('token'), str) or
             not TOKEN.fullmatch(state['token']) or
@@ -345,15 +478,14 @@ def restore_pending(a, lease):
         raise cycle.CycleError('restore-only original backup hash mismatch')
     if cycle.adb_online(a.serial):
         cycle.current_android(a.serial)
-        collect_now(a.serial, run, state['token'])
+        collect_now(a.serial, run, state['token'], trial_scorer(a, run, state))
         try:
             hashes = cycle.compare_partition_hashes(a.serial, records)
         except cycle.CycleError:
             cycle.request_fastboot_from_android(a.serial, a.fastboot_serial, a.wait_seconds)
         else:
-            durable_json(run / 'recovery-verification.json', {'android': cycle.current_android(a.serial),
-                         'partition_hashes': hashes, 'all_partition_hashes_match': True, 'original_boot_b_restored': True})
-            lease.restored(run, state)
+            result = record_restored_result(a, run, state, hashes, cycle.current_android(a.serial), lease)
+            print(json.dumps(result, indent=2))
             return
     if not cycle.wait_fastboot(a.fastboot_serial, a.wait_seconds):
         raise cycle.CycleError('fastboot absent; original-only restore remains pending')
@@ -361,12 +493,13 @@ def restore_pending(a, lease):
 
 
 def run_trial(a, lease):
+    mode = selected_mode(a)
     for repo in (DEVICE, a.unixnu):
         cycle.verify_clean_repository(repo)
     cycle.verify_clean_repository(a.uefi, allow_mu_patches=True)
     _, records = cycle.verify_backup(a.backup, a.serial)
-    image, manifest = verify_candidate(a.candidate_dir, a.uefi, a.unixnu, a.backup)
-    token = manifest['ufs_probe']['run_token']
+    image, manifest = verify_candidate(a.candidate_dir, a.uefi, a.unixnu, a.backup, mode)
+    token = manifest['ufs_host' if mode == 'read-only-blockio' else 'ufs_probe']['run_token']
     lease.require_new(token)
     if image.stat().st_size > records['boot_b']['bytes']:
         raise cycle.CycleError('probe candidate exceeds boot_b')
@@ -380,27 +513,39 @@ def run_trial(a, lease):
     restore_command = [sys.executable, str(Path(__file__).resolve()), '--serial', a.serial,
                        '--fastboot-serial', a.fastboot_serial, '--backup', str(a.backup),
                        '--restore-run', str(run), '--wait-seconds', '600']
-    state = {'kind': 'dali-ufs-register-probe', 'dry_run': a.dry_run, 'token': token,
+    if mode != 'registers':
+        restore_command += ['--mode', mode]
+    state = {'kind': KINDS[mode], 'dry_run': a.dry_run, 'token': token,
              'serial': a.serial, 'fastboot_serial': a.fastboot_serial, 'backup': str(a.backup),
              'original_boot_b_sha256': records['boot_b']['sha256'], 'boot_b_may_be_modified': False,
              'restore_command': restore_command}
+    if mode == 'read-only-blockio':
+        baseline = prepare_readonly_baseline(a, run)
+        state.update(candidate_sha256=manifest['sha256'], candidate_verified_before_flash=True,
+                     candidate_record_sha256=cycle.sha256((run / 'candidate.json').read_bytes()),
+                     baseline_folder='baseline', baseline_sha256=baseline['baseline_sha256'])
     durable_json(run / 'restore-state.json', state)
     if not a.dry_run:
         cycle.current_android(a.serial)
         cycle.compare_partition_hashes(a.serial, records)
+        if mode == 'read-only-blockio':
+            baseline = collect_live_readonly_baseline(a, run, baseline)
+            state.update(baseline_folder='live-baseline', baseline_sha256=baseline['baseline_sha256'])
     fdt = (a.backup / 'runtime.dtb').read_bytes() if a.dry_run else cycle.adb_output(a.serial, 'cat /sys/firmware/fdt')
     cycle.verify_live_layout(fdt, a.backup, a.uefi)
     with (run / 'runtime-checked.dtb').open('xb') as target:
         os.chmod(target.name, 0o600)
         target.write(fdt)
     if a.dry_run:
-        print('DRY RUN PASS: register-only candidate verified; no device contacted. ' + str(run), flush=True)
+        print('DRY RUN PASS: ' + mode + ' candidate verified; no device contacted. ' + str(run), flush=True)
         return 0
     cycle.request_fastboot_from_android(a.serial, a.fastboot_serial, a.wait_seconds)
     cycle.verify_fastboot(a.fastboot_serial, require_slot_b=True)
     cycle.verify_original_boot_b(a.backup / 'boot_b.img', records['boot_b'])
     if cycle.sha256(private_image.read_bytes()) != manifest['sha256']:
         raise cycle.CycleError('private probe image changed')
+    if mode == 'read-only-blockio':
+        state['device_verified_before_flash'] = True
     lease.arm(run, state)  # Durable recovery state and token consumption BEFORE flash.
     print('ORIGINAL-ONLY RECOVERY: ' + shlex.join(restore_command), flush=True)
     try:
@@ -425,7 +570,7 @@ def run_trial(a, lease):
             print('RESTORE PENDING: ' + shlex.join(restore_command), flush=True)
         raise
     print(json.dumps(result, indent=2))
-    return 0 if result.get('snapshot_pass') else 2
+    return 0 if result.get('uefi_read_only_qualified' if mode == 'read-only-blockio' else 'snapshot_pass') else 2
 
 
 def main():
@@ -433,17 +578,18 @@ def main():
     p.add_argument('--serial', required=True)
     p.add_argument('--fastboot-serial')
     p.add_argument('--backup', type=Path, required=True)
-    for name in ('uefi', 'unixnu', 'candidate-dir', 'evidence-root', 'restore-run'):
+    p.add_argument('--mode', choices=list(KINDS), default='registers')
+    for name in ('uefi', 'unixnu', 'candidate-dir', 'evidence-root', 'restore-run', 'baseline-dir'):
         p.add_argument('--' + name, type=Path)
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--wait-seconds', type=int, default=120)
     a = p.parse_args()
     a.fastboot_serial = a.fastboot_serial or a.serial
     if a.fastboot_serial != a.serial:
-        p.error('register-only trials require the same verified Android/fastboot serial')
+        p.error('UFS trials require the same verified Android/fastboot serial')
     a.backup = a.backup.expanduser().resolve()
     if a.restore_run:
-        if a.dry_run or any(getattr(a, name) for name in ('uefi', 'unixnu', 'candidate_dir', 'evidence_root')) or not 120 <= a.wait_seconds <= 600:
+        if a.dry_run or any(getattr(a, name) for name in ('uefi', 'unixnu', 'candidate_dir', 'evidence_root', 'baseline_dir')) or not 120 <= a.wait_seconds <= 600:
             p.error('restore-only takes no candidate/build paths and a 120..600 second deadline')
         a.backup = cycle.require_private_path(a.backup, (DEVICE, DEVICE.parent / 'UEFI-Dali', DEVICE.parent / 'UniXNU'), 'backup')
         a.restore_run = cycle.require_private_path(a.restore_run, (DEVICE, DEVICE.parent / 'UEFI-Dali', DEVICE.parent / 'UniXNU'), 'restore run')
@@ -457,7 +603,11 @@ def main():
         a.backup = cycle.require_private_path(a.backup, repos, 'backup')
         a.candidate_dir = cycle.require_private_path(a.candidate_dir, repos, 'candidate')
         a.evidence_root = cycle.require_private_path(a.evidence_root, repos, 'evidence')
-        for protected in (a.backup, a.candidate_dir):
+        if (a.mode == 'read-only-blockio') != (a.baseline_dir is not None):
+            p.error('only read-only-blockio requires --baseline-dir')
+        if a.baseline_dir is not None:
+            a.baseline_dir = cycle.require_private_path(a.baseline_dir, repos, 'baseline')
+        for protected in (a.backup, a.candidate_dir, *([a.baseline_dir] if a.baseline_dir else [])):
             if a.evidence_root == protected or protected in a.evidence_root.parents:
                 p.error('evidence must stay outside the immutable backup and candidate')
     with DeviceLease(a.serial) as lease:

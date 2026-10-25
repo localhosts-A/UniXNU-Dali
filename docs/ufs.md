@@ -166,12 +166,14 @@ selects the extra boot_b sample, which must match the current candidate's first
 block. Read and flush operations recheck media identity. Flush success also
 requires exactly one new validated device-SYNC completion, excluding a no-op.
 
-142 firmware host tests pass, including 9 wire-policy, 12 production PassThru,
-8 ScsiDisk media/sync, 8 BlockIo diagnostic and 4 host sync-completion tests.
+147 firmware host tests pass, including 9 wire-policy, 12 production PassThru,
+8 ScsiDisk media/sync, 8 BlockIo diagnostic, 4 host sync-completion and 5
+physical-profile packaging tests. The device suite has 88 passing tests,
+including 9 new physical-runner lifecycle/metadata regressions.
 An enabled AArch64 build compiles these changes; existing off/register-probe
-packaging still refuses enabled physical hosts. A separate candidate verifier/
-runner, actual BlockIo read/sync evidence, scratch writes and hardware DMA
-qualification remain pending.
+packaging still refuses enabled physical hosts. The separate explicit physical
+profile/runner is implemented below; final candidate and hardware read/sync/DMA
+qualification remain pending. Scratch writes remain disabled.
 
 `scripts/ufs_readonly_evidence.py` now provides the offline evidence checker for
 that future runner. It revalidates raw baseline capture hashes, reciprocal GPT
@@ -183,7 +185,8 @@ Eleven host tests cover corrupt and mixed evidence, both logical block sizes,
 sync variants and prior connection syncs. The saved Android baseline's 96
 partitions also pass raw revalidation. The checker does not identify a connected
 phone from console text; the dedicated runner must bind the device and candidate
-to the fresh token. It remains unwired, and no hardware qualification is claimed.
+to the fresh token. The new runner supplies that binding; its final sealed
+candidate and hardware trial are still pending.
 
 The current NativeUfs implementation is sheng/SM8550-specific, including LUN 0,
 4 KiB assumptions and board persistence windows. Its command validation and
@@ -262,6 +265,44 @@ from hash-checked raw text; a partial or corrupt capture can be retried. Scoring
 requires one complete current-token sequence and the exact gated register-read
 list. Snapshot success always leaves DMA, physical media I/O, writes and reset
 persistence unqualified.
+
+## Physical read-only diagnostic runner
+
+The separate `DALI_UFS_PROFILE=read-only-blockio` build requires the three
+UEFI-only arguments, `DALI_UFS_READ_ONLY=true`, `DALI_UFS_PROBE=false`, a fresh
+32-hex `DALI_RUN_TOKEN`, `DALI_AUTO_FASTBOOT=false`, and no reset method.
+Packaging validates BDS and host enable/probe/token PCDs and all six ARM64
+BDS/Host/PassThru/ScsiBus/ScsiDisk/Partition modules in the actual FD. Old
+off/register packaging retains its rejection of enabled physical hosts.
+
+```sh
+python3 scripts/run-ufs-probe.py --mode read-only-blockio --serial SERIAL \
+  --backup /private/original-backup --uefi /src/UEFI-Dali --unixnu /src/UniXNU \
+  --candidate-dir /private/sealed-read-only --baseline-dir /private/android-ufs-baseline \
+  --evidence-root /private/read-only-runs --dry-run
+```
+
+Dry-run validates the actual image, FD, compiled PCDs/modules, all source
+declarations and rebuilt entry shim, then copies only hash-checked raw baseline
+captures. It contacts no device and consumes no token. A real trial first
+collects a fresh read-only Android baseline and compares its LUN, geometry,
+reciprocal GPT, partition set and header hashes with the supplied baseline.
+All source/candidate/device checks complete before the durable pending record
+and the single literal `boot_b` flash. The manual menu/Volume Down recovery
+sequence remains the same as the register-only runner.
+
+Read-only scoring binds the private candidate, current token and fresh live
+baseline to that run's verified device. After original Android restoration it
+recomputes every conclusion from the saved raw console, verifies Android B/root
+and all 18 original partition hashes, and only then clears pending recovery.
+Its read/sync/diagnostic-stop results remain separate from full physical UFS,
+XNU handoff, scratch writes and reboot persistence, which it cannot qualify.
+
+The saved original-only recovery command includes `--mode read-only-blockio`
+but no source, candidate or baseline paths. Missing/corrupt diagnostic evidence
+produces an unqualified result; collection-directory and result-write failures
+cannot prevent the original restore. A failed original recovery still keeps
+the identity-bound pending record and stops new trials.
 
 ## Completion
 
