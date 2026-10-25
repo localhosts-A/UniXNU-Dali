@@ -345,15 +345,16 @@ and the token remains consumed. It still returned before DMA/media I/O.
 The pinned Linux source identifies PA `0x80000010` as generic/LINERESET. During
 link startup it enables UCCS separately from UIC_ERROR, waits for the UIC result
 and device presence, then reads UECPA before making the HBA operational.
-The controller now has a stricter bounded policy for the observed event:
+Firmware 67118fc used a stricter bounded policy for the observed event:
 only one exact isolated indication after this LINK_STARTUP submission may be
 saved and acknowledged. W1C clears only IS bit 2, preserving simultaneous UCCS;
 the unchanged 500 ms deadline still requires a real UCCS, result zero and then
 device presence. Other layers/lanes/fatal/reserved bits, repeated/sticky events,
 preexisting/non-link events, failed ACK, absent completion, nonzero result or
 missing device presence all fail closed, with no command resubmission. Native
-tests include delayed completion, exact-deadline success and completion 10 us
-too late. This event handling has not been hardware-qualified.
+tests included delayed completion and exact-deadline success. A later audit
+found its nominal late-completion case never actually injected completion;
+the deferred revision below fixes that coverage gap.
 
 The following trial, `run-20261025T111012Z-b67c24a6`, used firmware `67118fc`,
 device `68d3fcc` and generic `2ab7dfd`. It accepted and acknowledged the first
@@ -366,6 +367,26 @@ all 18 original hashes were independently audited. Pending recovery is cleared
 and this token is consumed. The next control change must check the pinned
 source's timing for deferred LINERESET cleanup around command completion;
 these observations do not justify ignoring all UIC errors or replaying writes.
+
+The next firmware revision retains startup IS=4 without reading clear-on-read
+layer registers or acknowledging the event until real UCCS arrives. A latched
+bit over multiple polls does not extend the original 500 ms deadline. Completed
+LINK_STARTUP must show exact IS=404, HCE=1, HCS without error bits, exact PA
+80000010, four other layers zero, result zero and valid ARG3; then one combined
+404 acknowledgement must leave IS=0. The plain completion path also requires
+clean IS, closing an unrelated-status race after the last poll. Device presence
+is required before post-link commands. Fatal/unrelated bits, lost pending IS,
+bad layers/state/results, failed/sticky ACK and timeouts stop without replay.
+
+The fixed-source basis is Linux f089d58 ufshcd.c:4788-4789 (UCCS enabled without
+UIC_ERROR), :6948-6955 (raw IS acknowledged, enabled bits handled) and :4957-4958
+(UECPA read-clear after POST_CHANGE). The adapter deliberately classifies all
+layers earlier, at completed LINK_STARTUP before post-link commands; this is
+not a claim that Linux explicitly waits for UCCS before every raw-IS ACK.
+Twenty-six production-controller tests cover b67's latched status, no early
+read-clear/ACK, unchanged deadline, completion exactly at deadline, completion
+actually injected 10 us late during stop, and status arriving before ACK.
+162 firmware tests pass. This revision still has no hardware qualification.
 
 ## Storage handoff consumer
 
