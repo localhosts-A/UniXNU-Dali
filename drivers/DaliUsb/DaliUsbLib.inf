@@ -13,6 +13,7 @@
   DaliUsbGpio.c
   DaliUsbI2c.c
   DaliUsbPhy.c
+  DaliUsbDomains.c
 [Packages]
   MdePkg/MdePkg.dec
   UsbCore/UsbCore.dec

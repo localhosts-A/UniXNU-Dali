@@ -198,14 +198,34 @@ held clocks/domains, DMA and installed OS/controller providers remain required.
 | --- | --- |
 | VLP sys/host clocks, IDs34/35 | `drivers/clk/mediatek/clk-mt6991.c:3378-3385,3885-3898`; VLP config8 `0x90`, mux groups8/16 |
 | Frame clock, CKSYS ID36 | same file `:1216-1219,2103-2109`; config10 `0xb0`, group24 |
-| USB2/USB3 domains IDs2/3 | `drivers/soc/mediatek/mtk-scpsys-mt6991-spm.c:96-145`; SSUSB_P0 `0xe1c`, DP_PHY_P0 `0xe18` |
+| USB2/USB3 domains IDs2/3 | `drivers/soc/mediatek/mtk-scpsys-mt6991-spm.c:297-315` HWV-compatible table; SSUSB_P0 `0xe1c`, DP_PHY_P0 `0xe18` |
 | Domain dependency | same file `:612-614`: SSUSB_P0 parent of SSUSB_DP_PHY_P0 |
-| Bus protection | syscon `0x1c00d000`, set/clear/enable/status `0xdc/0xe0/0xd8/0x208`; USB0 bit7 |
+| Bus protection | syscon `0x1c00d000`, set/clear/enable/status `0xdc/0xe0/0xd8/0x208`; P0 bit7, DP PHY bit6 |
 | AO clock gate / MBIST | `0x16790000` mask `0x13` / `0x16781000+0x34` idle bit0 |
 
 USB domains use ordinary SCPSYS control rather than HWV ops despite the parent
 HWV regmap; PWR_ACK/ACK2 are bits30/31, SRAM bit8/ACK12 for SSUSB_P0. Generic
-SCPSYS sequencing and bounded polls must be preserved. USB clock muxes use
+SCPSYS sequencing and bounded polls are implemented by `DaliUsbDomains.c`.
+The live FDT's `mediatek,mt6991-scpsys-hwv` compatible selects this table, whose
+two USB caps lack HWV/PBUS/INFRA flags (`mtk-scpsys.c:1924-1943`). The distinct
+PBUS table is unsupported. Initialization only reads coherent ON/OFF snapshots;
+power-on is parent then child, power-off child then parent, with NON_CPU_RTFF
+restore/save and only bit6/7 SET/CLR writes. Bus-protection clear intentionally
+ignores the stale status ACK, as required by BUS_PROT_IGN, but verifies EN clear.
+Unlike the reference, failed SET retries cannot pass using a stale status ACK.
+
+The persistent per-domain cursor retains uncertain steps and RTFF restore
+selection. A failure latches out new startup. Explicit shutdown may complete its
+own partial startup without issuing a new unprotect, then save/stop. Destroy
+clears context only after both domains are off. The caller must own both entire
+domains, stop all controllers/PHY and DMA, and hold required supplies/clocks
+through failures. An external reset or mutation invalidates retained cursors;
+they cannot be resumed after such an event. The production-C fixture covers
+each operation failing before/after writes, both domains' ACK timeouts, SRAM,
+stale protection ACK, foreign idle states and shutdown retention. This is a
+register model, not an installed provider or hardware power qualification.
+
+USB clock muxes use
 gate/fence/update-check macros, not simple unguarded selector writes. They depend
 on26MHz/PLL parent state; the resource graph does not establish those states.
 
@@ -215,7 +235,13 @@ vusb33/clocks/PHY, resets IPPC and requests power before host/gadget init
 `SPM_CTRL_V2=0xe0`, ACK `0xe8`, request bits0,1,2,3,4,6; AO REQ_GATE0..7
 `0x70..0x8c` receive mask0xf (`:167-248`). Production code must treat failed
 resource ACK as a refusal, not merely log it as the Linux reference does.
-Whether configured SPM_V4 callbacks supersede this path remains unresolved.
+`ssusb_set_power_state()` selects SPM_V4 at compile time when
+`IS_ENABLED(CONFIG_MTK_SPM_V4)` (`:279-314`); this branch returns even if its
+callbacks are absent, so it never falls back to HWRSC v2. The final external
+vendor-module config and callback registration remain unverified. Saved
+`kernel-config.gz` is the GKI config and contains neither SPM_V4 nor MTU3/SCPSYS
+symbols; it does not establish the vendor-module branch. No native provider
+may assume the v2 route from that absence.
 
 IPPC stable polling requires STS1 bits10/8/0 plus role-specific reset bits within
 20ms, then STS2 bit0 within10ms (`:828-852`). Role selection disables/powers down
