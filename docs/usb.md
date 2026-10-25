@@ -17,6 +17,15 @@ host/hub/OS integration, FAT/HID source archives, complete
 firmware/macOS builds and QEMU USB gates are still pending. Nothing in this
 milestone enables USB in the ordinary boot profile. `hardware_qualified=false`.
 
+The device tree also contains a production SID14 PMIF-M transport under
+`drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,
+bounded completion/error handling, late-response ownership and explicit write
+uncertainty. Its host register model passes Clang/GCC ASan/UBSan and AArch64
+compilation. Runtime keypad/shared-lock wiring, TCPC, both repeaters and port
+power/PHY initialization remain pending; the transport alone enables no port.
+`docs/usb-platform-contract.md` records the fixed source locations and unresolved
+platform dependencies for that work.
+
 ## Fixed inputs
 
 `references/usb-sources.toml` fixes the Linux, MTK device-module, IOHIDFamily,
