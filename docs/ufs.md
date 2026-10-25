@@ -120,6 +120,18 @@ underlying SCSI submission guard enforce the same permitted range. DarwinBoot
 must quiesce storage before its final memory map. XNU must establish its own
 queues and DMA allocations rather than using freed firmware pointers.
 
+The firmware platform library now contains a control-plane core
+(`Mt6991UfsController.h` / `UfsController.c`) for the measured MT6991 B0 state.
+It validates the reset binding and DMA range, refuses inherited active queues,
+and implements the fixed SiP/reset/HCE/UIC link sequence with bounded polls,
+first-failure diagnostics, poisoned failure state and idempotent controller
+stop. TI reset writes use the source driver's masked read/modify/write rather
+than assume W1S semantics. Eleven tests execute the production C with simulated
+MMIO/SiP, including stale completion, timeout and failed-stop cases.
+The core is not called by the boot or register-probe path yet. It has no DMA
+buffers, SCSI commands or physical-media qualification; the host-controller
+adapter, mappings and device commands remain to be implemented.
+
 The current NativeUfs implementation is sheng/SM8550-specific, including LUN 0,
 4 KiB assumptions and board persistence windows. Its command validation and
 tests are references; copying its hardware constants or windows is not a Dali
