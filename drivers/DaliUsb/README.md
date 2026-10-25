@@ -13,8 +13,17 @@ read/modify/write operations on the same object. Release reports whether an
 owned command is still pending; the platform must reserve the channel for this
 same persistent client until explicit recovery releases it. An ordinary mutex
 without this reservation can lose response ownership across timeout boundaries.
-The isolated firmware now has a singleton bus protocol and migrated SID4 keypad;
-the USB platform adapter still needs to bind these callbacks to that protocol.
+The isolated firmware has a singleton bus protocol, migrated SID4 keypad and
+`DaliUsbPmicLib`, which binds actual SID14 transport callbacks to that same
+protocol after validating FDT cells/status/resources/names/routing. A combined
+production C model covers both clients and their late-response reservations.
+No USB DXE controller/role worker is installed yet. Release callbacks return
+errors; failed global lease restoration latches a fault, and reads preserve
+caller output even when release fails after hardware completion.
+
+`DaliUsb.dec` / `DaliUsbLib.inf` compile PMIF and Type-C into a real EDK2
+AArch64 library against `UsbCoreLib`. The firmware library-build tool checks
+actual production members/definitions; no runtime USB qualification is implied.
 
 Initialization reads INIT_DONE and channel state only. Explicit identification
 reads MT6379 DEV_INFO and checks vendor nibble `0x70` before any PMIC write is

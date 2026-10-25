@@ -28,8 +28,13 @@ static int enter(struct dali_usb_pmif *p)
     if (result) __atomic_clear(&p->locked, __ATOMIC_RELEASE);
     return result;
 }
-static void leave(struct dali_usb_pmif *p)
-{ p->lock.release(p->lock.context, p->pending_owned); __atomic_clear(&p->locked, __ATOMIC_RELEASE); }
+static int leave(struct dali_usb_pmif *p, int result)
+{
+    int released = p->lock.release(p->lock.context, p->pending_owned);
+    if (released) { p->faulted = true; result = released; }
+    __atomic_clear(&p->locked, __ATOMIC_RELEASE);
+    return result;
+}
 static int poll_state(struct dali_usb_pmif *p, unsigned expected, uint32_t *last)
 {
     for (uint32_t elapsed = 0;; elapsed += 10) {
@@ -108,6 +113,7 @@ int dali_usb_pmif_init(struct dali_usb_pmif *p, const struct usb_mmio *mmio,
     if (mmio->size < STA + 4) return USB_RANGE;
     if (__atomic_test_and_set(&p->locked, __ATOMIC_ACQUIRE)) return USB_BUSY;
     if (p->initialized) { __atomic_clear(&p->locked, __ATOMIC_RELEASE); return USB_BUSY; }
+    if (p->faulted) { __atomic_clear(&p->locked, __ATOMIC_RELEASE); return USB_IO; }
     int result = lock->try_acquire(lock->context);
     if (result) { __atomic_clear(&p->locked, __ATOMIC_RELEASE); return result; }
     uint32_t value;
@@ -115,7 +121,8 @@ int dali_usb_pmif_init(struct dali_usb_pmif *p, const struct usb_mmio *mmio,
     if (!result && !(value & 1)) result = USB_UNSUPPORTED;
     if (!result) result = usb_mmio_read(mmio, STA, &value);
     if (!result && state(value) != 0) result = USB_BUSY;
-    lock->release(lock->context, false);
+    int released = lock->release(lock->context, false);
+    if (released) { p->faulted = true; result = released; }
     /* Preserve the acquired local flag until the complete configuration is
      * published. A whole-object assignment would momentarily unlock init. */
     if (!result) { p->registers = *mmio; p->lock = *lock; p->initialized = true; }
@@ -127,7 +134,11 @@ int dali_mt6379_read(struct dali_usb_pmif *p, uint16_t address, void *bytes, siz
     if (!valid_range(address, bytes, length)) return USB_RANGE;
     int result = enter(p);
     if (result) return result;
-    result = transfer(p, address, bytes, length, false); leave(p); return result;
+    uint8_t temporary[2];
+    result = transfer(p, address, temporary, length, false);
+    result = leave(p, result);
+    if (!result) for (size_t i = 0; i < length; ++i) ((uint8_t *)bytes)[i] = temporary[i];
+    return result;
 }
 int dali_mt6379_identify(struct dali_usb_pmif *p)
 {
@@ -138,27 +149,29 @@ int dali_mt6379_identify(struct dali_usb_pmif *p)
     result = transfer(p, 0, &info, 1, false);
     if (!result && (info & 0xf0) != 0x70) result = USB_UNSUPPORTED;
     if (!result) { p->identified = true; p->revision = info & 15; }
-    leave(p); return result;
+    result = leave(p, result);
+    if (result) p->identified = false;
+    return result;
 }
 int dali_mt6379_write(struct dali_usb_pmif *p, uint16_t address, const void *bytes, size_t length)
 {
     if (!valid_range(address, bytes, length)) return USB_RANGE;
     int result = enter(p);
     if (result) return result;
-    if (!p->identified) { leave(p); return USB_UNSUPPORTED; }
-    result = transfer(p, address, (void *)bytes, length, true); leave(p); return result;
+    if (!p->identified) return leave(p, USB_UNSUPPORTED);
+    result = transfer(p, address, (void *)bytes, length, true); return leave(p, result);
 }
 int dali_mt6379_update8(struct dali_usb_pmif *p, uint16_t address, uint8_t mask, uint8_t value)
 {
     if ((value & (uint8_t)~mask) || address > MT6379_MAX_REG) return USB_RANGE;
     int result = enter(p);
     if (result) return result;
-    if (!p->identified) { leave(p); return USB_UNSUPPORTED; }
+    if (!p->identified) return leave(p, USB_UNSUPPORTED);
     uint8_t old = 0;
     result = transfer(p, address, &old, 1, false);
     uint8_t next = (uint8_t)((old & (uint8_t)~mask) | value);
     if (!result && old != next) result = transfer(p, address, &next, 1, true);
-    leave(p); return result;
+    return leave(p, result);
 }
 int dali_usb_pmif_recover(struct dali_usb_pmif *p)
 {
@@ -178,5 +191,5 @@ int dali_usb_pmif_recover(struct dali_usb_pmif *p)
         } else result = poll_state(p, 0, &value);
     }
     if (!result) { p->pending_owned = false; p->faulted = false; }
-    leave(p); return result;
+    return leave(p, result);
 }

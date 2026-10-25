@@ -16,7 +16,7 @@ struct model {
     uint64_t now, complete_at;
     unsigned commands, clears, reads, writes, acquired, released, spacings, fail_read;
     uint32_t fail_write;
-    bool locked, busy, hang, pending, nack, command_write, uncertain_command, reserved;
+    bool locked, busy, hang, pending, nack, command_write, uncertain_command, reserved, fail_release;
     uint16_t address;
     size_t length;
 };
@@ -72,8 +72,12 @@ static int acquire(void *context)
     if (m->busy || m->locked) return USB_BUSY;
     m->locked = true; ++m->acquired; return USB_OK;
 }
-static void release(void *context, bool pending_owned)
-{ struct model *m = context; assert(m->locked); m->reserved = pending_owned; m->locked = false; ++m->released; }
+static int release(void *context, bool pending_owned)
+{
+    struct model *m = context; assert(m->locked);
+    if (m->fail_release) return USB_IO;
+    m->reserved = pending_owned; m->locked = false; ++m->released; return USB_OK;
+}
 static int init(struct model *m, struct dali_usb_pmif *p, bool qualified, uint16_t mask)
 {
     struct usb_mmio mmio = {m, sizeof(m->registers), read32, write32, barrier, delay};
@@ -219,6 +223,17 @@ int main(void)
     test_qualification(); test_data_and_atomic_update(); test_foreign_and_locked();
     test_nack_and_late_response(); test_write_uncertainty_and_io_failures();
     test_concurrent_initialization();
+    struct model m; struct dali_usb_pmif p; prepare(&m, &p);
+    uint8_t byte = 0xa5; m.fail_release = true;
+    assert(dali_mt6379_read(&p, 0, &byte, 1) == USB_IO && p.faulted && m.locked && byte == 0xa5);
+    unsigned reads = m.reads;
+    assert(dali_usb_pmif_recover(&p) == USB_BUSY && m.reads == reads);
+    memset(&m, 0, sizeof m); memset(&p, 0, sizeof p); m.registers[0] = 1; m.fail_release = true;
+    assert(init(&m, &p, true, 0x85c0) == USB_IO && p.faulted && !p.initialized && m.locked);
+    reads = m.reads;
+    assert(init(&m, &p, true, 0x85c0) == USB_IO && m.reads == reads);
+    prepare(&m, &p); m.fail_release = true;
+    assert(dali_mt6379_identify(&p) == USB_IO && !p.identified && p.faulted && m.locked);
     puts("PASS: MT6991 SID14 PMIF production transport/state/spacing/error/ownership/recovery tests; model only");
     return 0;
 }

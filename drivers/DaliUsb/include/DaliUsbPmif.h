@@ -15,7 +15,9 @@ struct dali_pmif_lock {
      * other clients stay blocked until this owner recovers and releases false.
      * Merely checking hardware idle cannot preserve response ownership. */
     int (*try_acquire)(void *);
-    void (*release)(void *, bool pending_owned);
+    /* A failed release must be reported: no subsequent operation may assume
+     * global lease/TPL restoration succeeded. */
+    int (*release)(void *, bool pending_owned);
 };
 struct dali_usb_pmif {
     struct usb_mmio registers;

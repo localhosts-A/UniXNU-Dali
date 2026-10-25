@@ -1,0 +1,9 @@
+[Defines]
+  DEC_SPECIFICATION = 0x00010019
+  PACKAGE_NAME = DaliUsb
+  PACKAGE_GUID = 39C2FA4B-A5B7-4117-B344-C1CFF327A510
+  PACKAGE_VERSION = 0.1
+[Includes]
+  include
+[LibraryClasses]
+  DaliUsbLib|include/DaliUsbPmif.h
