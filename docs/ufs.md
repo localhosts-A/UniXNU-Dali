@@ -131,13 +131,13 @@ Its builder compiles the pinned public embedded target's 13 C++ files and the
 real IIG-generated DriverKit bridge using XNU's recorded compiler flags. It
 force-loads the archive, registers the block driver, GPT scheme and BSD media
 client, and checks their definitions and personalities in the final kernel.
-CI run `40167739634` passed the actual Apple-toolchain compile, archive and final
-kernel-link checks, including the test fixture. The subsequent one-core QEMU
-baseline stopped at `IOCatalogue::initialize`'s configuration-table assertion,
-before crypto initialization was observed, so the storage runtime step was
-skipped. The added GPT content-mask string contained an unquoted underscore,
-which the fixed XNU parser rejects. That string is now quoted; a new actual
-build and QEMU run must verify the correction.
+CI run `40168776759` passed the actual Apple-toolchain compile, archive, final
+kernel-link checks, one-core baseline and both storage runtime cases. It uses
+generic `2ab7dfd` and device `47838f0`; the kernel SHA-256 is
+`209e0d059f07d5003d3f8c109a948990636bd411d7250a774a083fe8076e8e58`.
+The earlier run `40167739634` stopped at `IOCatalogue::initialize` because the
+new GPT content-mask string contained an unquoted underscore. Quoting it fixed
+that parser error. The original crypto readiness checks passed without change.
 Build and link reports are separate from runtime and MT6991 qualification.
 
 `scripts/test-source-storage-qemu.py` boots two explicit software-device cases
@@ -148,7 +148,12 @@ dispatch/failure, and partial-transfer error propagation. The fixture requires
 an explicit QEMU test nub, QEMU model and boot argument; the normal device tree
 does not publish it. Its checkpoint is inspected after the actual kernel
 function returns, bound to the kernel hash and case arguments. These tests are
-compiled but still awaiting successful QEMU validation.
+qualified in QEMU. Independent inspection of the raw GDB reports matched the
+kernel hash, checkpoint symbol, actual call instruction, matching return stack
+and complete check masks: `0x7f` for writable 4096-byte blocks, `0x0f` for
+readonly 512-byte blocks. The private evidence directory is
+`dali-source-storage-ci-40168776759`. This volatile software transport does not
+qualify MT6991 DMA, physical UFS, scratch writes or persistence.
 
 ## Register-probe runner
 
