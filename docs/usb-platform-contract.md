@@ -229,6 +229,17 @@ USB clock muxes use
 gate/fence/update-check macros, not simple unguarded selector writes. They depend
 on26MHz/PLL parent state; the resource graph does not establish those states.
 
+`DaliUsbResources.c` now implements only the three actual USB gate leases,
+preserving the selected parents. USB sys/host use VLP CFG8 `0x90`, CLR `0x98`,
+SET `0x94`, gate bits15/23 and fence `0x3a0` bits30/29. Frame uses TOP CFG10
+`0xb0`, CLR `0xb8`, SET `0xb4`, gate31 and fence `0x274` bit20. The fixed mux
+enable operation writes CLR then waits fence; UPDATE/check belongs to parent
+switching, which this API never performs (`clk-mux.c:65-109,132-138,847-854`).
+Fence waits use the source's1us/5s deadline via five bounded1s core polls.
+Readback verifies gate/parent fields. Shutdown restores acquired gates in
+reverse order, preserving inherited enabled gates and all adjacent fields.
+Parent PLL state/rate, PHY26MHz and I2C clocks remain external qualifications.
+
 `drivers/usb/mtu3/mtu3_plat.c` probe attaches domains, resets AO gates, enables
 vusb33/clocks/PHY, resets IPPC and requests power before host/gadget init
 (`:927-941,1001-1075,1279-1336,1380-1425`). MT6991 HWRSC version2 uses IPPC
@@ -242,6 +253,31 @@ vendor-module config and callback registration remain unverified. Saved
 `kernel-config.gz` is the GKI config and contains neither SPM_V4 nor MTU3/SCPSYS
 symbols; it does not establish the vendor-module branch. No native provider
 may assume the v2 route from that absence.
+
+The new native HWRSC API requires the explicit
+`DALI_USB_RESOURCE_NATIVE_HWRSC_V2` provider choice and validated matching FDT,
+accessible powered IPPC, held clocks/supplies and exclusive request/gate fields.
+It implements only native POWER_ON/OFF, with native sleep/offload disabled;
+it does not claim to reproduce Android's compile-time branch. Linux SPM_V4
+registers `spm_resource_req` and `slp_set_infra_on` in `spm_v4/mtk_spm_init.c:22-40`.
+Those callbacks update software votes/flags (`mtk_spm_resource_req.c:54-88`,
+`mtk_sleep.c:417-433`), not a proven MT6991 power-register/SMC ABI. The fixed
+tree's configuration sources do not explicitly enable SPM_V4; final generated
+vendor config remains unknown. No SPM_V4 or SMC stub is supplied.
+
+Native enable opens AO request-gate low nibbles before setting `0x5f` request
+bits and clearing force `0x7f00`; it requires matching ACK within20ms at100us
+intervals and2ms settling. Disable clears requests/force, waits ACK/settling,
+then restores only acquired AO nibbles. A shared-provider RMW lock must cover
+the whole call. Resources must be released while IPPC remains accessible,
+before dropping domains and clocks. Both clock/HWRSC APIs latch failures out
+of new enable, retain uncertain ownership before writes and permit explicit
+cleanup; failed destroy retains context. Their fixture covers inherited
+states, parent/gate combinations, delayed fences/ACKs, before/applied-error
+fault matrices, ignored writes, delayed read errors and cleanup retention.
+Actual parent qualification, native provider selection/locking and installed
+OS/controller binding remain pending; register-model results prove none of
+the physical resource or USB behavior.
 
 IPPC stable polling requires STS1 bits10/8/0 plus role-specific reset bits within
 20ms, then STS2 bit0 within10ms (`:828-852`). Role selection disables/powers down
