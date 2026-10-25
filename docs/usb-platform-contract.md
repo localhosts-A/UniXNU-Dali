@@ -477,5 +477,34 @@ to the corresponding compiled images. The QEMU test app never enters Dali FV.
 
 This verifies source class-stack behavior and opt-in FV assembly. Native
 MT6991 MMIO registration, resource/connector/ADC/DMA qualification, CDC/role
-worker, firmware menu/pointer behavior and EBS handoff remain separate required
+worker, native console aggregation and EBS handoff remain separate required
 implementation gates, along with the source XNU/IOHID/msdosfs/macOS gates.
+
+## Production menu pointer and confirmation
+
+The actual generic UniXNULib graphics menu now supports relative-pointer
+hover/selection, same-item fresh press/release, wheel navigation/scrolling and a
+clipped saved-background cursor. The pointer PCD defaults false and the Dali
+USB host-stack profile explicitly enables it. Text/headless modes keep keyboard
+input. Every poll reacquires one physical protocol stream; install/reinstall
+notifications reset button history even on reused handles, and all notification
+events close before their stack context goes away. Initial held buttons and
+dragging away cannot confirm. Failed rendering disables pointer input.
+
+Confirmation uses a separate graphics choice menu with Cancel selected first,
+discarded selecting input and a fresh button context. Cancel returns without
+restarting the boot countdown; only a new complete click or Enter on the desired
+choice confirms. Confirmation cards show choices without boot-file type labels.
+The old keyboard-only/default-disabled path remains available.
+
+Clang and GCC ASan/UBSan fixtures compile actual Menu.c/MenuPointer.c against
+the pinned real EDK2 headers. They test enabled/disabled settings, edge clipping,
+background restoration, extreme movement, portrait/landscape hitboxes, scroll,
+drag/held/reinstall/failure cases, timer takeover and keyboard/choice/cancel.
+The QEMU app invokes the public UniXNURun, parses a fresh ESP config and uses
+the source USB keyboard/mouse through the existing actual xHCI/hub gate. It
+performs mouse select, mouse Cancel, keyboard reselect, then fresh mouse Confirm
+in both layouts; ordered production logs and screenshots are preserved. The
+explicit test-only system ConIn binding does not qualify Dali console
+aggregation or physical input/display. Native controller/CDC/DMA/role/EBS and
+source XNU gates remain pending; hardware_qualified=false.
