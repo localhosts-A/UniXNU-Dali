@@ -70,6 +70,9 @@ by this collector or planner.
 
 ## Source and ownership gates
 
+The [MT6991 resource baseline](ufs-resources.md) ties FDT resources, measured
+handoff state, and initialization dependencies to the fixed MiCode sources.
+
 The pinned firmware offers `DALI_UFS_PROBE=true` only for a three-argument
 UEFI-only build, with `DALI_AUTO_FASTBOOT=false`, no reset method and a fresh
 32-lowercase-hex `DALI_RUN_TOKEN`. The option defaults off. It checks the exact
