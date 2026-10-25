@@ -285,3 +285,43 @@ the port before changing HOST_SEL/OTG_SEL (`mtu3_dr.c:35-61`, `mtu3_core.c:231-2
 MBIST idle may wait3s in the Linux reference; timeout cannot authorize role or
 power changes while DMA ownership remains uncertain. No physical state from
 these registers has been qualified by this offline implementation.
+
+`DaliUsbIppc.c` implements this IPPC lifecycle. Init reads only, refusing
+inherited asserted AO/IP resets and unsupported capabilities; one/two U2 ports
+have known Dali UTMI16 fields, up to four U3 register slots fit before U2.
+Cold order is clocks/domains, AO reset (`0x0`, mask`0x13`,1ms), HWRSC request,
+PHY/repeater power/role, IP reset (`0x0` bit0,1us), then role enable and actual
+MAC/xHCI startup. AO reset must precede PHY power-on. All windows, supply/clock
+leases and exclusive ownership must remain valid through failed cleanup.
+
+The IPPC guard must prove both controllers' submissions/IRQs/queues/DMA stopped.
+For an owned asserted AO reset, it must use the persistent previous drain proof
+without reading gated MAC windows. Ownership is set before reset writes, and
+explicit stop deasserts uncertain owned resets with minimum pulse delays before
+continuing. No new startup is accepted after a fault. The shared-provider lock
+must cover complete API calls; external reset/mutation invalidates the context.
+
+IP reset establishes a known stopped state by disabling every capability-reported
+U3/U2 port before clearing DUAL_MODE/OTG, then powering down device and host and
+requiring IP sleep. Enable validates that stopped state, sets UTMI16 while IPs
+and ports are off, powers only the selected IP and enables only USB2 port0.
+HOST_SEL is bit9|bit2; device clears it while enabling port0, then sets OTG_SEL
+in a separate write as in the device reference. All U3 and secondary U2 ports
+stay disabled. Stable waits require STS1 `0x501` (+`0x800` for host), then STS2
+bit0; no U3 MAC clock is requested. Logical role/session fields do not prove
+physical VBUS; the actual TCPC/charger interlock remains mandatory.
+
+MBIST `0x34` bit0 is a hard3s/100ms gate. Sleep is a hard100ms/100us gate with
+100us settling. Unlike the source's logged bus-busy fallback, failure cannot
+authorize further reset, role or clock release. Repeated stop rereads both port
+state and sleep, with no register writes if already stopped. `stopped=true`
+means confirmed port/IP power-down; the role field alone after a fault does not.
+Destroy only clears a successfully stopped object. PHY, HWRSC, domains and
+clocks may be released afterward by the higher-level worker.
+
+The production-C fixture models reset pulses, all supported port counts,
+device/host transitions, secondary-port shutdown, neighbors, delayed idle/stable
+status, before/applied-error faults at every operation and repeated reset-cleanup
+errors. MBIST/STS/sleep timeout and cached-stop wake checks retain resources.
+This does not implement or prove the actual guard/IRQ/DMA/provider, platform
+calibration, TCPC role worker or installed UEFI/XNU controller integration.

@@ -15,6 +15,7 @@
   DaliUsbPhy.c
   DaliUsbDomains.c
   DaliUsbResources.c
+  DaliUsbIppc.c
 [Packages]
   MdePkg/MdePkg.dec
   UsbCore/UsbCore.dec
