@@ -172,11 +172,23 @@ jobs:
         shell: bash
         run: |
           set -u
-          for log in "$UNIXNU_OUT"/dali/logs/kernel-bootstrap.log "$UNIXNU_OUT"/dali/logs/archive-*.log "$UNIXNU_OUT"/dali/logs/kernel.log; do
+          for log in "$UNIXNU_OUT"/dali/logs/kernel-bootstrap.log "$UNIXNU_OUT"/dali/logs/archive-*.log "$UNIXNU_OUT"/dali/logs/kernel.log "$UNIXNU_OUT"/dali/logs/source-storage-link.log "$UNIXNU_OUT"/dali/tree/build/source-storage/*.log; do
             [[ -f "$log" ]] || continue
             printf '\n===== %s (last 100 lines) =====\n' "$log"
             tail -n 100 "$log"
           done
+
+      - name: Upload bounded source storage build evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-source-storage-evidence
+          path: |
+            UniXNU/out/dali/tree/build/source-storage/*.json
+            UniXNU/out/dali/tree/build/source-storage/*.log
+            UniXNU/out/dali/tree/build/source-storage/*symbols.txt
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Build UniXNU package and locate pinned Mu BaseCore
         shell: bash

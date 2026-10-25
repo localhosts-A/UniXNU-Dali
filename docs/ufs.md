@@ -85,6 +85,15 @@ tests are references; copying its hardware constants or windows is not a Dali
 port. Source-only XNU additionally needs a real public IOStorageFamily build and
 builtin block-driver registration. Header preparation alone does not provide it.
 
+The source build now has an explicit `CONFIG_XNU_SOURCE_STORAGE_FAMILY` path.
+Its builder compiles the pinned public embedded target's 13 C++ files and the
+real IIG-generated DriverKit bridge using XNU's recorded compiler flags. It
+force-loads the archive, registers the block driver, GPT scheme and BSD media
+client, and checks their definitions and personalities in the final kernel.
+This integration is undergoing macOS CI validation; host command/ABI tests alone
+do not prove a successful Apple-toolchain build or a working block device.
+Build and link reports are separate from runtime and MT6991 qualification.
+
 ## Register-probe runner
 
 `scripts/run-ufs-probe.py` runs one register-only candidate with a 120-second
