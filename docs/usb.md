@@ -92,8 +92,11 @@ IOHIDFamily-2031.120.4 source build. The builder follows the Embedded target's
 source phase and generates its three real IIG bridges. The 2031 import and
 Xcode 26.6 public SDK omit generated event declarations; these are now
 separately pinned from Apple's IOHIDFamily-1915.140.3 public source. The builder
-records their hashes and treats compatibility with 2031 as an unpassed compile
-and runtime gate. The private FastPath user-client source is
+records their hashes. An explicit source port uses the published 1915 event
+layout: digitizer twist uses its real field, nonzero M1–M4 controller buttons
+are refused, and synthesized estimated-roll fields are unsupported. This does
+not reproduce the unpublished 2031 event ABI. Source compile/link and runtime
+remain unpassed gates. The private FastPath user-client source is
 absent from the fixed public Git tree; an explicit source port leaves unknown
 client types to the superclass rather than supplying a replacement class.
 This HID build is under CI validation. Actual keyboard/mouse publication and

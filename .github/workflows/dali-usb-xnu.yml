@@ -135,8 +135,8 @@ jobs:
           {
             echo '## Dali source-only USB XNU build'
             echo
-            echo "- Generic commit: `${{ steps.pins.outputs.unixnu_commit }}`"
-            echo "- Xcode: `$(head -n 1 "$RUNNER_TEMP/xcode-version.txt" 2>/dev/null || echo unavailable)`"
+            printf '%s\n' '- Generic commit: `${{ steps.pins.outputs.unixnu_commit }}`'
+            printf '%s\n' "- Xcode: $(head -n 1 "$RUNNER_TEMP/xcode-version.txt" 2>/dev/null || echo unavailable)"
             echo '- Profile: `dali_usb_defconfig`'
             echo '- Hardware qualification: `false`'
             echo '- Device access and physical media tests: none'
