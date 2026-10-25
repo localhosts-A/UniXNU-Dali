@@ -1,0 +1,37 @@
+# Source inputs only. No device execution or hardware qualification is implied.
+schema = 1
+
+[[source]]
+name = "linux"
+git = "https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git"
+commit = "f089d58cab670dc0d75db1203fa63850e57a940d"
+paths = ["drivers/usb/host/", "drivers/usb/gadget/", "drivers/spmi/", "include/linux/usb/", "include/linux/spmi.h", "COPYING", "LICENSES/"]
+required = ["drivers/usb/host/xhci-mtk.c", "drivers/usb/host/xhci-mtk-sch.c", "drivers/usb/gadget/function/f_acm.c"]
+
+[[source]]
+name = "device_modules"
+git = "https://github.com/MiCode/MTK_kernel_device_modules.git"
+commit = "e45c3199537fbba9aae5fb06c31fc8dbd3c1dcee"
+paths = ["drivers/usb/", "drivers/phy/mediatek/", "drivers/misc/mediatek/typec/", "drivers/power/supply/", "drivers/regulator/", "drivers/mfd/", "drivers/spmi/", "drivers/clk/mediatek/", "drivers/soc/mediatek/", "arch/arm64/boot/dts/mediatek/", "include/", "COPYING", "LICENSES/"]
+required = ["drivers/usb/mtu3/mtu3_plat.c", "drivers/usb/mtu3/mtu3_qmu.c", "drivers/usb/mtu3/mtu3_hw_regs.h", "drivers/phy/mediatek/phy-mtk-xsphy.c", "drivers/phy/mediatek/phy-mtk-mt6379-eusb2-repeater.c", "drivers/misc/mediatek/typec/tcpc/tcpc_mt6379.c", "arch/arm64/boot/dts/mediatek/dali.dts"]
+
+[[source]]
+name = "IOHIDFamily"
+git = "https://github.com/apple-oss-distributions/IOHIDFamily.git"
+commit = "b126cf696bf1c6eede740b92d3bfca7e62d09c06"
+paths = ["IOHIDFamily/", "IOHIDSystem/", "IOHIDFamily.xcodeproj/", "kext.xcconfig"]
+required = ["IOHIDFamily/IOHIDDevice.cpp", "IOHIDFamily/IOHIDDevice.h", "IOHIDSystem/IOHIDDescriptorParser/HIDParseDescriptor.c"]
+
+[[source]]
+name = "msdosfs"
+git = "https://github.com/apple-oss-distributions/msdosfs.git"
+commit = "f8d71e40f171f152b558c8163a971fee68c8072b"
+paths = ["msdosfs.kextproj/", "msdosfs.xcodeproj/", "APPLE_LICENSE", "Info-msdosfs_kext.plist", "msdosfs.xcconfig", "lib_fsck_msdos/", "lib_newfs_msdos/"]
+required = ["msdosfs.kextproj/msdosfs.kmodproj/msdosfs_vfsops.c", "msdosfs.kextproj/msdosfs.kmodproj/msdosfs_vnops.c", "msdosfs.kextproj/msdosfs.kmodproj/msdosfs_fat.c"]
+
+[[source]]
+name = "IOStorageFamily"
+git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
+commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
+paths = ["/"]
+required = ["IOBlockStorageDevice.cpp", "IOMediaBSDClient.cpp", "IOGUIDPartitionScheme.cpp"]
