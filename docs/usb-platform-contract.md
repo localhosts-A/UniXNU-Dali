@@ -508,3 +508,51 @@ in both layouts; ordered production logs and screenshots are preserved. The
 explicit test-only system ConIn binding does not qualify Dali console
 aggregation or physical input/display. Native controller/CDC/DMA/role/EBS and
 source XNU gates remain pending; hardware_qualified=false.
+
+## Installed native UEFI CPU mappings and private FDT context
+
+`DALI_USB_RESOURCE_CONTEXT=true` independently opts in the actual
+`UsbResourceContextDxe` module and its production libraries; it defaults false
+in DeviceBuild and DSC and does not imply the host/class-stack option. The full
+build script supplies both isolated generic/device driver package paths. The
+driver waits for the CPU architectural protocol and only runs its initialization
+at application TPL, after CpuDxe's synchronous MMU/GCD initialization.
+
+The context copies the fixed SEC FDT arena at `0xc5080000` within its1MiB
+capacity, validates the private copy through the real clock/calibration parser,
+and rejects an observed source-copy mismatch. No API exposes the copy's pointer
+and no production path changes it after validation. Protocol accessors return
+copied status/resource data; this is logical private immutability, not a claim
+that page protection or DMA isolation makes the backing allocation read-only.
+
+Five unique4KiB CPU pages cover VLP, shared TOP/APMIXED and IMPW/PERAO.
+APMIXED's trailing half-page is reserved/mapped as part of its whole page;
+logical register access is still bounded by the original windows. Existing RAM,
+foreign owner, split page, unsupported cache/protection attributes or missing UC
+capability cause refusal. Nonexistent GCD space is added as MMIO, then each page
+is owned by the image before attributes change. GCD/CpuDxe runs first so it can
+observe and maintain an old cacheable mapping; the direct pinned ARM MMU call
+then establishes identity device memory independently of metadata-only GCD sync.
+Every completed page is checked against GCD type, range, attributes and owner.
+
+Failures retain the private allocation, image and all mapping attempts for the
+firmware lifetime, including writes that may already have taken effect. Freeing
+GCD metadata would not unmap ARM tables, so no unload/rollback is advertised.
+The image returns success to remain resident even if initialization/publication
+fails. A successfully registered EBS event is required before publication; the
+first notification permanently closes all accessors, including EBS retry cases.
+
+Production-C tests use real EDK2 Boot/DXE service types and real pinned libfdt,
+with modeled GCD/ARM services and fault injection before/after every operation.
+They cover old WB cache-maintenance ordering, inherited UC/XP, metadata-only
+GCD changes, ownership/range refusal, source-copy changes, private-copy isolation,
+allocation/event/publication failures, poisoned duplicate entry and repeated EBS.
+The host ABI bridge only adapts EDK2 UINTN to Linux size_t for fdt_check_full;
+the actual AArch64 firmware build is the production EDK2 type/link/FV gate.
+
+This service does not read hardware registers, hold a PLL/source or power rail,
+grant shared-provider leases, qualify DMA, register an HC or start a controller.
+HWRSC ACK and double-read snapshots do not establish those separate conditions.
+I2C pin/clock, connector/ADC, qualified DMA, native controllers/CDC/roles, native
+console/EBS handoff and all source XNU gates remain required. Offline results
+keep `hardware_qualified=false`.
