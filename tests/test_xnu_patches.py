@@ -41,7 +41,10 @@ class BoardArchiveTests(unittest.TestCase):
             with self.subTest(script=script):
                 self.assertEqual(len(script.parts), 1)
                 in_device = (ROOT / 'scripts' / script).is_file()
-                in_unixnu = (ROOT.parent / 'UniXNU' / 'scripts' / script).is_file()
+                # Managed worktrees add a nesting level, so the pinned generic
+                # checkout may be beside an ancestor rather than ROOT.parent.
+                in_unixnu = any((parent / 'UniXNU' / 'scripts' / script).is_file()
+                                for parent in ROOT.parents)
                 self.assertTrue(in_device or in_unixnu, f'{script} is not copied into tree/scripts')
 
     def test_corecrypto_plain_archive_precedes_namespaced_archive(self):

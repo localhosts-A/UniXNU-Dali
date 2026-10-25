@@ -360,7 +360,8 @@ def main():
             parser.error('restore-only uses no candidate/source paths and has a bounded 120..600 second timeout')
         args.backup = cycle.require_private_path(args.backup, (DEVICE, DEVICE.parent / 'UEFI-Dali', DEVICE.parent / 'UniXNU'), 'backup')
         args.restore_run = cycle.require_private_path(args.restore_run, (DEVICE, DEVICE.parent / 'UEFI-Dali', DEVICE.parent / 'UniXNU'), 'restore run')
-        if any(paths_overlap(args.restore_run, protected) for protected in (args.backup, probe.STATE_ROOT)):
+        state_root = probe.device_state_root(args.backup)
+        if any(paths_overlap(args.restore_run, protected) for protected in (args.backup, state_root)):
             parser.error('restore run must be separate from the verified backup and device-state ledger')
     else:
         if args.wait_seconds != 120 or any(getattr(args, key) is None for key in ('baseline_dir', 'uefi', 'unixnu', 'artifact_dir', 'evidence_root')):
@@ -371,11 +372,12 @@ def main():
         args.baseline_dir=cycle.require_private_path(args.baseline_dir,repos,'baseline')
         args.artifact_dir=cycle.require_private_path(args.artifact_dir,repos,'XNU artifact')
         args.evidence_root=cycle.require_private_path(args.evidence_root,repos,'evidence root')
-        protected = (args.backup, args.baseline_dir, args.artifact_dir, probe.STATE_ROOT,
+        state_root = probe.device_state_root(args.backup)
+        protected = (args.backup, args.baseline_dir, args.artifact_dir, state_root,
                      *(p.resolve() for p in repos))
         if any(paths_overlap(args.evidence_root, p) for p in protected):
             parser.error('evidence output must be separate from repositories, device-state ledger, backup, baseline and source artifact')
-    with probe.DeviceLease(args.serial) as lease:
+    with probe.DeviceLease(args.serial, state_root) as lease:
         return restore_pending(args, lease) if args.restore_run else run_trial(args, lease)
 
 

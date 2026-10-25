@@ -31,7 +31,6 @@ import ufs_readonly_evidence as readonly
 spec = importlib.util.spec_from_file_location('ufs_probe_cycles', DEVICE / 'scripts/run-bootb-cycles.py')
 cycle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cycle)
-STATE_ROOT = DEVICE.parent / 'device-backups/.ufs-device-state'
 TOKEN = re.compile(r'[0-9a-f]{32}')
 KINDS = {'registers': 'dali-ufs-register-probe', 'read-only-blockio': 'dali-ufs-read-only-blockio'}
 
@@ -62,10 +61,9 @@ def durable_json(path, value):
 
 class DeviceLease(AbstractContextManager):
     """Live advisory lock plus durable pending-run/token ledger for UFS trials."""
-    def __init__(self, serial, root=None):
+    def __init__(self, serial, root):
         if not serial or len(serial) > 128:
             raise cycle.CycleError('invalid device identity for UFS lease')
-        root = STATE_ROOT if root is None else root
         self.folder = root / hashlib.sha256(serial.encode()).hexdigest()
         self.fd = None
 
@@ -504,6 +502,15 @@ def record_restored_result(a, run, state, hashes, android, lease):
     return result
 
 
+def device_state_root(backup):
+    """Keep device-wide run state beside the shared backup, independent of checkout."""
+    return Path(backup).expanduser().resolve().parent / '.ufs-device-state'
+
+
+def paths_overlap(left, right):
+    return left == right or left in right.parents or right in left.parents
+
+
 def restore_pending(a, lease):
     run = a.restore_run.resolve()
     state = json.loads((run / 'restore-state.json').read_text())
@@ -633,8 +640,9 @@ def main():
             p.error('restore-only takes no candidate/build paths and a 120..600 second deadline')
         a.backup = cycle.require_private_path(a.backup, (DEVICE, DEVICE.parent / 'UEFI-Dali', DEVICE.parent / 'UniXNU'), 'backup')
         a.restore_run = cycle.require_private_path(a.restore_run, (DEVICE, DEVICE.parent / 'UEFI-Dali', DEVICE.parent / 'UniXNU'), 'restore run')
-        if a.restore_run == a.backup or a.backup in a.restore_run.parents:
-            p.error('restore run must stay outside the immutable backup')
+        state_root = device_state_root(a.backup)
+        if paths_overlap(a.restore_run, a.backup) or paths_overlap(a.restore_run, state_root):
+            p.error('restore run must stay separate from the immutable backup and device-state ledger')
     else:
         if a.wait_seconds != 120 or any(getattr(a, name) is None for name in ('uefi', 'unixnu', 'candidate_dir', 'evidence_root')):
             p.error('new trial needs candidate/source/evidence paths and exactly 120 seconds')
@@ -647,10 +655,12 @@ def main():
             p.error('only read-only-blockio requires --baseline-dir')
         if a.baseline_dir is not None:
             a.baseline_dir = cycle.require_private_path(a.baseline_dir, repos, 'baseline')
-        for protected in (a.backup, a.candidate_dir, *([a.baseline_dir] if a.baseline_dir else [])):
-            if a.evidence_root == protected or protected in a.evidence_root.parents:
-                p.error('evidence must stay outside the immutable backup and candidate')
-    with DeviceLease(a.serial) as lease:
+        state_root = device_state_root(a.backup)
+        protected_paths = (a.backup, a.candidate_dir, state_root,
+                           *([a.baseline_dir] if a.baseline_dir else []))
+        if any(paths_overlap(a.evidence_root, protected) for protected in protected_paths):
+            p.error('evidence must stay separate from the immutable backup, candidate and device-state ledger')
+    with DeviceLease(a.serial, state_root) as lease:
         return restore_pending(a, lease) if a.restore_run else run_trial(a, lease)
 
 

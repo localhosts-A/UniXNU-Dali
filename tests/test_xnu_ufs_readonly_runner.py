@@ -242,8 +242,9 @@ class SourceXnuRunnerTests(unittest.TestCase):
 
     def test_restore_only_run_may_not_overlap_backup_or_device_ledger(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp); backup = root / 'backup'; backup.mkdir()
-            for run in (backup / 'run', runner.probe.STATE_ROOT / 'nested-run'):
+            root = Path(temp); backup = root / 'device-backups' / 'backup'; backup.mkdir(parents=True)
+            state_root = runner.probe.device_state_root(backup)
+            for run in (backup / 'run', state_root / 'nested-run'):
                 argv = ['run-xnu-ufs-readonly.py', '--serial', 'test-device', '--backup', str(backup),
                         '--restore-run', str(run), '--wait-seconds', '120']
                 with mock.patch.object(sys, 'argv', argv), self.assertRaises(SystemExit) as error:

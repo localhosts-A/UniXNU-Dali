@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -86,6 +87,25 @@ class SnapshotTests(unittest.TestCase):
 
 
 class LeaseTests(unittest.TestCase):
+    def test_device_ledger_root_is_anchored_to_shared_backup_parent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            backup = Path(temp) / 'device-backups' / 'dali-backup'
+            backup.mkdir(parents=True)
+            expected = backup.parent / '.ufs-device-state'
+            self.assertEqual(runner.device_state_root(backup), expected)
+            self.assertEqual(runner.device_state_root(backup.resolve()), expected)
+
+    def test_restore_only_run_cannot_overlap_shared_device_ledger(self):
+        with tempfile.TemporaryDirectory() as temp:
+            backup = Path(temp) / 'device-backups' / 'dali-backup'
+            backup.mkdir(parents=True)
+            restore_run = runner.device_state_root(backup) / 'nested-run'
+            argv = ['run-ufs-probe.py', '--serial', 'device', '--backup', str(backup),
+                    '--restore-run', str(restore_run), '--wait-seconds', '120']
+            with mock.patch.object(sys, 'argv', argv), self.assertRaises(SystemExit) as error:
+                runner.main()
+            self.assertEqual(error.exception.code, 2)
+
     def test_live_lock_pending_restore_and_used_token_survive_restart(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
