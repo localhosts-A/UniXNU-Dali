@@ -411,3 +411,37 @@ failed output. These are register models, not physical clock qualification.
 CKSTA registers are VLP254/TOP1cc/1c8; `clk-mux.c:511-528` waits their relevant
 bits clear and reports "cksta busy". Separate UPDATE registers are write-command
 locations and are not read as a stability indication by this snapshot API.
+
+## Native UEFI clock resource discovery
+
+`DaliUsbReadClockResources()` now consumes the immutable bounded boot snapshot,
+validates calibration/full structure through the actual production calibration
+entry, then checks the specific clock provider and consumer graph. Common
+status/cell/unique-handle checks are shared in the private `UsbFdt.h`; the
+calibration API retains its behavior. The returned object contains only copied
+physical ranges,26MHz declaration and decoded calibration; it retains no pointer.
+
+Clock providers live directly under the root, not under `/soc`: VLP
+`/syscon@1c016000` size1000, TOP `/syscon@10000000` size800, APMIXED
+`/syscon@10000800` size1000, IMPW `/syscon@131b0000` size1000 and PERAO
+`/syscon@16640000` size1000. Each requires its exact enabled MT6991 compatible,
+syscon compatible, reg/cell shape and root parent. USB0 IDs34/35 reference VLP,
+ID36 references TOP; I2C6 main ID5 and DMA ID42 reference IMPW/PERAO. Reference
+providers must resolve uniquely; matching names or frequencies alone cannot
+substitute an unreferenced node.
+
+PHY0 and child `xhci0@16700000` both require the same enabled zero-cell
+`/clocks/clk26m` fixed provider with26MHz. `/clocks` must be enabled. USB0
+MAC/IPPC and host resources/names, high-speed/OTG flags, ordered clock names,
+identity child ranges/cells and I2C6 windows/400kHz/clock-div1 are validated.
+This is a description of clock resources only: it does not qualify channel
+ownership, active pins, supplies, power domains, connector/ADC, DMA, source
+stability, actual frequency or MMIO accessibility. No mapping/vote/MMIO or
+controller startup occurs, and the installed native caller remains pending.
+
+Host tests execute both actual resource/calibration units and the pinned real
+libfdt, covering disabled ancestors/providers, windows, cell counts, malformed
+references/names, IDs, same-frequency wrong provider, ambiguous aliases,
+translation, missing tags, structural corruption and unchanged error output.
+A separate local run succeeds on the saved Dali FDT without publishing its raw
+ATAG payload. Real EDK2 compilation verifies the actual new object/definition.
