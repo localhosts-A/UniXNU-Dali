@@ -706,3 +706,60 @@ real AArch64 archives/full firmware remain separate evidence from physical
 behavior. Actual policy, installed NXP/PHY consumer, controllers/CDC/DMA/roles,
 native console/handoff and all source XNU gates remain pending;
 `hardware_qualified=false`.
+
+## Native xHCI private source-ABI transport
+
+`DaliUsbXhciIoLib` supplies real bounded device MMIO and checked DMA operations
+through the pinned Mu driver's private PCI I/O function ABI. It represents no
+PCI device and must never be installed as EFI_PCI_IO_PROTOCOL. Configuration
+space reads explicitly return unsupported; no PCI class, SBRN or SERR state is
+invented. The source XhcSetHsee consequently skips its PCI-dependent action;
+the future native HC lifecycle must set its own suitable error policy.
+
+The adapter accepts only actual source register widths/count/BAR and refuses
+unaligned/out-of-window accesses. Every device access checks the persistent
+power/source/PHY/host-role/connector/exclusive-owner proof before/after native
+MMIO with fences. Opening only observes capabilities and confirms an initially
+stopped controller; an inherited active controller is not adopted or stopped.
+The actual board mapping/hold/connector provider is still absent. A qualified
+DMA flag is a provider obligation, never proof from CPU physical allocation.
+
+AllocateBuffer obtains a private, mapped, coherent/uncached contiguous buffer
+from the external DMA provider. CPU and device bases are both64KiB aligned to
+preserve the source's CPU-based64KiB TRB boundary scan in the device address
+space. Complete ranges must fit32 bits. The consumer must select an actually
+supported HC page size<=64KiB. CPU and device addresses can differ. Prefix/tail
+FreeBuffer trims only the logical live interval; the whole provider allocation
+stays reserved and counts against the64MiB quota until its last interval is
+freed. This private compatibility ABI deliberately retains padding rather than
+attempting unsafe partial IOMMU/resource release.
+
+Streaming maps allocate separate bounce buffers, copy OUT data before a
+ToDevice sync, clear IN storage before FromDevice sync, and return cache
+ownership before successful copyback. Normal completion/cancellation remains
+the HC consumer's responsibility. Host storage remains valid until successful
+Unmap or discarded-consumer teardown. Outstanding streaming aliases prevent
+FreeBuffer of this adapter's own CPU pages. PCI Flush drains posted controller
+writes by reading USBSTS; it does not replace DMA cache ownership handoff.
+
+Independent records are owned before provider allocation and retain partial
+descriptors, failed cache sync/unmap/free and handles discarded by source
+cleanup. Failed Free must be retryable without modifying its descriptor. Every
+error stops new operations. Quiesce stops new maps, clears RS/interrupt enables,
+waits a bounded fresh HALT/CNR/command observation twice and retains all buffers
+on failure. Close additionally verifies destroyed HC/queue/dependent users,
+rechecks halt, discards retained input without touching expired host storage,
+then releases provider allocations. EBS permanently closes the adapter and
+retains unreleased state; the owning driver must register its event before use.
+
+The actual Mu UsbHcMem, register helpers and XhcFlushAsyncIntMap execute against
+the production adapter in Clang/GCC sanitizer models, including different
+CPU/device addresses, common pools/rings/aligned pages, partial trims, IN/OUT
+sync directions, allocation/cache/free faults, cookie-only partial ownership,
+foreign active controller refusal, halt timeout/retry, ignored source cleanup
+errors and EBS before/applied effects. These models do not exercise complete
+native HC enumeration or hardware DMA. Source XhcMonitorAsyncRequests logs a
+failed remap but can continue into data callbacks/rearming; the native worker
+must stop at that failure before either action. Source PCI Stop/EBS also cannot
+replace the checked native quiesce. HC registration, actual platform provider,
+native QEMU host path and XNU binding remain required; hardware_qualified=false.
