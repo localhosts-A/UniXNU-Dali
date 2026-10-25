@@ -8,6 +8,8 @@
 [Sources]
   DaliUsbPmif.c
   DaliUsbTypec.c
+  DaliUsbMt6379Repeater.c
+  DaliUsbNxpRepeater.c
 [Packages]
   MdePkg/MdePkg.dec
   UsbCore/UsbCore.dec

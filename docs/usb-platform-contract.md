@@ -65,6 +65,33 @@ substitute for the other. NXP init drives low10us then high4ms; its CID check is
 (`drivers/phy/mediatek/phy-mtk-*-eusb2-repeater.c`). Exact revision/efuse/CID
 values are unknown until a permitted runtime qualification.
 
+`drivers/DaliUsb/DaliUsbMt6379Repeater.c` implements the fixed reference E1/E2
+and E3+ sequences, including RSV81/82 additive patches, RSV23–27 calibration,
+normal power and disconnected E3+ low power. SQD is at `0xd17`, SW eFuse select
+is `0xd89[6]`, and PHY select is `0xd89[7]`. These are separate fields. Cached
+intr/term calibration contains only its6/4 field bits; upper unrelated bits are
+preserved by RMW before offsets are applied. Invalid offsets/results use the
+unadjusted field, following the reference fallback. Dali tuning is device
+`vrt=2,sq=0,disc=15,pe=5,eq=4,intr+2,term+4`, host
+`2,0,13,2,4,+3,-2`, with common FS slew7/hysteresis0.
+
+Probe is read-only and only adopts a low-power state if its complete documented
+register snapshot matches. A failed write retains the object and UNKNOWN power;
+restart is refused until explicit shutdown/destruction. Low-power shutdown first
+wakes then performs full cold-off, leaving the state recognizable by a new owner.
+Power-on and each mode change clear D+ pull-up before tuning; DEVICE enables it
+explicitly only after its controller is ready. HOST never inherits an attachment.
+
+`DaliUsbNxpRepeater.c` resets low10us/high4ms, reads CID high then low, and changes
+only mode bits5:4 of register2. Dali has no nonzero NXP tuning properties. Full
+destroy asserts reset after USB quiesce and I2C recovery; partial failures retain
+the cleanup context and never replay an uncertain mode write. Its bus requires
+real combined/repeated-start byte reads and bounded I2C6/GPIO72 callbacks. Those
+platform callbacks are not implemented by this library. Repeater tests execute
+production C against PMIC-byte/I2C/GPIO models, with per-operation faults in
+power-on, mode, pull-up, idle, wake and shutdown. They do not qualify real PMIF,
+I2C, GPIO or USB operation.
+
 `drivers/phy/mediatek/phy-mtk-xsphy.c` initializes/powers/modes the repeater list
 in order (`:2512-2520,2570-2583,2604-2618,2643-2654`). USB2 mode sets/clears
 DTM1 FORCE_IDDIG/RG_IDDIG, while SoC and repeater calibration apply mode-specific
