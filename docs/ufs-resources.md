@@ -82,6 +82,53 @@ and content checked against the Android baseline, remains necessary to qualify
 the actual access path. DEVAPC's `UFS0_M` violation-decoding table is not an
 IOMMU SID or permission-programming recipe.
 
+The later `ea82d126` and `4d77705d` hardware trials in [ufs.md](ufs.md) qualify
+the separate UEFI path: private below-4-GiB Normal Non-cacheable allocations,
+known LUN-2 block contents, real device synchronization and HCE=0 shutdown.
+The table above preserves the earlier register-only observations. Neither trial
+qualifies an XNU allocation, page-cache policy or firmware-to-XNU ownership.
+
+### XNU DMA source contract
+
+The inspected public XNU checkout is fixed at
+`d8b80295118ef25ac3a784134bcf95cd8e88109f`. The kernel adapter must verify the
+actual allocated span instead of adopting firmware addresses:
+
+- `iokit/Kernel/IOBufferMemoryDescriptor.cpp:234-327` skips the system mapper
+  with `kIOMemoryMapperNone` and uses the physical-mask allocation path. Use
+  `kernel_task` for a wired kernel buffer. A mask of `0xffffffff` requests the
+  initial 32-bit limit; it does not replace checking the returned address,
+  contiguous segment length, alignment and complete end address.
+- `iokit/Kernel/IOMemoryDescriptor.cpp:3346-3450` obtains a physical segment;
+  pass `kIOMemoryMapperNone` here as well to avoid a mapped device address.
+  Nonpageable buffers automatically prepare. Any additional explicit prepare
+  must have a matching complete before the descriptor's final release.
+- Mapper selection and cache policy are separate contracts. The numeric mapper
+  flag overlaps the IOMap cache-bit field. Specify and verify the intended
+  buffer cache mode; mapper-none does not establish Normal Non-cacheable RAM.
+- `iokit/Kernel/IOLib.cpp:1486-1497` calls `flush_dcache64` from
+  `IOFlushProcessorCache`, but `osfmk/arm/caches.c:383-420` implements the
+  `__ARM_COHERENT_IO__` branch as a barrier without a range cache operation.
+  The noncoherent path reaches `FlushPoC_DcacheRegion`; its actual `dc civac`
+  instructions occur only outside `APPLE_ARM64_ARCH_FAMILY`
+  (`osfmk/arm64/caches_asm.s:403-420`). Verify actual build definitions and
+  generated instructions before relying on these wrappers. Receive-side cache
+  handling must never write dirty stale lines over device results.
+
+Independent disassembly of the previously qualified CI `40168776759` kernel
+(SHA256 `209e0d059f07d5003d3f8c109a948990636bd411d7250a774a083fe8076e8e58`)
+confirms `IOFlushProcessorCache -> flush_dcache64 -> flush_dcache ->
+FlushPoC_DcacheRegion`, with a 64-byte `dc civac` loop and final `dsb sy`.
+This resolves that older binary's cache implementation, without establishing
+MT6991 cache-line geometry, an actual UFS buffer allocation, or receive-side
+ownership. Repeat the inspection when qualifying the kernel used on the phone.
+
+The portable command core's cache callbacks are obligations for this future
+adapter. Its QEMU model test copies host bytes into guest DMA, so it establishes
+neither these kernel allocation/cache contracts nor MT6991 coherency. A timed-out
+or exposed region must remain retained until exclusive controller shutdown has
+been observed; descriptor destruction must not free memory still reachable by DMA.
+
 ### Controller sequence
 
 The successful snapshot has HCE/HCS, interrupt status/enable, AHIT and all

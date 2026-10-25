@@ -552,11 +552,28 @@ hash, submitted UPIUs and completed response bytes. Qtest copies host memory
 to guest DMA; these results do not qualify ARM cache maintenance or XNU DMA.
 
 The source builder requires the transport ABI symbol in both the actual archive
-and final kernel, and rejects source/header changes after compilation. Actual
-Apple toolchain compilation and final linking of this addition still require
-the workflow run. Dali resource initialization, kernel DMA allocation, physical
+and final kernel, and rejects source/header changes after compilation. CI
+[`40204508502`](https://github.com/localhosts-A/UniXNU-Dali/actions/runs/40204508502)
+passed with generic `7cabc66` and device `2b949aa`: actual Apple-toolchain
+archive/final link, one-core boot, RAM IOStorageFamily 4096-byte read/write and
+512-byte read-only interfaces, plus the separate QEMU UFS model test. The first
+run stopped before kernel compilation because two test fixtures did not resolve
+macOS temporary-path symlinks; the fix matches production CLI normalization
+without changing recovery identity checks.
+
+The final kernel SHA256 is
+`20983b97b0e3ceab9b14dc118a9a3f9ec2c5ad7c6ad4d99d0a9fa4c9e2e8fa27`.
+Independent verification checked its actual ABI instructions, source/header
+bindings, raw checkpoint call targets, return stacks and complete result masks
+`0x7f`/`0xf`. The separately downloaded UFS-model artifact contains the actual
+arm64 host library and matches its recorded hash and pinned compiled sources;
+all 12 raw command/response pairs and the entire synthetic disk were checked.
+
+These are separate tests: the RAM storage fixture does not call the portable
+UFS core. Dali resource initialization, kernel DMA allocation, physical
 IOBlockStorageDevice publication, runtime scratch authorization and persistence
-remain pending. The workflow records the QEMU model evidence separately.
+remain pending. Source archive/object hashes were recorded by the build;
+independent binary inspection used the downloaded final kernel and host library.
 
 ## Completion
 
