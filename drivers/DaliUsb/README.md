@@ -37,3 +37,36 @@ The test uses actual production C and a PMIF/PMIC state model with ASan/UBSan,
 including concurrent initialization, NACK, delayed response, timeout, MMIO error,
 unknown identity, foreign channel ownership and write uncertainty. It does not
 qualify the physical PMIF, MT6379 or USB port. `hardware_qualified=false`.
+
+`DaliUsbTypec.c` adds the actual MT6379 TCPCI initialization, fixed/DRP
+termination, orientation, bounded CC sampling/debounce and charger VBUS control.
+Objects start zeroed and belong to a serialized platform worker. Probe checks
+real VID/PID/DID without writes. Start requires USB DMA stopped and source boost
+off, masks only local TCPC alerts and disables PD RX/VCONN. The poller requires
+120ms of observations at <=5ms intervals before attachment, and a stopped
+boundary before changing an active attachment. A rejected snapshot, bus conflict
+or missed polling interval restarts the candidate timer. The reference's lost
+DRP toggle workaround is allowed only while unpublished, quiesced and boost-off.
+
+Before enabling source power, freeze a fresh published HOST attachment with
+`dali_usb_typec_latch_attachment`. VBUS requires separate exclusive charger/TM
+ownership and a real board connector-check callback. It rejects unknown checks,
+incoming VBUS or unsafe voltage, programs exactly5.00V/500mA with the reference's
+BE16 selector/passcode/PP7 sequence, and confirms actual boost and output voltage.
+Repeated enable validates live output without replaying writes. Faults retain an
+UNKNOWN power state until explicit shutdown; failure to quiesce prevents any
+power change. Shutdown confirms our boost off without discharging another
+source's incoming VBUS. A faulted instance must be destroyed/reinitialized.
+
+```sh
+python3 -m unittest discover -s tests -p 'test_usb_typec.py' -v
+CC=gcc python3 -m unittest discover -s tests -p 'test_usb_typec.py' -v
+```
+
+This second fixture runs production Type-C/VBUS C against a PMIC byte-register
+seam, separately from the production PMIF fixture. It covers polling continuity,
+CC instability, DRP recovery guards, exact TM writes, output loss, failed
+quiesce, per-operation enable failures and retained uncertainty. It does not
+establish combined PMIF-to-port operation, board ADC/DPDM protection, automatic
+USB role orchestration, PHY/clocks/repeaters or an OS binding; those remain to
+be implemented and validated. No physical device is accessed by either fixture.
