@@ -85,6 +85,49 @@ tests are references; copying its hardware constants or windows is not a Dali
 port. Source-only XNU additionally needs a real public IOStorageFamily build and
 builtin block-driver registration. Header preparation alone does not provide it.
 
+## Register-probe runner
+
+`scripts/run-ufs-probe.py` runs one register-only candidate with a 120-second
+manual fastboot deadline. The sealed candidate directory contains the boot
+image, `manifest.json`, and `SILICIUM_UEFI.fd`. It must match the clean pinned
+source revisions and the current local DEBUG build, including generated probe
+PCDs and compiled BDS. The runner rebuilds the entry shim and compares its bytes
+and the bound original Android header with the actual decompressed candidate.
+Rebuild the candidate after committing any device-source changes.
+
+```sh
+python3 scripts/run-ufs-probe.py --serial SERIAL \
+  --backup /private/original-backup --uefi /src/UEFI-Dali --unixnu /src/UniXNU \
+  --candidate-dir /private/sealed-probe --evidence-root /private/probe-runs \
+  --dry-run
+```
+
+Dry-run uses the saved verified FDT without contacting the device. Remove
+`--dry-run` only when the operator is present: select Exit after the menu
+appears, then hold Volume Down during the firmware's 10-second recovery window.
+This runner requires the same verified Android/fastboot serial. All output
+stays outside the source repositories, immutable backup and sealed candidate.
+
+Before flashing, the runner persists an identity-bound original-only recovery
+command, consumes the unique token and records a pending restore. A per-device
+advisory lock excludes a second UFS runner; pending restoration rejects another
+trial across process restarts. The only partition target is literal `boot_b`.
+After original Android returns, it reads token-bound ramoops evidence and checks
+Android B, root and all 18 original partition hashes before clearing pending.
+The register probe has no scratch data to export before this original restore;
+it does not satisfy the later storage-write cycle's export-before-restore gate.
+
+If recovery is interrupted, use the exact saved `--restore-run` command. It
+accepts no candidate or source-build paths and verifies only the bound original
+backup and target. Keep the state directory and run evidence until restoration
+has been verified. Preserve the token ledger to prevent token reuse.
+
+Each collection attempt keeps its own raw files. Cached success is recomputed
+from hash-checked raw text; a partial or corrupt capture can be retried. Scoring
+requires one complete current-token sequence and the exact gated register-read
+list. Snapshot success always leaves DMA, physical media I/O, writes and reset
+persistence unqualified.
+
 ## Completion
 
 UEFI and XNU must each demonstrate known-block reads, bounded scratch writes,
