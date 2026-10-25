@@ -14,7 +14,9 @@ OUT = ROOT / "build/dali-usb-host"
 SOURCES = (ROOT / "drivers/UsbCore/UsbCore.c", ROOT / "drivers/UsbCore/UsbHost.c")
 REQUIRED_SYMBOLS = (
     "usb_host_enumerate", "usb_host_start_storage", "usb_host_poll_input",
-    "usb_host_disconnect", "usb_parse_configuration", "usb_bot_command",
+    "usb_host_disconnect", "usb_host_hub_start", "usb_host_hub_poll",
+    "usb_host_hub_child_route", "usb_host_hub_stop",
+    "usb_parse_configuration", "usb_bot_command",
 )
 
 

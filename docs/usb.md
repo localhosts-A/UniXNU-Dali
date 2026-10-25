@@ -8,23 +8,31 @@ policy and the Linux unattended reader retain their existing ownership.
 Current implementation consists of the portable protocol/ownership core and a
 composed MTU3 USB2 CDC device MAC using QMU, EP0, notification IN1, log IN2 and
 discard-only OUT2 in the pinned generic repository, plus the source and
-saved-FDT resource verification tools here. Five production C fixtures pass
-Clang/GCC ASan/UBSan; five C units compile freestanding AArch64. The combined
+saved-FDT resource verification tools here. Seven production C fixtures pass
+Clang/GCC ASan/UBSan, and the standalone EDK2 AArch64 archive builds all six
+portable/device C units. The combined
 host-driven model covers CDC enumeration/DTR/log DMA, legal ZLP, reset/disconnect,
 control abort/toggle preservation and retained DMA buffers after stop failure.
 Actual UEFI/XNU binding and PHY/power/PMIF/TCPC/DMA ownership establishment,
-host/hub/OS integration, FAT/HID source archives, complete
-firmware/macOS builds and QEMU USB gates are still pending. Nothing in this
-milestone enables USB in the ordinary boot profile. `hardware_qualified=false`.
+native controller and hub child-service integration, source-XNU IOHID/storage
+consumers, final-map handoff and native-engine QEMU gates are still pending. The
+default-off and enabled firmware packages build, and the source PCI xHCI QEMU
+class-stack gate passes separately; neither result proves the Dali native MMIO
+controller. Nothing in this milestone enables USB in the ordinary boot profile.
+`hardware_qualified=false`.
 
-The generic repository now also contains an OS-independent USB host coordinator
-for xHCI-style address assignment, bounded configuration-descriptor parsing,
-boot keyboard/mouse selection, interrupt report delivery and Mass Storage BOT
-routing. Its Clang/GCC ASan/UBSan model covers short/overlong descriptors,
-high-speed packet intervals/transactions, failed endpoint setup, key release,
-BOT read/write/flush and retained device state after failed stop. It is protocol
-core only: it does not reset hub ports, implement an xHCI controller, publish
-IOHIDDevice/IOBlockStorageDevice services, or establish Dali DMA resources.
+The generic repository now contains an OS-independent USB host coordinator for
+xHCI-style address assignment, bounded configuration parsing, boot keyboard/mouse,
+Mass Storage BOT, and USB2 external hubs. The hub service validates descriptors
+and interrupt bitmaps, powers ports, resets new connections, emits child lifecycle
+events, and builds single/multi-TT routes with think-time metadata. Multi-TT hubs
+are explicitly switched to their alternate setting. Its Clang/GCC ASan/UBSan
+models cover port bitmap boundaries through 127 ports, malformed/short/overlong
+responses, power/reset deadlines and wrap, attach retry beyond the reset deadline,
+partial-child cleanup on unplug, disconnect, overcurrent, route-depth limits and
+single/multi-TT. This is protocol code only: the actual
+MMIO controller worker, child-service owner, XNU IOHIDDevice/IOBlockStorageDevice
+publication and Dali DMA resources remain separate.
 
 An opt-in source-only XNU host-core profile is available separately from the
 ordinary Dali early-boot profile. On the macOS XNU build host, configure and build
@@ -35,8 +43,9 @@ it in its own output root:
 ./unixnu build kernel --source-only -D ../UniXNU-Dali --out out/dali-usb
 ```
 
-That profile builds `UsbCore.c` and `UsbHost.c` from the XNU C compile record into
-`libDaliUsbHost.a` and force-loads the archive. The existing `dali_defconfig`
+That profile builds `UsbCore.c` and `UsbHost.c`, including the hub coordinator,
+from the XNU C compile record into `libDaliUsbHost.a` and force-loads the archive.
+The existing `dali_defconfig`
 leaves `XNU_NATIVE_USB_HOST` unset, so its archive builder skips the USB core.
 The enabled source archive is not yet a registered XNU controller/class driver;
 its final link and runtime gates remain open until those consumers are connected.

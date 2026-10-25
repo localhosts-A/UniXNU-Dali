@@ -72,6 +72,9 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
         self.assertIn("CONFIG_XNU_NATIVE_USB_HOST=y", usb)
         self.assertIn("build/dali-usb-host/libDaliUsbHost.a", usb)
         self.assertIn("build-dali-usb-host.py", board["kernel"]["archives"])
+        self.assertTrue({"usb_host_hub_start", "usb_host_hub_poll",
+                         "usb_host_hub_child_route", "usb_host_hub_stop"} <=
+                        set(BUILDER.REQUIRED_SYMBOLS))
 
 
 if __name__ == "__main__":
