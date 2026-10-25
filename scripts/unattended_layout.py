@@ -85,6 +85,63 @@ def verified_partition_size(backup):
     return entry["bytes"], digest
 
 
+def verify_original_avb_and_scratch(boot_b, partition_bytes, scratch):
+    """Verify the restored original's AVB footer/ranges do not occupy scratch."""
+    boot_b = Path(boot_b)
+    if boot_b.stat().st_size != partition_bytes or partition_bytes < 64:
+        raise ValueError("original boot_b length differs from its verified partition size")
+    if not isinstance(scratch, dict):
+        raise ValueError("scratch proposal is not a range record")
+    start = scratch.get("offset_bytes")
+    length = scratch.get("bytes")
+    if (type(start) is not int or type(length) is not int or start < 0 or length != SCRATCH_BYTES or
+            start % PAGE or start > partition_bytes or length > partition_bytes - start):
+        raise ValueError("scratch proposal is outside original boot_b")
+    end = start + length
+    with boot_b.open("rb") as source:
+        source.seek(start)
+        scratch_bytes = source.read(length)
+        source.seek(end)
+        guard = source.read(partition_bytes - end)
+        source.seek(partition_bytes - 64)
+        footer = source.read(64)
+    if len(scratch_bytes) != length or len(guard) != partition_bytes - end or len(footer) != 64:
+        raise ValueError("original boot_b scratch/guard/footer read was truncated")
+    if any(scratch_bytes):
+        raise ValueError("proposed scratch contains nonzero bytes in original boot_b")
+    if footer[:4] != b"AVBf":
+        raise ValueError("original boot_b has no supported AVB footer")
+    major, minor, image_bytes, vbmeta_offset, vbmeta_bytes = struct.unpack_from(">IIQQQ", footer, 4)
+    footer_offset = partition_bytes - 64
+    if (major != 1 or minor != 0 or any(footer[36:]) or image_bytes == 0 or vbmeta_bytes == 0 or
+            image_bytes > vbmeta_offset or vbmeta_offset > footer_offset or
+            vbmeta_bytes > footer_offset - vbmeta_offset):
+        raise ValueError("original boot_b AVB footer geometry is invalid or unsupported")
+    vbmeta_end = vbmeta_offset + vbmeta_bytes
+    if start < vbmeta_end and vbmeta_offset < end:
+        raise ValueError("proposed scratch overlaps original boot_b AVB metadata")
+    guard_end = end + TAIL_GUARD_BYTES
+    if (guard_end != partition_bytes or not (end <= footer_offset < guard_end) or
+            any(guard[:footer_offset - end]) or any(guard[footer_offset - end + 64:])):
+        raise ValueError("tail guard contains unknown data or does not preserve the original AVB footer")
+    if footer_offset + 64 != partition_bytes:
+        raise ValueError("tail guard does not preserve the original boot_b AVB footer")
+    return {
+        "footer_offset_bytes": footer_offset,
+        "original_image_bytes": image_bytes,
+        "vbmeta_offset_bytes": vbmeta_offset,
+        "vbmeta_bytes": vbmeta_bytes,
+        "vbmeta_end_bytes": vbmeta_end,
+        "scratch_disjoint": True,
+        "scratch_was_zero_in_original": True,
+        "scratch_sha256_in_original": hashlib.sha256(scratch_bytes).hexdigest(),
+        "tail_guard_covers_footer": True,
+        "tail_guard_nonzero_bytes": sum(byte != 0 for byte in guard),
+        "tail_guard_only_footer_data": True,
+        "tail_guard_sha256_in_original": hashlib.sha256(guard).hexdigest(),
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, required=True)
@@ -94,6 +151,8 @@ def main(argv=None):
     try:
         partition_bytes, original_sha = verified_partition_size(args.backup)
         report = plan_scratch(args.candidate.read_bytes(), partition_bytes)
+        report["original_avb"] = verify_original_avb_and_scratch(
+            args.backup / "boot_b.img", partition_bytes, report["scratch"])
     except (OSError, KeyError, TypeError, ValueError) as error:
         parser.error(str(error))
     report["original_boot_b_sha256"] = original_sha

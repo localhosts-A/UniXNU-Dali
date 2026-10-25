@@ -35,6 +35,43 @@ class UnattendedLayoutTests(unittest.TestCase):
         for key in ("reader_switch_qualified", "media_writes_qualified", "device_access_performed"):
             self.assertIs(result[key], False)
 
+    def test_original_avb_footer_is_outside_zero_scratch_and_inside_guard(self):
+        capacity = 4 * layout.MIB
+        original = bytearray(capacity)
+        footer = bytearray(64)
+        footer[:4] = b"AVBf"
+        struct.pack_into(">IIQQQ", footer, 4, 1, 0, layout.MIB, layout.MIB, 4096)
+        original[-64:] = footer
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "boot_b.img"
+            path.write_bytes(original)
+            scratch = {"offset_bytes": 2 * layout.MIB, "bytes": layout.MIB}
+            result = layout.verify_original_avb_and_scratch(path, capacity, scratch)
+            self.assertEqual(result["vbmeta_end_bytes"], layout.MIB + 4096)
+            self.assertTrue(result["scratch_disjoint"])
+            self.assertTrue(result["scratch_was_zero_in_original"])
+            self.assertTrue(result["tail_guard_covers_footer"])
+            self.assertTrue(result["tail_guard_only_footer_data"])
+            self.assertEqual(result["tail_guard_nonzero_bytes"], sum(byte != 0 for byte in footer))
+
+            footer_overlap = bytearray(footer)
+            struct.pack_into(">IIQQQ", footer_overlap, 4, 1, 0, layout.MIB, 2 * layout.MIB, 4096)
+            path.write_bytes(original[:-64] + footer_overlap)
+            with self.assertRaisesRegex(ValueError, "overlaps"):
+                layout.verify_original_avb_and_scratch(path, capacity, scratch)
+
+            occupied = bytearray(original)
+            occupied[2 * layout.MIB] = 1
+            path.write_bytes(occupied)
+            with self.assertRaisesRegex(ValueError, "nonzero"):
+                layout.verify_original_avb_and_scratch(path, capacity, scratch)
+
+            unknown_tail = bytearray(original)
+            unknown_tail[-100] = 1
+            path.write_bytes(unknown_tail)
+            with self.assertRaisesRegex(ValueError, "unknown data"):
+                layout.verify_original_avb_and_scratch(path, capacity, scratch)
+
     def test_full_zero_padding_does_not_imply_fastboot_preservation(self):
         image = boot_image()
         image.extend(bytes(4 * layout.MIB - len(image)))
