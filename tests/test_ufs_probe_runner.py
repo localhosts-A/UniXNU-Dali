@@ -91,7 +91,7 @@ class LeaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             backup = Path(temp) / 'device-backups' / 'dali-backup'
             backup.mkdir(parents=True)
-            expected = backup.parent / '.ufs-device-state'
+            expected = backup.resolve().parent / '.ufs-device-state'
             self.assertEqual(runner.device_state_root(backup), expected)
             self.assertEqual(runner.device_state_root(backup.resolve()), expected)
 
