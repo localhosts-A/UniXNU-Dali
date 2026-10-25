@@ -629,8 +629,8 @@ platform checkpoint before hardware, real-path sync counters and stopped-DMA
 reports. Nine synthetic negative/positive tests cover stale/mixed/incomplete
 records, both block sizes, failed sync/stop, metadata framing and repeated stop.
 Device identity and the actual source/kernel/ADT/FD binding remain obligations
-of a future dedicated runner. Text scoring does not grant writes or qualify
-the complete firmware-to-XNU handoff or persistence.
+of the dedicated `run-xnu-ufs-readonly.py` runner. Text scoring does not grant
+writes or qualify persistence.
 
 CI [`40211101567`](https://github.com/localhosts-A/UniXNU-Dali/actions/runs/40211101567)
 passed with device `1a92efa`, generic `3e7392b` and firmware `b502bdf`: actual
@@ -658,6 +658,39 @@ only block 64 changed. Private evidence is `dali-ufs-platform-ci-40211101567`.
 The RAM fixture does not invoke the physical Dali adapter. These checks qualify
 source build/link and software behavior, without qualifying MT6991 DMA/cache,
 physical XNU media, the full firmware handoff, scratch writing or persistence.
+
+## Combined firmware/source-XNU read-only profile
+
+`DALI_XNU_UFS_READ_ONLY=true` is a separate manual-recovery build profile. It
+requires the same fresh token for the physical UEFI provider and source-XNU
+adapter, plus the captured live FDT. Packaging verifies the final FD's
+FREEFORM/RAW payload bytes against `payload.img`, then checks the actual FAT
+kernel, ADT, boot arguments and `dali-boot.conf` against their manifest records.
+The recovery file is checked against the firmware parser's exact version-1,
+manual-recovery policy; ADT resource bytes and their live-FDT digest are checked
+again from the packed candidate. All write-authority and physical-qualification
+fields remain false.
+
+`run-xnu-ufs-readonly.py` seals and re-verifies the image, binds the source
+artifact and all three repository pins, captures a fresh Android UFS baseline,
+and persists a per-device lease and original-only restore command before
+flashing `boot_b`. The physical UFS diagnostic runs in source XNU after the
+firmware provider's sync/stop gate; a second DarwinBoot quiesce call is
+idempotent. The XNU driver then uses its own queue and DMA allocation. Manual
+recovery for this profile is the XNU prompt: hold Volume Up to request recovery,
+then hold Volume Down through the two-second LK watchdog interval to enter
+fastboot. This differs from the UEFI-only menu recovery used by earlier probes.
+The scorer requires both the token-bound UEFI BlockIo read/sync/stop transcript
+and the later XNU read/sync/stop transcript in the same ramoops capture. It binds
+the firmware stop mask to the LUN set observed by UEFI before requiring the XNU
+platform checkpoint and controller records.
+
+The runner's current evidence collection reads ramoops from Android after the
+original `boot_b` has been restored. That is sufficient to keep this
+read-only diagnostic's transcript retryable, but it does not meet the plan's
+pre-restore evidence requirement for scratch-write/persistence cycles. No write
+token or scratch grant is enabled by this profile, and software tests/dry-run
+do not qualify physical XNU media or handoff.
 
 ## Completion
 

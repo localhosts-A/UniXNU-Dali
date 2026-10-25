@@ -130,17 +130,24 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     probe = manifest.get('ufs_probe', {})
     if not isinstance(probe, dict):
         raise cycle.CycleError('invalid probe metadata')
-    if mode == 'read-only-blockio':
+    xnu_ufs_mode = mode == 'xnu-ufs-read-only'
+    if mode in ('read-only-blockio', 'xnu-ufs-read-only'):
         host = manifest.get('ufs_host', {})
         if not isinstance(host, dict):
             raise cycle.CycleError('invalid physical UFS host metadata')
         token = host.get('run_token', '')
-        if (host.get('enabled') is not True or host.get('mode') != mode or host.get('log_version') != 1 or
+        if (host.get('enabled') is not True or host.get('mode') != 'read-only-blockio' or host.get('log_version') != 1 or
                 host.get('controller_commands') is not True or host.get('mmio_writes') is not True or
                 host.get('media_writes') is not False or host.get('write_authorized') is not False or
                 host.get('physical_storage_qualified') is not False or host.get('host_verified_in_final_fd') is not True or
                 probe.get('enabled') is not False or probe.get('mode') != 'off' or probe.get('run_token') is not None):
             raise cycle.CycleError('candidate is not an explicit physical read-only diagnostic')
+        if xnu_ufs_mode:
+            xnu_profile = manifest.get('ufs_xnu', {})
+            if (not isinstance(xnu_profile, dict) or xnu_profile.get('enabled') is not True or
+                    xnu_profile.get('run_token') != token or xnu_profile.get('write_authorized') is not False or
+                    xnu_profile.get('physical_ufs_qualified') is not False):
+                raise cycle.CycleError('candidate lacks its source-XNU read-only UFS binding')
     elif mode == 'registers':
         token = probe.get('run_token', '')
         if (probe.get('enabled') is not True or probe.get('mode') != 'read-only-registers' or
@@ -155,10 +162,14 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     payload = manifest.get('payload', {})
     if not isinstance(payload, dict) or not isinstance(payload.get('recovery'), dict):
         raise cycle.CycleError('invalid probe payload/recovery metadata')
-    if (payload.get('xnu_kernel_sha256') is not None or payload.get('xnu_ramdisk_sha256') is not None or
+    if ((not xnu_ufs_mode and payload.get('xnu_kernel_sha256') is not None) or
+            payload.get('xnu_ramdisk_sha256') is not None or payload.get('xnu_trust_cache_sha256') is not None or
             payload.get('recovery', {}).get('auto_fastboot') is not False or
             payload.get('recovery', {}).get('reset_method') is not None):
-        raise cycle.CycleError('probe candidate contains XNU/root or competing reset policy')
+        raise cycle.CycleError('probe candidate contains PID1 or competing reset policy')
+    if xnu_ufs_mode and (payload.get('xnu_kernel_sha256') is None or payload.get('xnu_adt_sha256') is None or
+                         payload.get('xnu_run_token') != token):
+        raise cycle.CycleError('combined UFS candidate lacks source XNU/ADT bound to the token')
     # The packager's historic --mu argument names this firmware workspace;
     # Mu_Basecore itself is separately checked against its pinned gitlink/patches.
     for key, path in (('uefi_commit', uefi), ('unixnu_commit', unixnu), ('device_commit', DEVICE),
@@ -199,7 +210,7 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     package_spec = importlib.util.spec_from_file_location('ufs_probe_package', uefi / 'tools/dali/package.py')
     package = importlib.util.module_from_spec(package_spec)
     package_spec.loader.exec_module(package)
-    if mode == 'read-only-blockio':
+    if mode in ('read-only-blockio', 'xnu-ufs-read-only'):
         expected_probe, expected_host = package.ufs_read_only_metadata(build / 'AARCH64', token, fd=fd)
     else:
         expected_probe = package.ufs_probe_metadata(build / 'AARCH64', token, fd=fd)
@@ -209,6 +220,35 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     module = extract_bds(fd)
     if cycle.sha256(module) != probe.get('bds_sha256') or (mode == 'registers' and token.encode() + b'\0' not in module):
         raise cycle.CycleError('final candidate BDS/token does not match manifest')
+    if xnu_ufs_mode:
+        runtime_fdt = directory / 'runtime-live.dtb'
+        payload_image = directory / 'payload.img'
+        profile = payload.get('xnu_ufs_read_only', {})
+        xnu_profile = manifest.get('ufs_xnu', {})
+        if not isinstance(profile, dict) or not isinstance(xnu_profile, dict):
+            raise cycle.CycleError('candidate source-XNU UFS profile metadata is malformed')
+        if (not runtime_fdt.is_file() or not payload_image.is_file() or
+                cycle.sha256(runtime_fdt.read_bytes()) != profile.get('live_fdt_sha256') or
+                profile.get('live_fdt_sha256') != xnu_profile.get('live_fdt_sha256')):
+            raise cycle.CycleError('candidate live FDT differs from its source-XNU UFS profile')
+        raw_payload = package.extract_module(fd, package.XNU_UFS_PAYLOAD_GUID,
+                                             'XNU UFS payload', section_type=0x19, expected_file_type=0x02)
+        staged_payload = payload_image.read_bytes()
+        if (raw_payload != staged_payload or len(raw_payload) != payload.get('bytes') or
+                cycle.sha256(raw_payload) != payload.get('sha256')):
+            raise cycle.CycleError('actual final-FD RAW payload differs from the bound candidate payload')
+        try:
+            payload_spec = importlib.util.spec_from_file_location('xnu_ufs_payload_tools', uefi / 'tools/make_payload.py')
+            payload_tools = importlib.util.module_from_spec(payload_spec)
+            payload_spec.loader.exec_module(payload_tools)
+            config = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/unixnu.toml'])
+            recovery = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/dali-boot.conf'])
+            adt = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/Payloads/kernel.macho.adt'])
+            kernel = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/Payloads/kernel.macho'])
+            payload_tools.validate_xnu_ufs_bundle(payload, token, adt, runtime_fdt.read_bytes(),
+                                                  config, recovery, kernel)
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+            raise cycle.CycleError('source-XNU UFS payload validation failed: ' + str(error)) from None
     # Rebuild the small entry shim from the clean pinned source, independently
     # of both the supplied candidate and its self-reported manifest hashes.
     with tempfile.TemporaryDirectory(prefix='dali-ufs-shim-') as temp:
@@ -519,7 +559,7 @@ def run_trial(a, lease):
              'serial': a.serial, 'fastboot_serial': a.fastboot_serial, 'backup': str(a.backup),
              'original_boot_b_sha256': records['boot_b']['sha256'], 'boot_b_may_be_modified': False,
              'restore_command': restore_command}
-    if mode == 'read-only-blockio':
+    if mode in ('read-only-blockio', 'xnu-ufs-read-only'):
         baseline = prepare_readonly_baseline(a, run)
         state.update(candidate_sha256=manifest['sha256'], candidate_verified_before_flash=True,
                      candidate_record_sha256=cycle.sha256((run / 'candidate.json').read_bytes()),

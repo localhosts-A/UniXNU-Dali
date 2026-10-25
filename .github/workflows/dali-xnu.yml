@@ -83,6 +83,20 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Checkout pinned UEFI payload verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: localhosts-A/UEFI-Dali
+          ref: ${{ steps.pins.outputs.uefi_commit }}
+          path: UEFI-Dali
+          persist-credentials: false
+
+      - name: Test combined firmware/XNU UFS package contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s "$GITHUB_WORKSPACE/UEFI-Dali/tools/dali" -p 'test_xnu_ufs_package.py' -v
+
       - name: Test UniXNU build driver
         shell: bash
         run: |

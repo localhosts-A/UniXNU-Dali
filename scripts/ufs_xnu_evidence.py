@@ -12,7 +12,7 @@ from ufs_readonly_evidence import TOKEN, sha256
 import ufs_geometry as geometry
 
 
-def score_xnu_readonly(text, token, baseline, candidate):
+def score_xnu_readonly(text, token, baseline, candidate, firmware_luns=None):
     result = dict(run_token=token, xnu_read_only_pass=False, xnu_sync_report_pass=False,
                   xnu_stop_report_pass=False, device_identity_verified_by_scorer=False,
                   physical_ufs_qualified=False, firmware_xnu_handoff_qualified=False,
@@ -82,13 +82,14 @@ def score_xnu_readonly(text, token, baseline, candidate):
             if expected is not None and observed != expected:
                 raise ValueError('known block differs from Android/current candidate')
 
-        exact('start', (0, 0, 0))
+        start_record = exact('start', (0, 0, 0))
         sha = exact('sha-pass', (0, 0, 0))
         checkpoints = [(i, line) for i, line in enumerate(raw) if line.startswith('DALI-XNU: ') and ' run=' + token + ' ' in line]
         checkpoint = (r'DALI-XNU: darwin=[0-9.]+ build=[0-9.]+ run=' + token +
                       r' bootarg=1 registered=1 platform=1 gic=1 timer=([1-9][0-9]*) mpidr=0x([0-9a-f]{1,16}) checkpoint=PASS')
         platform = re.fullmatch(checkpoint, checkpoints[0][1]) if len(checkpoints) == 1 else None
-        if not platform or checkpoints[0][0] >= sha[4] or int(platform[2], 16) & 0xff00ffffff or int(platform[1]) > geometry.UINT64_MAX:
+        if (not platform or checkpoints[0][0] >= start_record[4] or checkpoints[0][0] >= sha[4] or
+                int(platform[2], 16) & 0xff00ffffff or int(platform[1]) > geometry.UINT64_MAX):
             raise ValueError('missing successful platform checkpoint before hardware')
         exact('controller', (7, 7, 0))
         dma = take('dma')
@@ -145,7 +146,27 @@ def score_xnu_readonly(text, token, baseline, candidate):
             exact('quiesce', (8, 1, 0))
         if stopped_sync is None:
             raise ValueError('missing shutdown evidence')
+        handoff = [(i, line) for i, line in enumerate(raw)
+                   if line.startswith('DALI-UFS-HANDOFF: run=' + token + ' ')]
+        firmware_stops = [(i, line) for i, line in enumerate(raw)
+                          if line.startswith('DALI-UFS-HOST: run=' + token + ' quiesce=')]
+        handoff_luns = set(roots) if firmware_luns is None else set(firmware_luns)
+        if (not handoff_luns or any(type(lun) is not int or lun < 0 or lun >= 8 for lun in handoff_luns)):
+            raise ValueError('invalid firmware-discovered LUN set for ownership handoff')
+        expected_mask = sum(1 << lun for lun in handoff_luns)
+        if len(handoff) != 1 or len(firmware_stops) != 1:
+            raise ValueError('missing/duplicate firmware storage quiesce evidence')
+        handoff_match = re.fullmatch(
+            r'DALI-UFS-HANDOFF: run=' + token +
+            r' closed=1 drained-synced=1 mask=([0-9a-f]+) commands=(\d+) result=Success', handoff[0][1])
+        firmware_stop_match = re.fullmatch(
+            r'DALI-UFS-HOST: run=' + token + r' quiesce=Success hce=0', firmware_stops[0][1])
+        if (not handoff_match or not firmware_stop_match or handoff[0][0] >= firmware_stops[0][0] or
+                firmware_stops[0][0] >= checkpoints[0][0] or int(handoff_match[1], 16) != expected_mask or
+                int(handoff_match[2]) != len(handoff_luns)):
+            raise ValueError('firmware did not sync/stop the exact discovered LUN set before XNU')
         return dict(result, xnu_read_only_pass=True, xnu_sync_report_pass=True, xnu_stop_report_pass=True,
+                    firmware_xnu_handoff_qualified=True,
                     verified_content_luns=[baseline['lun']], observed_roots=roots,
                     observed_partitions=len(partitions), samples=samples, shutdown_sync_count=stopped_sync,
                     candidate_sha256=sha256(candidate), baseline_sha256=baseline['baseline_sha256'])

@@ -22,8 +22,11 @@ def trace(baseline, token=TOKEN):
     def sample(lun, lba, base, size, block, kind, digest):
         record('sample', lun, lba, block); record(kind, base, size, block); record(digest)
     block, count, lun = baseline['block_size'], baseline['last_lba'] + 1, baseline['lun']
-    record('start')
+    record('start'); start_record=rows.pop()
+    rows.append(f'DALI-UFS-HANDOFF: run={token} closed=1 drained-synced=1 mask={1 << lun:x} commands=1 result=Success')
+    rows.append(f'DALI-UFS-HOST: run={token} quiesce=Success hce=0')
     rows.append(f'DALI-XNU: darwin=24.5.0 build=10063.141.1 run={token} bootarg=1 registered=1 platform=1 gic=1 timer=12 mpidr=0x0 checkpoint=PASS')
+    rows.append(start_record)
     record('sha-pass'); record('controller',7,7); record('dma',0x90000000,0x22000,64)
     record('geometry',lun,count,block); record('initialized',1)
     record('media',lun,count*block,block)
@@ -52,9 +55,10 @@ class XnuEvidenceTests(unittest.TestCase):
     def test_complete_transcript_reports_only_named_xnu_read_path(self):
         out=self.score(); self.assertTrue(out['xnu_read_only_pass'],out)
         self.assertTrue(out['xnu_sync_report_pass']); self.assertTrue(out['xnu_stop_report_pass'])
+        self.assertTrue(out['firmware_xnu_handoff_qualified'])
         self.assertEqual(out['verified_content_luns'],[2])
         for key in ('physical_ufs_qualified','device_identity_verified_by_scorer',
-                    'firmware_xnu_handoff_qualified','media_writes_qualified','persistence_qualified'):
+                    'media_writes_qualified','persistence_qualified'):
             self.assertFalse(out[key])
     def test_actual_512_byte_geometry_and_candidate_binding(self):
         folder=Path(self.tmp.name)/'small'; save_fixture(folder,512)
@@ -96,6 +100,26 @@ class XnuEvidenceTests(unittest.TestCase):
                         ('stage=diagnostics-end a=1 b=4','stage=diagnostics-end a=1 b=3')):
             self.assertFalse(self.score(log.replace(old,new))['xnu_read_only_pass'])
         self.assertFalse(self.score('\n'.join(log.splitlines()[:-2]))['xnu_read_only_pass'])
+    def test_firmware_must_sync_stop_and_release_each_discovered_lun_before_xnu(self):
+        log=trace(self.baseline)
+        for old,new in (('mask=4 commands=1','mask=0 commands=0'),
+                        ('drained-synced=1','drained-synced=0'),
+                        ('quiesce=Success hce=0','quiesce=Success hce=1'),
+                        ('closed=1','closed=0'),
+                        ('result=Success','result=DeviceError')):
+            self.assertNotEqual(log,log.replace(old,new,1))
+            self.assertFalse(self.score(log.replace(old,new,1))['xnu_read_only_pass'])
+        rows=log.splitlines()
+        handoff=next(i for i,line in enumerate(rows) if line.startswith('DALI-UFS-HANDOFF:'))
+        stop=next(i for i,line in enumerate(rows) if line.startswith('DALI-UFS-HOST:'))
+        rows[handoff],rows[stop]=rows[stop],rows[handoff]
+        self.assertFalse(self.score('\n'.join(rows))['xnu_read_only_pass'])
+
+    def test_handoff_mask_uses_firmware_discovered_luns_not_only_xnu_roots(self):
+        log = trace(self.baseline).replace('mask=4 commands=1', 'mask=5 commands=2')
+        self.assertTrue(evidence.score_xnu_readonly(log, TOKEN, self.baseline, CANDIDATE, {0, 2})['xnu_read_only_pass'])
+        self.assertFalse(evidence.score_xnu_readonly(log, TOKEN, self.baseline, CANDIDATE, {2})['xnu_read_only_pass'])
+        self.assertFalse(evidence.score_xnu_readonly(log, TOKEN, self.baseline, CANDIDATE, {8})['xnu_read_only_pass'])
     def test_duplicate_trailing_truncated_foreign_and_reordered_records_fail(self):
         log=trace(self.baseline); rows=log.splitlines()
         for bad in (log+'\n'+log,log.replace(TOKEN,'b'*32),'\n'.join(rows[:-1]),

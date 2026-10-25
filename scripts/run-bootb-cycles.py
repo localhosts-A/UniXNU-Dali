@@ -491,11 +491,23 @@ def collect_cycle(args, cycle_dir, *, require_xnu, run_token=None, watchdog_time
     return result
 
 
-def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *, pid1_inputs=None, reset_method=None):
+def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *, pid1_inputs=None,
+                    reset_method=None, xnu_ufs_readonly=False, live_fdt=None):
     env = dict(os.environ)
     env["DALI_AUTO_FASTBOOT"] = "true" if recovery["auto_fastboot"] else "false"
     env["DALI_WATCHDOG_TIMEOUT_SECONDS"] = str(recovery["device_watchdog_timeout_seconds"])
     env["DALI_RUN_TOKEN"] = token
+    # A source-XNU UFS trial deliberately enables both serial read-only owners:
+    # the firmware provider must drain/sync/stop before XNU creates private DMA.
+    for key in ("DALI_UFS_READ_ONLY", "DALI_UFS_PROFILE", "DALI_UFS_PROBE",
+                "DALI_XNU_UFS_READ_ONLY", "DALI_XNU_UFS_LIVE_FDT"):
+        env.pop(key, None)
+    if xnu_ufs_readonly:
+        if recovery["auto_fastboot"] or reset_method is not None or pid1_inputs is not None or live_fdt is None or not Path(live_fdt).is_file():
+            raise CycleError("source-XNU UFS read-only requires manual recovery, live FDT and no reset/PID1")
+        env.update(DALI_UFS_READ_ONLY="true", DALI_UFS_PROFILE="read-only-blockio",
+                   DALI_UFS_PROBE="false", DALI_XNU_UFS_READ_ONLY="true",
+                   DALI_XNU_UFS_LIVE_FDT=str(Path(live_fdt).resolve()))
     env.pop('DALI_RESET_METHOD', None)
     if reset_method is not None:
         if reset_method not in ('off', 'psci-cold', 'psci-warm', 'aee') or recovery['auto_fastboot'] or pid1_inputs is not None:
@@ -546,6 +558,22 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *,
             payload_recovery.get('reset_delay_seconds') != 5 or payload_recovery.get('watchdog_enabled') is not False or
             payload_recovery.get('firmware_reset_deadline_enabled') is not False):
         raise CycleError('candidate reset qualification settings differ from the selected method')
+    if xnu_ufs_readonly:
+        profile = image_manifest.get('ufs_xnu', {})
+        host = image_manifest.get('ufs_host', {})
+        payload_profile = payload.get('xnu_ufs_read_only', {})
+        if (not isinstance(profile, dict) or profile.get('enabled') is not True or
+                profile.get('run_token') != token or profile.get('write_authorized') is not False or
+                profile.get('physical_ufs_qualified') is not False or
+                not isinstance(host, dict) or host.get('enabled') is not True or
+                host.get('mode') != 'read-only-blockio' or host.get('run_token') != token or
+                host.get('media_writes') is not False or host.get('write_authorized') is not False or
+                not isinstance(payload_profile, dict) or payload_profile.get('enabled') is not True or
+                payload_profile.get('run_token') != token or payload_profile.get('write_authorized') is not False or
+                profile.get('live_fdt_sha256') != payload_profile.get('live_fdt_sha256') or
+                live_fdt is None or profile.get('live_fdt_sha256') != sha256(Path(live_fdt).read_bytes()) or
+                recovery.get('auto_fastboot') is not False or payload_recovery.get('reset_method') is not None):
+            raise CycleError('candidate package does not bind firmware/XNU UFS, live FDT, token and manual read-only policy')
     return image, image_manifest
 
 

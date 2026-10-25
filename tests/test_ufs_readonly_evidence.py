@@ -57,7 +57,9 @@ def trace(baseline, token=TOKEN):
               ro + 'MEDIA lun=0 partition=0 readonly=1 block_size=512 last_lba=7']
     lines += [ro + f'SAMPLE lun=0 lba={lba} bytes=512 sha256=' + 'a' * 64 for lba in (0, 1, 7)]
     lines += [host + 'SYNC_COMPLETE lun=0 tag=0 opcode=35 count=1', ro + 'SYNC lun=0 status=0',
-              ro + 'END status=0 roots=2 partitions=1 samples=7', host + 'quiesce=Success hce=0']
+              ro + 'END status=0 roots=2 partitions=1 samples=7',
+              'DALI-UFS-HANDOFF: run=' + token + ' closed=1 drained-synced=1 mask=5 commands=2 result=Success',
+              host + 'quiesce=Success hce=0']
     return '\n'.join(lines)
 
 
