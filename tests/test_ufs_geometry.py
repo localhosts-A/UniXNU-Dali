@@ -1,6 +1,7 @@
 """Corrupt media and unit mismatches must not create a scratch write grant."""
 import copy
 import hashlib
+import importlib.util
 from pathlib import Path
 import struct
 import sys
@@ -11,6 +12,10 @@ import zlib
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import ufs_geometry as ufs
 import unattended_layout as layout
+collector_spec = importlib.util.spec_from_file_location(
+    "ufs_baseline_collector", Path(__file__).resolve().parents[1] / "scripts/collect-ufs-baseline.py")
+collector = importlib.util.module_from_spec(collector_spec)
+collector_spec.loader.exec_module(collector)
 
 
 def fixture(logical=4096):
@@ -74,6 +79,21 @@ class UfsGeometryTests(unittest.TestCase):
                                      ("0x1234", "ABC\n123"), ("0x1234", "é" * 127)):
             with self.subTest(manufacturer=manufacturer, serial=serial), self.assertRaises(ValueError):
                 ufs.device_identity_binding(manufacturer, serial)
+
+    def test_android_identity_reader_cat_reads_both_descriptors(self):
+        commands = []
+
+        def read(command):
+            commands.append(command)
+            return "0x1234" if "manufacturer_id" in command else "ABC123"
+
+        digest = collector.read_ufs_device_identity_binding("/sys/ufs", read)
+        raw = bytes.fromhex("1234") + bytes((14, 5)) + "ABC123".encode("utf-16-be")
+        self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+        self.assertEqual(commands, [
+            "cat /sys/ufs/device_descriptor/manufacturer_id",
+            "cat /sys/ufs/string_descriptors/serial_number",
+        ])
 
     def test_stock_zero_disk_guid_is_recorded_but_not_an_identity(self):
         raw = fixture()

@@ -125,9 +125,7 @@ def collect(serial, backup, output):
         else:
             command = "cat " + shlex.quote(path)
         metadata[name] = {"path": path, "value": text(command) or None}
-    identity_binding = ufs.device_identity_binding(
-        text(controller + "/device_descriptor/manufacturer_id"),
-        text(controller + "/string_descriptors/serial_number"))
+    identity_binding = read_ufs_device_identity_binding(controller, text)
     after_android = cycle.current_android(serial)
     after_hashes = cycle.compare_partition_hashes(serial, records)
     if before_hashes != after_hashes or before_android != after_android:
@@ -146,6 +144,12 @@ def collect(serial, backup, output):
               "device_reboot_performed": False, "ufs_controller_qualified": False}
     cycle.write_json(output / "baseline.json", report)
     return report
+
+
+def read_ufs_device_identity_binding(controller, read_text):
+    manufacturer_id = read_text("cat " + shlex.quote(controller + "/device_descriptor/manufacturer_id"))
+    serial_number = read_text("cat " + shlex.quote(controller + "/string_descriptors/serial_number"))
+    return ufs.device_identity_binding(manufacturer_id, serial_number)
 
 
 def main():
