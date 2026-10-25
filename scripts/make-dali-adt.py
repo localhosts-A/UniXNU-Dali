@@ -6,6 +6,7 @@ from pathlib import Path
 import secrets
 import struct
 import zlib
+from dali_ufs_resources import resource_contract
 
 
 class Fdt:
@@ -127,11 +128,17 @@ def main():
     parser.add_argument("--psci-method", choices=("smc", "hvc"), default="smc")
     parser.add_argument("--ramdisk", action="store_true", help="zero RAMDisk slot for DarwinBoot to fill")
     parser.add_argument("--trust-cache", action="store_true", help="zero TrustCache slot for the explicit own test input")
+    parser.add_argument("--ufs-readonly", action="store_true", help="validate and include the optional physical UFS nub")
     args = parser.parse_args()
     if args.fdt is None:
         parser.error("a private live Dali FDT is required (--fdt or DALI_RUNTIME_FDT)")
     try:
-        tree = Fdt(args.fdt.read_bytes())
+        raw_fdt = args.fdt.read_bytes()
+        tree = Fdt(raw_fdt)
+        ufs_mode = os.environ.get("DALI_XNU_UFS_READ_ONLY", "false")
+        if ufs_mode not in ("true", "false"):
+            raise ValueError("DALI_XNU_UFS_READ_ONLY must be true or false")
+        ufs_resources = resource_contract(tree, raw_fdt) if args.ufs_readonly or ufs_mode == "true" else None
         root = tree.nodes.get("/", {})
         if b"mediatek,MT6991" not in tree.string_list("/", "compatible"):
             raise ValueError("FDT is not MT6991")
@@ -220,7 +227,10 @@ def main():
             ("#address-cells", struct.pack("<I", 2)),
             ("#size-cells", struct.pack("<I", 2)),
             ("ranges", struct.pack("<QQQ", 0, 0x0C000000, 0x01000000)),
-        ], [intc, boot_log]),
+        ], [intc, boot_log, *([apple_node("dali-ufs", [
+            ("compatible", b"localhosts,dali-ufs\0"),
+            ("resources-v1", ufs_resources),
+        ])] if ufs_resources is not None else [])]),
         apple_node("defaults", [("sleep-disabled", struct.pack("<I", 1))]),
         apple_node("options"),
         apple_node("product", [

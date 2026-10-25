@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+// Adapted from UEFI-Dali b502bdf MT6991 UfsController.c. Fixed MiCode
+// device_modules e45c319 ufs-mediatek.c:242-347,391-455,1686-1692,1931-2058;
+// Linux f089d58 ufshci.h/unipro.h/ufshcd.c. Firmware addresses are never DMA.
+#include "DaliUfsPlatform.h"
+#include <string.h>
+
+namespace dali_ufs {
+static constexpr uint32_t Uccs = 0x400, UicError = 4;
+bool tokenValid(const char *s) {
+  if (!s) return false;
+  for (unsigned i = 0; i < 32; ++i) if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return false;
+  return s[32] == 0;
+}
+bool resourceValid(const void *p, size_t bytes) {
+  if (!p || bytes != ResourceBytes || memcmp(p, ResourceWords, sizeof(ResourceWords))) return false;
+  auto digest = static_cast<const uint8_t *>(p) + sizeof(ResourceWords);
+  uint8_t nonzero = 0; for (unsigned i = 0; i < 32; ++i) nonzero |= digest[i];
+  return nonzero != 0;
+}
+void Controller::capture(Snapshot &s) {
+  io_.fence(io_.context);
+  s.interrupt = io_.read(io_.context, Hci + 0x20); s.hcs = io_.read(io_.context, Hci + 0x30); s.hce = io_.read(io_.context, Hci + 0x34);
+  for (unsigned i = 0; i < 3; ++i) s.arguments[i] = io_.read(io_.context, Hci + 0x94 + 4 * i);
+  for (unsigned i = 0; i < 5; ++i) s.layers[i] = io_.read(io_.context, Hci + 0x38 + 4 * i);
+  io_.fence(io_.context); s.captured = true;
+}
+bool Controller::fail(Result r, bool snapshot) {
+  if (!d_.failed) {
+    d_.result = r; d_.faultStage = d_.stage; d_.faultAddress = d_.address; d_.faultValue = d_.value;
+    if (snapshot && d_.touched && !d_.failure.captured &&
+        (d_.stage == Stage::PreLink || d_.stage == Stage::LinkStartup || d_.stage == Stage::PostLink)) capture(d_.failure);
+  }
+  d_.failed = true; d_.ready = false; return false;
+}
+uint32_t Controller::read(uint64_t address) { d_.address = address; return d_.value = io_.read(io_.context, address); }
+bool Controller::write(uint64_t address, uint32_t value) {
+  d_.address = address; d_.value = value; d_.touched = true;
+  if (!io_.write(io_.context, address, value)) return fail(Result::Hardware);
+  io_.fence(io_.context); return true;
+}
+bool Controller::wait(uint32_t off, uint32_t mask, uint32_t value, uint32_t timeout) {
+  for (uint32_t elapsed = 0;; elapsed += 10) {
+    uint32_t actual = read(Hci + off);
+    if (actual == UINT32_MAX) return fail(Result::Hardware);
+    if ((actual & mask) == value) return true;
+    if (elapsed >= timeout) return fail(Result::Timeout);
+    io_.delay(io_.context, 10);
+  }
+}
+bool Controller::sip(uint32_t selector, uint32_t a, uint32_t b) {
+  d_.touched = true; d_.sipSelector = selector; d_.sipA = a; d_.sipB = b;
+  d_.sipStatus = io_.sip(io_.context, 0xc2000276, selector, a, b);
+  return d_.sipStatus == 0 || fail(Result::Sip);
+}
+bool Controller::rmw(uint32_t off, uint32_t mask, uint32_t bits) {
+  uint32_t old = read(Hci + off); return old == UINT32_MAX ? fail(Result::Hardware) : write(Hci + off, (old & ~mask) | bits);
+}
+bool Controller::reset(uint32_t off, uint32_t bits) {
+  uint32_t old = read(Ao + off); return old == UINT32_MAX ? fail(Result::Hardware) : write(Ao + off, old | bits);
+}
+bool Controller::stoppedQueues(bool clearBases) {
+  // Unlike LK, a quiesced firmware may leave idle old base addresses and HCS.F.
+  // Require HCE=0, both doorbells/run bits zero, IE=0 and MEM_CFG=0
+  // BEFORE clearing those addresses. No inherited pointer is ever dereferenced.
+  // Fixed Linux ufshci.h:206-212: HCS low nibble is present/list/UIC ready,
+  // not outstanding work. ufs-mcq.c:27,91-98: MCQ_CFG[16:8] is a configured
+  // maximum, not an active count; ufshcd.c:8751 selects MCQ via MEM_CFG bit0.
+  // MediaTek 0x14c contains vendor state (ufs-mediatek.c:505-513,545-552),
+  // not a count that must be zero. Qualified idle values are 0x410 / 0x1f00.
+  const uint32_t off[] = {0x34, 0x30, 0x58, 0x60, 0x78, 0x80, 0x300, 0x24};
+  for (unsigned i = 0; i < 8; ++i) {
+    uint32_t v = read(Hci + off[i]);
+    if (v == UINT32_MAX) return fail(Result::Hardware);
+    if ((i == 1 ? (v & ~15U) : v) != 0) return fail(Result::Busy);
+    if (!d_.touched) d_.inherited[i] = v;
+  }
+  const uint32_t bases[] = {0x50, 0x54, 0x70, 0x74};
+  uint32_t values[4];
+  for (unsigned i = 0; i < 4; ++i) {
+    values[i] = read(Hci + bases[i]);
+    if (values[i] == UINT32_MAX) return fail(Result::Hardware);
+    if (!d_.touched) d_.inherited[i + 8] = values[i];
+  }
+  for (unsigned i = 0; i < 4; ++i) {
+    if (clearBases && !write(Hci + bases[i], 0)) return false;
+    if (clearBases && read(Hci + bases[i]) != 0) return fail(Result::Hardware);
+  }
+  return true;
+}
+bool Controller::deviceReset() {
+  bool low = sip(2, 0, 0);
+  bool stopped = low && write(Hci + 0x34, 0) && wait(0x34, 1, 0, 100000);
+  io_.delay(io_.context, 10);
+  if (!stopped) {
+    // One cleanup release, not a replay. Preserve the first failure/SipStatus.
+    d_.resetCleanup = io_.sip(io_.context, 0xc2000276, 2, 1, 0);
+    if (!d_.resetCleanup) io_.delay(io_.context, 15000);
+    return false;
+  }
+  if (!sip(2, 1, 0)) return false;
+  io_.delay(io_.context, 15000); return true;
+}
+bool Controller::ack(uint32_t mask) {
+  if (!write(Hci + 0x20, mask)) return false;
+  d_.interrupt = read(Hci + 0x20);
+  return d_.interrupt == 0 || fail(Result::Hardware);
+}
+bool Controller::uic(uint32_t opcode, uint32_t attribute, uint32_t &value) {
+  if (d_.failed || !wait(0x30, 8, 8, 500000)) return false;
+  if (d_.value & 0x30) return fail(Result::Hardware);
+  d_.interrupt = read(Hci + 0x20);
+  if (d_.interrupt & ~Uccs) return fail(Result::Hardware);
+  d_.opcode = opcode; d_.uicResult = UINT32_MAX;
+  if (!ack(Uccs) || !write(Hci + 0x94, attribute << 16) || !write(Hci + 0x98, 0) ||
+      !write(Hci + 0x9c, value) || !write(Hci + 0x90, opcode)) return false;
+  bool link = d_.stage == Stage::LinkStartup && opcode == 0x16;
+  for (uint32_t elapsed = 0;; elapsed += 10) {
+    d_.interrupt = read(Hci + 0x20);
+    if (link) {
+      if (d_.interrupt & ~(UicError | Uccs)) return fail(Result::Hardware);
+      d_.linePending |= (d_.interrupt & UicError) != 0;
+    } else if (d_.interrupt & ~Uccs) return fail(Result::Hardware);
+    if (d_.interrupt & Uccs) break;
+    if (elapsed >= 500000) return fail(Result::Timeout);
+    io_.delay(io_.context, 10);
+  }
+  if (link && d_.linePending) {
+    if (d_.lineReset.captured || d_.interrupt != (UicError | Uccs)) return fail(Result::Hardware);
+    capture(d_.lineReset); const auto &s = d_.lineReset;
+    bool isolated = s.interrupt == (UicError | Uccs) && s.hce == 1 && s.hcs != UINT32_MAX &&
+                    (s.hcs & 0x38) == 8 && s.layers[0] == 0x80000010;
+    for (unsigned i = 1; i < 5; ++i) isolated &= s.layers[i] == 0;
+    if (!isolated) { d_.failure = s; return fail(Result::Hardware); }
+    d_.lineAccepted = true;
+  }
+  uint32_t result = read(Hci + 0x98); d_.uicResult = result & 255;
+  if (result == UINT32_MAX) return fail(Result::Hardware);
+  if (d_.uicResult) return fail(Result::Uic);
+  value = read(Hci + 0x9c); if (value == UINT32_MAX) return fail(Result::Hardware);
+  uint32_t mask = Uccs | (link && d_.linePending ? UicError : 0);
+  if (!ack(mask)) return false;
+  d_.lineAcked |= (mask & UicError) != 0; return true;
+}
+bool Controller::dmeRmw(uint32_t attribute, uint32_t mask, uint32_t bits) {
+  uint32_t value = 0; return uic(1, attribute, value) && set(attribute, (value & ~mask) | bits);
+}
+Result Controller::stop() {
+  d_.ready = false;
+  if (!d_.touched) return d_.stop = Result::Stopped;
+  // Do not sample read-clear UIC layers after stop writes have started.
+  Controller q; q.io_ = io_;
+  bool ok = q.write(Hci + 0x24, 0) && q.write(Hci + 0x60, 0) && q.write(Hci + 0x80, 0) &&
+            q.write(Hci + 0x34, 0) && q.wait(0x34, 1, 0, 100000) && q.stoppedQueues(false);
+  if (!ok) {
+    if (!d_.failed) { d_.address = q.d_.faultAddress; d_.value = q.d_.faultValue; fail(q.d_.result, false); }
+    d_.stopped = false; return d_.stop = q.d_.result;
+  }
+  d_.stopped = true; return d_.stop = Result::Stopped;
+}
+Result Controller::start(bool enabled, const void *resources, size_t bytes, const char *token, const Ops &io) {
+  if (!enabled) return Result::Off;
+  if (d_.stopped) return d_.failed ? d_.result : Result::Rejected;
+  if (d_.attempted) return d_.ready ? Result::Ready : d_.failed ? d_.result : Result::Rejected;
+  d_.attempted = true;
+  if (!io.read || !io.write || !io.fence || !io.delay || !io.sip || !resourceValid(resources, bytes) || !tokenValid(token)) {
+    fail(Result::Rejected, false); return d_.result;
+  }
+  io_ = io;
+  uint32_t g0 = read(Ao + 0x104);
+  if (g0 == UINT32_MAX || (g0 & 3)) { fail(g0 == UINT32_MAX ? Result::Hardware : Result::Rejected); return d_.result; }
+  uint32_t g1 = read(Ao + 4);
+  if (g1 == UINT32_MAX || (g1 & 0x11f)) { fail(g1 == UINT32_MAX ? Result::Hardware : Result::Rejected); return d_.result; }
+  if (read(Hci) != 0x55c7051f || read(Hci + 8) != 0x400 || read(Hci + 0x2240) != 0x10470000) {
+    fail(Result::Rejected); return d_.result;
+  }
+  if (!stoppedQueues(true)) goto failed;
+  d_.stage = Stage::Power;
+  if (!sip(512, 0, 0) || !sip(512, 1, 0) || !stoppedQueues(true)) goto failed;
+  d_.stage = Stage::ReferenceClock;
+  { uint32_t ref = read(Hci + 0x144);
+    if (ref == UINT32_MAX) { fail(Result::Hardware); goto failed; }
+    if ((ref & 3) != 3) {
+      if (!sip(8, 1, 0)) goto failed;
+      if (!write(Hci + 0x144, 1) || !wait(0x144, 3, 3, 3000)) {
+        d_.clockCleanup = io_.sip(io_.context, 0xc2000276, 8, 0, 1); goto failed;
+      }
+      io_.delay(io_.context, 32); if (!sip(8, 1, 1)) goto failed;
+    }
+  }
+  d_.stage = Stage::DeviceReset; if (!deviceReset()) goto failed;
+  d_.stage = Stage::HostReset;
+  if (!reset(0x148, 4) || !reset(0x148, 2) || !reset(0x148, 1)) goto failed;
+  io_.delay(io_.context, 100);
+  if (!reset(0x14c, 1) || !reset(0x14c, 2) || !reset(0x14c, 4) || !write(Hci + 0x18, 0) ||
+      !write(Hci + 0x24, 0) || !rmw(0x140, 0, 0x80) || !rmw(0x160, (0x7fffU << 8) | (1U << 28), 0x453000 | (1U << 25))) goto failed;
+  d_.stage = Stage::Hce;
+  if (!write(Hci + 0x34, 1)) goto failed;
+  io_.delay(io_.context, 600);
+  if (!wait(0x34, 1, 1, 50000)) goto failed;
+  { const uint32_t offsets[] = {0x50, 0x54, 0x58, 0x60, 0x70, 0x74, 0x78, 0x80, 0x300};
+    for (uint32_t off : offsets) if (read(Hci + off) != 0) { fail(Result::Busy); goto failed; }
+  }
+  d_.stage = Stage::PreLink;
+  if (!uic(1, 0x15a9, d_.localVersion) || !set(0xd0a8, 0) || !set(0x155e, 0) || !dmeRmw(0xd0a6, 64, 0)) goto failed;
+  d_.stage = Stage::LinkStartup;
+  { uint32_t value = 0; if (!uic(0x16, 0, value) || !wait(0x30, 1, 1, 50000)) goto failed; }
+  d_.stage = Stage::PostLink;
+  if (!dmeRmw(0xd09e, 0, 0x100) || !dmeRmw(0xd0a6, 0, 13) || !dmeRmw(0xd0a1, 32, 0)) goto failed;
+  d_.ready = true; return d_.result = Result::Ready;
+failed:
+  stop(); return d_.result;
+}
+} // namespace dali_ufs

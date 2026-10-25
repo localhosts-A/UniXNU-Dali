@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,8 @@ def compile_source(source, output):
         index += 1
     if not replaced:
         raise SystemExit(f"Could not replace compile-record source {record_source} in {record_path}")
+    command += ["-I", str(ROOT / "build/storage-abi/include"),
+                "-I", str(ROOT / "refer/IOStorageFamily"), "-I", str(ROOT / "drivers/UfsTransport")]
     result = subprocess.run(command, cwd=record_directory, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
     output.with_suffix(output.suffix + ".log").write_text(result.stdout)
@@ -93,15 +96,43 @@ def archive(name, source, destination):
             "archive_sha256": hashlib.sha256(destination.read_bytes()).hexdigest()}
 
 
+def ufs_archive():
+    destination = OUT / "libDaliUfs.a"
+    OUT.mkdir(parents=True, exist_ok=True)
+    objects, entries = [], []
+    for source in (ROOT / "drivers/DaliUfs/DaliUfsPlatform.cpp", ROOT / "drivers/DaliUfs/DaliUfs.cpp"):
+        obj = OUT / (source.stem + ".o")
+        obj.unlink(missing_ok=True)
+        compile_source(source, obj)
+        magic, cpu, _, kind = struct.unpack_from("<4I", obj.read_bytes())
+        if (magic, cpu, kind) != (0xfeedfacf, 0x100000c, 1):
+            raise SystemExit("Dali UFS must contain actual arm64 Mach-O objects")
+        objects.append(obj)
+        entries.append({"source": str(source.relative_to(ROOT)), "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                        "object_sha256": hashlib.sha256(obj.read_bytes()).hexdigest()})
+    destination.unlink(missing_ok=True)
+    subprocess.run(["xcrun", "ar", "rcs", str(destination), *map(str, objects)], check=True)
+    symbols = subprocess.check_output(["xcrun", "nm", "-g", str(destination)], text=True)
+    (OUT / "dali-ufs-symbols.txt").write_text(symbols)
+    for symbol in ("DaliUfs10gMetaClassE", "DaliUfsBlock10gMetaClassE"):
+        if not any(symbol in line and " U " not in line for line in symbols.splitlines()):
+            raise SystemExit(f"Dali UFS archive lacks actual metaclass {symbol}")
+    headers = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in
+               sorted((ROOT / "drivers/DaliUfs").glob("*.h"))}
+    return {"sources": entries, "headers": headers, "archive_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            "physical_ufs_qualified": False, "write_authorized": False}
+
+
 sources = {
     "armdt": (ROOT / "drivers/ArmDTPlatform/ArmDTPlatform.cpp", ROOT / "build/armdt-platform/libArmDTPlatform.a"),
     "armcpu": (ROOT / "drivers/ArmCpu/ArmCpu.cpp", ROOT / "build/armcpu/libArmCpu.a"),
     "dali-log": (ROOT / "drivers/DaliBootLog/DaliBootLog.cpp", OUT / "libDaliBootLog.a"),
 }
 report = {name: archive(name, *pair) for name, pair in sources.items()}
+report["dali-ufs"] = ufs_archive()
 report["xnu_version"] = {"darwin": os.environ["UNIXNU_XNU_DARWIN"], "build": os.environ["UNIXNU_XNU_VERSION"]}
 report["compile_record"] = str(record_path.relative_to(ROOT))
 report["compile_record_sha256"] = hashlib.sha256(record_path.read_bytes()).hexdigest()
 OUT.mkdir(parents=True, exist_ok=True)
 (OUT / "build-report.json").write_text(json.dumps(report, indent=2) + "\n")
-print("PASS: Dali logging, ArmDTPlatform, and ArmCpu archives built")
+print("PASS: Dali logging/UFS, ArmDTPlatform, and ArmCpu archives built")

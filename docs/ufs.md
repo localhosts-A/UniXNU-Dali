@@ -528,7 +528,7 @@ block devices, scratch writes and reboot persistence remain pending.
 
 ## Portable XNU transport foundation
 
-The board now pins generic `7cabc66`, which adds `drivers/UfsTransport` to the
+Generic `7cabc66` added `drivers/UfsTransport` to the
 source-only IOStorageFamily archive. Its CPU and device addresses are separate,
 with checked full-span limits, caller-proven exclusive legacy ownership and
 real platform cache callbacks. The core builds its own UTRD/UPIU/PRDT commands,
@@ -574,6 +574,46 @@ UFS core. Dali resource initialization, kernel DMA allocation, physical
 IOBlockStorageDevice publication, runtime scratch authorization and persistence
 remain pending. Source archive/object hashes were recorded by the build;
 independent binary inspection used the downloaded final kernel and host library.
+
+## Dali XNU read-only adapter implementation
+
+The board pins generic `3e7392b`, preserving the QUERY result byte so discovery
+can distinguish an invalid LUN index from other target failures. All eight
+ordinary LUN indices are probed; geometry comes from the descriptor/capacity
+agreement, without a fixed LUN or logical block size.
+
+`drivers/DaliUfs` now implements the default-disabled controller adapter and
+read-only `IOBlockStorageDevice` nubs. The generated ADT contains its nub only
+with explicit `DALI_XNU_UFS_READ_ONLY=true` or `make-dali-adt.py --ufs-readonly`.
+The builder validates exact saved-FDT resources, all clock/reset references,
+DMA range, supply identities and interrupts before serializing `resources-v1`.
+Its source-FDT digest is provenance from this trusted builder, not runtime
+authentication of a separately supplied FDT. Runtime additionally requires
+`dali-ufs-readonly=1`, early boot, a fresh token, and manual recovery mode.
+
+The worker waits for DaliBootLog's token-bound persisted platform checkpoint
+before hardware access. It verifies the actual kernel SHA wrappers and timer/
+CPU geometry, then uses the fixed controller recipe and its own prepared,
+physically contiguous, below-4-GiB DMA allocation. Explicit copyback memory
+uses bounded `dc civac` before device access and `dc ivac` after device access,
+with `dsb sy`; firmware buffer pointers are never adopted. HCE, both legacy
+doorbells/run bits, IE and MEMCFG must be clear before old base addresses are
+erased. Fixed HCS readiness bits may remain set. MCQCFG configures a maximum;
+its observed `0x1f00` is not an active-request count.
+
+The read-only nubs reject writes and format operations, serialize transport
+access and return one completion. The worker exercises the actual IOMedia read
+interface, records geometry/partition metadata and sample hashes, and sends
+real ordered SYNC(10). Before manual recovery it closes admission, synchronizes
+valid LUNs without replay, stops HCE and verifies stopped queue state. DMA is
+retained on unsafe shutdown; a failed sync also refuses the recovery watchdog.
+These interfaces have no scratch write grant.
+
+Nineteen resource/controller/range tests execute the production validator and
+controller with synthetic FDT/MMIO/SiP. They do not execute IOKit allocation or
+matching. Actual Apple compilation/final linkage, instruction inspection,
+source-only XNU hardware handoff and physical reads remain pending. No new
+phone candidate or token has been used for this adapter.
 
 ## Completion
 

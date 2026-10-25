@@ -10,6 +10,7 @@
 #include "DaliRecovery.h"
 #include "DaliManualRecovery.h"
 #include "DaliPsci.h"
+#include "../DaliUfs/DaliUfsRecovery.h"
 
 #if !defined(DALI_XNU_DARWIN) || !defined(DALI_XNU_BUILD)
 #error "DaliBootLog must be built with the pinned XNU version and build number"
@@ -22,6 +23,16 @@ extern volatile uint32_t armcpu_gic_ready;
 extern volatile uint64_t armcpu_timer_interrupts;
 void dali_bootstrap_log(const char *message);
 void dali_bootstrap_log_end(void);
+}
+
+static unsigned ufsPlatformReady = 0;
+static char ufsPlatformToken[33] = {};
+extern "C" bool dali_ufs_platform_ready(const char *token)
+{
+  return __atomic_load_n (&ufsPlatformReady, __ATOMIC_ACQUIRE) == 1 && token != nullptr &&
+      memcmp (token, ufsPlatformToken, sizeof (ufsPlatformToken)) == 0 &&
+      armdt_platform_configured == 1 && armcpu_registered == 1 &&
+      armcpu_gic_ready == 1 && armcpu_timer_interrupts != 0;
 }
 
 static constexpr uintptr_t kConsolePhysical = 0xAEC0F000;
@@ -147,7 +158,8 @@ static bool manualRecord(IOMemoryMap *console, const char *token, const char *st
   return appendRamoops (console, line, static_cast<size_t> (at - line));
 }
 
-static __attribute__((noinline)) void waitForManualRecovery(IOMemoryMap *console, const char *token)
+static __attribute__((noinline)) void waitForManualRecovery(IOMemoryMap *console, const char *token,
+    bool (*quiesce)(void *) = nullptr, void *owner = nullptr)
 {
   IORegistryEntry *entry = IORegistryEntry::fromPath ("/arm-io/dali-boot-log", gIODTPlane);
   if (entry == nullptr) { return; }
@@ -181,6 +193,7 @@ static __attribute__((noinline)) void waitForManualRecovery(IOMemoryMap *console
   for (;;) {
     IODelay (10000);
     if (!daliManualKeySample (key, (recoveryRead (&pins, 0x210) & (1U << 28)) == 0)) { continue; }
+    if (quiesce && !quiesce(owner)) { manualRecord(console, token, "storage-stop-refused"); return; }
     if (!manualRecord (console, token, "volume-up-requested-watchdog-2s")) { return; }
     recoveryFence (nullptr);
     DaliManualWdtOps ops = {&watchdog, recoveryRead, manualWatchdogWrite, recoveryFence};
@@ -190,6 +203,22 @@ static __attribute__((noinline)) void waitForManualRecovery(IOMemoryMap *console
     // Do not reload or retry. Keep Volume Down held to select LK fastboot.
     for (;;) { __asm__ volatile ("wfe"); }
   }
+}
+
+extern "C" void dali_ufs_wait_for_manual_recovery(const char *token, bool (*quiesce)(void *), void *owner)
+{
+  unsigned mode = 0, automatic = 0, pid1 = 0;
+  char actual[33] = {}, reset[16] = {};
+  PE_parse_boot_argn("dali-ufs-readonly", &mode, sizeof mode);
+  PE_parse_boot_argn("dali-auto-fastboot", &automatic, sizeof automatic);
+  PE_parse_boot_argn("dali-pid1", &pid1, sizeof pid1);
+  if (mode != 1 || automatic || pid1 || !token || !quiesce ||
+      PE_parse_boot_argn("dali-reset-method", reset, sizeof reset) ||
+      !PE_parse_boot_argn("dali-run", actual, sizeof actual) || actual[32] || memcmp(actual, token, 33)) { return; }
+  OSSharedPtr<IOMemoryDescriptor> memory(
+      IOMemoryDescriptor::withPhysicalAddress(kConsolePhysical, kConsoleBytes, kIODirectionInOut), OSNoRetain);
+  OSSharedPtr<IOMemoryMap> console(memory ? memory->map(kIOMapAnywhere | kIOMapInhibitCache) : nullptr, OSNoRetain);
+  if (console) waitForManualRecovery(console.get(), token, quiesce, owner);
 }
 
 static bool recoveryRecord(void *opaque, const char *stage, uint32_t marker, uint32_t mode)
@@ -307,7 +336,7 @@ public:
     // writer here hands ownership over before this service accesses the ring.
     dali_bootstrap_log("DALI:DL IOKit persistent logger entered; mapping console\n");
     if (!IOService::start (provider)) { return false; }
-    unsigned pid1Mode = 0, offline = 0, autoFastboot = 0;
+    unsigned pid1Mode = 0, offline = 0, autoFastboot = 0, ufsMode = 0;
     char resetArgument[16] = {};
     DaliResetMethod resetMethod = DaliResetMethod::Off;
     unsigned resetDelay = 0;
@@ -316,6 +345,8 @@ public:
     PE_parse_boot_argn ("dali-pid1", &pid1Mode, sizeof (pid1Mode));
     PE_parse_boot_argn ("dali-pid1-qemu", &offline, sizeof (offline));
     PE_parse_boot_argn ("dali-auto-fastboot", &autoFastboot, sizeof (autoFastboot));
+    PE_parse_boot_argn ("dali-ufs-readonly", &ufsMode, sizeof (ufsMode));
+    if (ufsMode > 1 || (ufsMode == 1 && (pid1Mode || offline || autoFastboot || qualification))) { return false; }
     if (qualification && (resetArgument[15] != 0 || !daliParseResetMethod (resetArgument, resetMethod) ||
                          autoFastboot != 0 || pid1Mode != 0 || offline != 0 || resetDelay != 5)) { return false; }
     if (pid1Mode > 1 || offline > 1 || (pid1Mode == 1 && autoFastboot != 0)) { return false; }
@@ -393,6 +424,14 @@ public:
     const bool checkpointSaved = appendRamoops (mConsole.get (), line, length);
     IOLog ("%s", line);
     registerService ();
+    // UFS has its own worker. It retains the read-only devices until a physical
+    // key request and stops/synchronizes DMA before arming manual recovery.
+    if (ufsMode == 1) {
+      if (!passed || !checkpointSaved) { return false; }
+      memcpy (ufsPlatformToken, runToken, sizeof (ufsPlatformToken));
+      __atomic_store_n (&ufsPlatformReady, 1, __ATOMIC_RELEASE);
+      return true;
+    }
     if (pid1Mode == 1) {
       if (!passed || !checkpointSaved || !pid1Initialize (mConsole.get (), runToken, false)) { return false; }
       dali_bootstrap_log("DALI:DL continuing to RAM root and PID1; recovery watchdog disabled\n");

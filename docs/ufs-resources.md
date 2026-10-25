@@ -138,6 +138,18 @@ or an active link. They require an initialization path that handles disabled HCI
 
 The pinned MTK implementation supplies the following order and conditional work:
 
+For the XNU takeover, stopped firmware may retain old queue base addresses and
+HCS low-nibble readiness bits. Fixed Linux `include/ufs/ufshci.h:206-212` defines
+those as device-present/list-ready/UIC-ready, not outstanding work. Require
+HCE=0, both legacy doorbells and run bits zero, IE=0 and MEMCFG=0 before clearing
+any old base; never dereference it. `drivers/ufs/core/ufshcd.c:8751-8754` selects
+MCQ with MEMCFG bit 0, while `ufs-mcq.c:27,91-98` uses MCQCFG bits 16:8 for the
+configured maximum active command count. Its nonzero idle value is not a busy
+queue. MTK `ufs-mediatek.c:505-513,545-552` reads vendor state from OTSD's high
+bits; this source does not define the raw `0x410` as an outstanding-request count.
+The new XNU stop also checks the legacy queue and MEMCFG state after HCE clears;
+the fixed Linux `ufshcd_hba_stop:4710-4727` itself only polls HCE disable.
+
 1. Bind the versioned PHY, resolve the three host reset controls, and establish
    clock/power dependencies. Its `mphy-ver=1` path skips version-0 analog writes.
 2. For the live `ufs-rtff-mtcmos` property, issue the documented MTCMOS operations;
