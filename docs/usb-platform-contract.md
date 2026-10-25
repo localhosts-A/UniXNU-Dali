@@ -371,3 +371,43 @@ mixing, ambiguous references, structural corruption and unchanged failure
 output. A separate local invocation also succeeds on the saved live Dali DTB;
 raw ATAG/unused devinfo data is not printed or committed. This qualifies the
 offline acquisition logic, not hardware calibration or a running USB stack.
+
+## Read-only selected clock source rates
+
+`DaliUsbClockRates.c` reads the actual MT6991 USB0 VLP sys/host muxes, TOP frame
+and west-I2C/AXI muxes, APMIXED main/univ PLL configuration/prepared fences and
+IMPW/PERAO physical gate status. USB0 VLP parents are26MHz or mainpll/9
+(`clk-mt6991.c:3378-3385,3885-3898`), distinct from TOP USB1 univpll/20.
+Frame is26MHz or univpll/52 (`:1216-1219,2103-2109`). West-I2C selector
+`TOP+0xc0[18:16]` has26MHz/main32/univ20/main16/univ10 parents
+(`:1237-1243,2125-2131`); APDMA's AXI selector `TOP+0x10[26:24]` has
+26MHz/main56/main40/ULPOSC8/main28/main20/main16/main14 (`:889-898,1872-1876`).
+
+Main/univ CON1 are `APMIXED+0x254/0x268`, PCW22 bits with8 integer bits,
+postdiv `[26:24]`; prepared fences are `+0x3c` bits7/6. The fixed PLL ops
+round VCO upward then round postdiv upward (`clk-pll.c:137-162,287-300`),
+followed by fixed-factor truncation. Only source VCO1.5..3.8GHz is accepted.
+FENC is the source's prepared status, not a PLL lock or measured frequency.
+I2C6 main is IMPW `+0xe00[2]`; DMA shares PERAO `+0x14[26]`, both enabled
+when clear (`clk-mt6991-peri.c:173-206,224-228,383-388`). West mux itself
+also has gate23/fence17. The caller must keep shared sources held; this API
+does not claim exclusive ownership of unrelated I2C/APDMA clients.
+
+Two complete masked snapshots reject observed selector/PCW/gate/status changes,
+CKSTA busy and inconsistent active fences before publishing any
+output. Unknown west indexes, unknown revisions, unprepared selected PLLs and
+invalid PCW fail. ULPOSC/8 requires an independently held proven rate; no520MHz
+DT or OPP-table fallback is used. Rates of gated outputs remain configured
+source rates, with enabled bits reported separately. Both revisions share these
+fields. No PLL/mux/gate writes, source switch or global voter changes occur.
+
+The required validated mappings, reference source and stability lease are still
+platform inputs. Two reads cannot prove a lease or exclude ABA changes. The
+installed UEFI provider must validate graph identities, own/hold resources and
+apply actual consumer rate requirements before use; XNU needs its own adapter.
+Production tests cover all320 parent combinations,32 gate combinations, PLL
+postdiv/rounding, unknown/off sources, transitions, per-read errors and unchanged
+failed output. These are register models, not physical clock qualification.
+CKSTA registers are VLP254/TOP1cc/1c8; `clk-mux.c:511-528` waits their relevant
+bits clear and reports "cksta busy". Separate UPDATE registers are write-command
+locations and are not read as a stability indication by this snapshot API.

@@ -17,6 +17,7 @@
   DaliUsbResources.c
   DaliUsbIppc.c
   DaliUsbCalibration.c
+  DaliUsbClockRates.c
 [Packages]
   MdePkg/MdePkg.dec
   UsbCore/UsbCore.dec
