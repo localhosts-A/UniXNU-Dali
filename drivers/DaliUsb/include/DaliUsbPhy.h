@@ -2,15 +2,10 @@
 #ifndef DALI_USB_PHY_H
 #define DALI_USB_PHY_H
 #include "DaliUsbRepeater.h"
+#include "DaliUsbCalibration.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
-struct dali_xsphy_calibration {
-    /* Validated Dali chosen chipid.sw_ver and real nvmem cells1d4/1d8. Zero
-     * efuse fields mean no software override, not failed acquisition. */
-    uint32_t sw_ver, efuse_1d4, efuse_1d8;
-    bool qualified;
-};
 struct dali_usb_phy {
     struct usb_mmio registers;
     struct dali_repeater_guard guard;

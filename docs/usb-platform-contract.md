@@ -169,6 +169,8 @@ inherited active meter. The qualified provider must supply real chipid.sw_ver
 and nvmem words1d4/1d8; masks f00000/7c00/f8000 produce HSRX term and TX N/P
 calibration. Zero acquired efuse fields preserve hardware values. Missing
 acquisition or unknown clocks never imply zero/default calibration.
+The native read-only acquisition path is now implemented below; installed
+controller use and the reference-clock qualification are still separate gates.
 
 Dali sets reference-clock select, software PLL LPM parameters25/30/30,
 VREF7/FS7 and the revision0 CHP-disable quirk. It has no SoC eye, host or
@@ -325,3 +327,47 @@ status, before/applied-error faults at every operation and repeated reset-cleanu
 errors. MBIST/STS/sleep timeout and cached-stop wake checks retain resources.
 This does not implement or prove the actual guard/IRQ/DMA/provider, platform
 calibration, TCPC role worker or installed UEFI/XNU controller integration.
+
+## Native calibration acquisition from boot FDT
+
+The actual Dali nvmem provider is `mediatek,devinfo`, not a memory-mapped efuse
+driver. Fixed `drivers/nvmem/mtk-devinfo.c:23-25,31-85,99-123` copies
+`/chosen/atag,devinfo` (or `/chosen@0`) into RAM and serves word `reg/4`.
+The unit address in `/efuse@13260000` is not a usable MMIO resource: that node
+has no `reg` and this provider never maps it. USB cells1d4/1d8 select data words
+117/118; the provider's count word precedes the array. No efuse MMIO/SMC access
+is needed or introduced by this acquisition path.
+
+Fixed `phy-mtk-xsphy.c:475-481,1475-1489` consumes five native little-endian
+chipid words. Saved Dali has a20-byte property whose legacy size word is24,
+hardware code1357, revision B0=1; missing data must not become A0=0. The native
+decoder accepts explicit A0/B0 payloads, requires that known Dali format,
+checks119..400 devinfo words and exact `4+count*4` length, and byte-decodes only
+the two required words. Unlike source warnings/unchecked casts, malformed,
+missing, oversized or unknown data is an error. Acquired zero words remain
+valid and preserve inherited analog fields. The structure layout is unchanged;
+its declaration moved from DaliUsbPhy.h to DaliUsbCalibration.h.
+
+UEFI `DaliUsbReadCalibration()` in `UsbPlatformLib` accepts a complete immutable
+aligned snapshot plus accessible size. It verifies enabled MT6991 root/SOC,
+USB0/PHY0 identity and reg/cell shapes, relevant unique phandles and matching
+aliases, exact masks/name order, both cells belonging to one enabled root
+devinfo provider, and chosen properties. Only a fully successful decode changes
+the output. `qualified` covers these calibration inputs, not physical behavior,
+bootloader authenticity, clock/DMA/power or installed OS/controller resources.
+
+Header validation alone is insufficient: libfdt's depthless `next_node` can
+treat a missing final token as normal end. This library requires the pinned
+BaseFdtLib upstream `fdt_check_full` entry (UINTN=size_t ABI), validates the whole
+bounded structure/reservation map before traversal, and has regression cases
+for missing FDT_END and root close despite a valid header. The EDK2 build now
+also builds/checks actual BaseFdtLib fdt_check/FdtLib objects and full-check
+symbol. No Mu source patch or placeholder checker is used.
+
+Host tests execute both actual decoder/binding C and the pinned real libfdt
+parser (only UEFI ABI/API names are mapped). They cover alignment, capacities,
+property lengths/endian/counts, enabled ancestors, masks/names/cells/provider
+mixing, ambiguous references, structural corruption and unchanged failure
+output. A separate local invocation also succeeds on the saved live Dali DTB;
+raw ATAG/unused devinfo data is not printed or committed. This qualifies the
+offline acquisition logic, not hardware calibration or a running USB stack.
