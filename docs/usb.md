@@ -89,9 +89,11 @@ test, and native USB QEMU path remain open gates.
 
 The opt-in profile now selects `XNU_SOURCE_HID_FAMILY` and the fixed public
 IOHIDFamily-2031.120.4 source build. The builder follows the Embedded target's
-source phase, generates its three real IIG bridges, and requires public SDK
-declarations omitted from Apple's source import. It records those SDK header
-hashes and refuses absent inputs. The private FastPath user-client source is
+source phase and generates its three real IIG bridges. The 2031 import and
+Xcode 26.6 public SDK omit generated event declarations; these are now
+separately pinned from Apple's IOHIDFamily-1915.140.3 public source. The builder
+records their hashes and treats compatibility with 2031 as an unpassed compile
+and runtime gate. The private FastPath user-client source is
 absent from the fixed public Git tree; an explicit source port leaves unknown
 client types to the superclass rather than supplying a replacement class.
 This HID build is under CI validation. Actual keyboard/mouse publication and

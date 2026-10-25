@@ -30,6 +30,13 @@ paths = ["msdosfs.kextproj/", "msdosfs.xcodeproj/", "APPLE_LICENSE", "Info-msdos
 required = ["msdosfs.kextproj/msdosfs.kmodproj/msdosfs_vfsops.c", "msdosfs.kextproj/msdosfs.kmodproj/msdosfs_vnops.c", "msdosfs.kextproj/msdosfs.kmodproj/msdosfs_fat.c"]
 
 [[source]]
+name = "IOHIDEventHeaders"
+git = "https://github.com/apple-oss-distributions/IOHIDFamily.git"
+commit = "2365347f5147a1e2a46de21acd08d27fe0906e85"
+paths = ["IOHIDFamily/"]
+required = ["IOHIDFamily/IOHIDEventTypes.h", "IOHIDFamily/IOHIDEventFieldDefs.h", "IOHIDFamily/IOHIDEventStructDefs.h", "IOHIDFamily/IOHIDEventMacroDefs.h"]
+
+[[source]]
 name = "IOStorageFamily"
 git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
 commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
