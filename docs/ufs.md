@@ -148,17 +148,30 @@ the allocator requires WC, with no UC fallback for packed generic descriptors.
 
 The new `UfsHostDxe` connects the controller/DMA components to UfsPassThru,
 ScsiBus, ScsiDisk and PartitionDxe. Its opt-in v4 platform policy rejects
-async/zero-timeout/write/unknown commands and independently checks descriptors,
+async submissions, zero-timeout/write/unknown commands and independently checks descriptors,
 PRDT, ownership, learned geometry and responses at the hardware doorbell.
 Timeouts close submissions and confirm HCE=0 before cleanup; stop failure
 retains buffers. BDS stops, disconnects and releases this diagnostic host before
 the RAM menu. The generic DarwinBoot/XNU handoff is still pending.
 
-119 firmware host tests pass, including 8 wire-policy and 10 production
-PassThru fault tests. Both disabled and enabled AArch64 builds compile, but
-enabled host builds are refused by the existing off/register-probe packaging
-profile. A separate candidate verifier/runner, actual BlockIo read evidence,
-real ScsiDisk sync, scratch writes and hardware DMA qualification remain pending.
+ScsiDisk now obtains forced read-only policy from its actual ExtSCSI parent
+before publishing media. For this v4 parent, both flush interfaces send one
+bounded blocking SYNCHRONIZE CACHE(10) and propagate completion errors. Positive
+ScsiDisk timeouts are capped at three seconds rather than rejecting its normal
+30-second default. Direct ExtSCSI calls ignore Event when NONBLOCKIO is absent.
+
+The read-only diagnostic logs actual root geometry, partition paths and SHA-256
+samples of blocks 0, 1 and LastBlock. Only the observed baseline LUN-2 geometry
+selects the extra boot_b sample, which must match the current candidate's first
+block. Read and flush operations recheck media identity. Flush success also
+requires exactly one new validated device-SYNC completion, excluding a no-op.
+
+142 firmware host tests pass, including 9 wire-policy, 12 production PassThru,
+8 ScsiDisk media/sync, 8 BlockIo diagnostic and 4 host sync-completion tests.
+An enabled AArch64 build compiles these changes; existing off/register-probe
+packaging still refuses enabled physical hosts. A separate candidate verifier/
+runner, actual BlockIo read/sync evidence, scratch writes and hardware DMA
+qualification remain pending.
 
 The current NativeUfs implementation is sheng/SM8550-specific, including LUN 0,
 4 KiB assumptions and board persistence windows. Its command validation and
