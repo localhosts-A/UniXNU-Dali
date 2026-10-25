@@ -345,7 +345,7 @@ and the token remains consumed. It still returned before DMA/media I/O.
 The pinned Linux source identifies PA `0x80000010` as generic/LINERESET. During
 link startup it enables UCCS separately from UIC_ERROR, waits for the UIC result
 and device presence, then reads UECPA before making the HBA operational.
-The controller now has a stricter bounded equivalent for the observed event:
+The controller now has a stricter bounded policy for the observed event:
 only one exact isolated indication after this LINK_STARTUP submission may be
 saved and acknowledged. W1C clears only IS bit 2, preserving simultaneous UCCS;
 the unchanged 500 ms deadline still requires a real UCCS, result zero and then
@@ -354,6 +354,37 @@ preexisting/non-link events, failed ACK, absent completion, nonzero result or
 missing device presence all fail closed, with no command resubmission. Native
 tests include delayed completion, exact-deadline success and completion 10 us
 too late. This event handling has not been hardware-qualified.
+
+The following trial, `run-20261025T111012Z-b67c24a6`, used firmware `67118fc`,
+device `68d3fcc` and generic `2ab7dfd`. It accepted and acknowledged the first
+isolated LINERESET at IS=4/HCS=8. The later first-failure snapshot showed
+IS=`0x404`, HCS=`0xf`, HCE=1, zero UIC arguments and PA=`0x80000010` with the
+other layers zero. UCCS and DEVICE_PRESENT were visible, but the repeated
+indication failed the strict policy; link qualification and DMA/media I/O were
+not reached. The raw console, baseline, candidate and restored Android B/root/
+all 18 original hashes were independently audited. Pending recovery is cleared
+and this token is consumed. The next control change must check the pinned
+source's timing for deferred LINERESET cleanup around command completion;
+these observations do not justify ignoring all UIC errors or replaying writes.
+
+## Storage handoff consumer
+
+The isolated `codex/dali-ufs-handoff` integration uses generic `b54db17` and
+DarwinBoot `fb0e77f`; the current hardware branch's board pins remain unchanged.
+UniXNUPkg defines an optional versioned storage-quiesce protocol. DarwinBoot
+calls all providers after closing boot files/volume and before its final memory
+map. Only exact EFI_SUCCESS permits entry; warnings, malformed providers and
+errors refuse it. EBS retries refresh the map without reopening storage or
+repeating callbacks. Providers must finish requests, synchronize writes, stop
+the controller and revoke DMA, and XNU must establish its own mappings.
+
+Twenty-five generic host tests pass, including seven production-consumer tests.
+The rebuilt AArch64 QEMU fixture verifies a real loader refusal on quiesce
+timeout, then a sealed provider, deliberate first-EBS INVALID_PARAMETER, real
+EBS success and synthetic Mach-O entry. Source/EFI/raw-console hashes and order
+were independently verified. The test provider is excluded from Dali DSC/FDF
+and the current actual FD. This qualifies the consumer flow only: the Dali
+provider's wait/sync/DMA teardown and XNU physical ownership remain pending.
 
 ## Completion
 
