@@ -404,6 +404,25 @@ BlockIo diagnostics and stop boundaries. It adds no hardware reads/commands,
 poll-loop output or media-write permission. If the RAM menu does not appear,
 the last visible line can narrow the failure; it cannot prove completed I/O.
 
+Trial run-20261025T121447Z-db963732 (89524c9/b62596d/2ab7dfd) supplied
+a screen photo with controller result=7/stage=7/fault=0, DMA result=Success,
+connect result=Success, then the BlockIo diagnostic entry without return.
+The photo lacks token/device identity and does not prove a completed read or
+sync. The 120-second observation expired; forced fastboot and original-only
+recovery restored complete original boot_b, Android B/root/all 18 hashes.
+An independent audit rehashed all 18 backup images, copied-photo SHA256,
+candidate/fresh-baseline bindings and ledger, and checked live B/root. Pending
+is cleared and db963732 remains consumed. No raw console survived recovery.
+
+The actual host static link list exposed a definite defect: BaseCryptLibNull's
+Sha256HashAll ASSERTs, and the DEBUG policy deadloops on ASSERT. If the first
+read completed, its following digest would hang there; the photo alone cannot
+establish that exact cause. The correction scopes real BaseCryptLib/OpenSSL
+and dependencies to this host, checks SHA-256(abc) before control writes and
+rejects null/missing/mixed crypto link inputs during physical packaging.
+Runtime/build qualification of the correction is pending; media writes remain
+disabled and physical read/sync/persistence are not qualified.
+
 ## Storage handoff consumer
 
 The isolated `codex/dali-ufs-handoff` integration uses generic `b54db17` and
