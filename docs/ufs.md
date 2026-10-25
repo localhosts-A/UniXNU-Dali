@@ -9,10 +9,12 @@ remain paused.
 
 ## Current qualification
 
-The Android read-only baseline collector and opt-in firmware register snapshot
-are implemented and host-tested, including a complete firmware build.
-No Dali physical UEFI/XNU UFS driver, DMA takeover, scratch writer or cross-reset
-persistence has been qualified. The existing firmware payload remains a RAM disk.
+UEFI physical named-LUN read-only, real device synchronization and diagnostic
+stop passed the `ea82d126` hardware run described below. The source-only storage
+family and DarwinBoot handoff consumer have separate QEMU qualification.
+The new Dali private drain/sync provider is software-tested; it needs a fresh
+candidate and hardware evidence. Physical XNU ownership, scratch writes and
+cross-reset persistence remain unqualified. The boot payload remains a RAM disk.
 
 The 2026-10-25 register-only hardware probe captured one complete fresh-token
 read sequence in the raw console. The source-bound candidate used firmware
@@ -457,8 +459,8 @@ ownership handoff and all three reboot-persistence rounds remain pending.
 
 ## Storage handoff consumer
 
-The isolated `codex/dali-ufs-handoff` integration uses generic `b54db17` and
-DarwinBoot `fb0e77f`; the current hardware branch's board pins remain unchanged.
+The integration now pins generic `b54db17` and DarwinBoot `fb0e77f` in the
+device board configuration. Historical candidates retain their original pins.
 UniXNUPkg defines an optional versioned storage-quiesce protocol. DarwinBoot
 calls all providers after closing boot files/volume and before its final memory
 map. Only exact EFI_SUCCESS permits entry; warnings, malformed providers and
@@ -471,8 +473,32 @@ The rebuilt AArch64 QEMU fixture verifies a real loader refusal on quiesce
 timeout, then a sealed provider, deliberate first-EBS INVALID_PARAMETER, real
 EBS success and synthetic Mach-O entry. Source/EFI/raw-console hashes and order
 were independently verified. The test provider is excluded from Dali DSC/FDF
-and the current actual FD. This qualifies the consumer flow only: the Dali
-provider's wait/sync/DMA teardown and XNU physical ownership remain pending.
+and the previously qualified actual FD. This qualifies the consumer flow only;
+XNU physical ownership remains pending.
+
+Firmware `cffefda` adds the Dali provider. It closes public submissions, drains
+and validates a pending command, then uses its own common DMA page for ordered
+no-data SYNC(10) on each learned valid LUN. Old common pages remain retained.
+Uncertain/failed requests are not replayed. Cleanup still attempts controller
+stop on failure, but releases pages only after HCE=0, PassThru disconnect and
+confirmed protocol absence. The first error remains sticky; successful repeated
+calls do no work and cleanup retries never repeat the sync attempt.
+
+The interface supports BSP callers at TPL_APPLICATION. Admission, drain/stop
+and public submission/DMA callbacks share TPL_NOTIFY; disconnect runs back at
+application TPL so generic Stop can retire its buffers. Reentry and unsupported
+TPLs are refused. The provider is installed whenever physical read-only mode is
+enabled, even before initialization, so a partial failure cannot silently remove
+the handoff gate. The default-off RAM path is preserved.
+
+The 187 firmware host tests include 14 production shutdown/policy/DMA tests and
+10 production-envelope tests. The former simulate hardware with independent
+CPU/device addresses, complete CDB checks, validated read copyback, partial sync,
+timeouts, uncertain doorbells and no replay. The latter stub the shutdown engine
+and UEFI services while executing the real close/TPL/stop/disconnect/release
+functions. They cover HCE still enabled, errors/warnings, reentry and attempts
+to submit after closure. These separate software checks do not qualify the new
+hardware shutdown path or physical XNU handoff. Media writes remain disabled.
 
 ## Completion
 
