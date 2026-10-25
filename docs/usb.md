@@ -28,9 +28,10 @@ and interrupt bitmaps, powers ports, resets new connections, emits child lifecyc
 events, and builds single/multi-TT routes with think-time metadata. Multi-TT hubs
 are explicitly switched to their alternate setting. Its Clang/GCC ASan/UBSan
 models cover port bitmap boundaries through 127 ports, malformed/short/overlong
-responses, power/reset deadlines and wrap, attach retry beyond the reset deadline,
-partial-child cleanup on unplug, disconnect, overcurrent, route-depth limits and
-single/multi-TT. This is protocol code only: the actual
+responses, delayed-control power/reset deadlines and wrap, stop→restart reuse,
+attach retry beyond the reset deadline, partial-child cleanup on unplug,
+disconnect, overcurrent, route-depth limits and single/multi-TT. This is protocol
+code only: the actual
 MMIO controller worker, child-service owner, XNU IOHIDDevice/IOBlockStorageDevice
 publication and Dali DMA resources remain separate.
 
