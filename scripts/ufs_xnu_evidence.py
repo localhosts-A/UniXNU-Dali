@@ -86,8 +86,9 @@ def score_xnu_readonly(text, token, baseline, candidate):
         sha = exact('sha-pass', (0, 0, 0))
         checkpoints = [(i, line) for i, line in enumerate(raw) if line.startswith('DALI-XNU: ') and ' run=' + token + ' ' in line]
         checkpoint = (r'DALI-XNU: darwin=[0-9.]+ build=[0-9.]+ run=' + token +
-                      r' bootarg=1 registered=1 platform=1 gic=1 timer=([1-9][0-9]*) mpidr=0x0 checkpoint=PASS')
-        if len(checkpoints) != 1 or checkpoints[0][0] >= sha[4] or not re.fullmatch(checkpoint, checkpoints[0][1]):
+                      r' bootarg=1 registered=1 platform=1 gic=1 timer=([1-9][0-9]*) mpidr=0x([0-9a-f]{1,16}) checkpoint=PASS')
+        platform = re.fullmatch(checkpoint, checkpoints[0][1]) if len(checkpoints) == 1 else None
+        if not platform or checkpoints[0][0] >= sha[4] or int(platform[2], 16) & 0xff00ffffff or int(platform[1]) > geometry.UINT64_MAX:
             raise ValueError('missing successful platform checkpoint before hardware')
         exact('controller', (7, 7, 0))
         dma = take('dma')

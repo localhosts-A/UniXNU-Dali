@@ -62,6 +62,12 @@ class XnuEvidenceTests(unittest.TestCase):
         self.assertTrue(self.score(trace(baseline),baseline=baseline)['xnu_read_only_pass'])
         self.assertFalse(self.score(candidate=b'X'*8192)['xnu_read_only_pass'])
         self.assertFalse(self.score(candidate=b'X')['xnu_read_only_pass'])
+    def test_platform_affinity_mask_matches_real_mpidr_not_only_literal_zero(self):
+        log=trace(self.baseline)
+        for mpidr in ('0','80000000','1000000','81000000'):
+            self.assertTrue(self.score(log.replace('mpidr=0x0','mpidr=0x'+mpidr))['xnu_read_only_pass'])
+        for mpidr in ('1','100','10000','100000000','ffffffffffffffff'):
+            self.assertFalse(self.score(log.replace('mpidr=0x0','mpidr=0x'+mpidr))['xnu_read_only_pass'])
     def test_platform_sha_controller_and_full_dma_bounds_are_required(self):
         log=trace(self.baseline)
         for old,new in (('checkpoint=PASS','checkpoint=FAIL'),('registered=1','registered=2'),

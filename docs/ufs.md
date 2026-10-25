@@ -625,7 +625,7 @@ adapter. It reuses the raw-CRC-checked Android baseline, compares actual LUN
 geometry, all baseline partition identities/names/ranges, both GPT header hashes
 and the current candidate's boot_b block. It also requires the successful
 platform checkpoint before hardware, real-path sync counters and stopped-DMA
-reports. Eight synthetic negative/positive tests cover stale/mixed/incomplete
+reports. Nine synthetic negative/positive tests cover stale/mixed/incomplete
 records, both block sizes, failed sync/stop, metadata framing and repeated stop.
 Device identity and the actual source/kernel/ADT/FD binding remain obligations
 of a future dedicated runner. Text scoring does not grant writes or qualify
