@@ -122,6 +122,7 @@ jobs:
             ${{ runner.temp }}/dali-ufs-transport-qemu/report.json
             ${{ runner.temp }}/dali-ufs-transport-qemu/qemu.log
             ${{ runner.temp }}/dali-ufs-transport-qemu/disk.raw
+            ${{ runner.temp }}/dali-ufs-transport-qemu/transport.so
             ${{ runner.temp }}/dali-ufs-transport-qemu/sources
           if-no-files-found: warn
           retention-days: 1

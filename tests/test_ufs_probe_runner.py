@@ -174,7 +174,8 @@ class CollectionTests(unittest.TestCase):
 
 class LifecycleTests(unittest.TestCase):
     def setup_trial(self, temp, *, dry_run=False):
-        root = Path(temp)
+        # Match CLI path normalization, including macOS /var -> /private/var.
+        root = Path(temp).resolve()
         backup = root / 'backup'
         backup.mkdir()
         (backup / 'runtime.dtb').write_bytes(b'saved-fdt')
