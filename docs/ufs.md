@@ -12,8 +12,8 @@ remain paused.
 UEFI physical named-LUN read-only, real device synchronization and diagnostic
 stop passed the `ea82d126` hardware run described below. The source-only storage
 family and DarwinBoot handoff consumer have separate QEMU qualification.
-The new Dali private drain/sync provider is software-tested; it needs a fresh
-candidate and hardware evidence. Physical XNU ownership, scratch writes and
+The Dali private drain/sync provider passed a subsequent BDS-invoked hardware
+trial, described below. Physical XNU ownership, scratch writes and
 cross-reset persistence remain unqualified. The boot payload remains a RAM disk.
 
 The 2026-10-25 register-only hardware probe captured one complete fresh-token
@@ -498,7 +498,32 @@ timeouts, uncertain doorbells and no replay. The latter stub the shutdown engine
 and UEFI services while executing the real close/TPL/stop/disconnect/release
 functions. They cover HCE still enabled, errors/warnings, reentry and attempts
 to submit after closure. These separate software checks do not qualify the new
-hardware shutdown path or physical XNU handoff. Media writes remain disabled.
+hardware shutdown path or physical XNU handoff by themselves. Media writes remain disabled.
+
+## Qualified Dali private sync and stop
+
+Run `run-20261025T134202Z-4d77705d` used the sealed firmware `cffefda`, device
+`38ab920` and generic `b54db17` / DarwinBoot `fb0e77f` candidate. The runner
+exited 0. Its 49,877-byte raw console SHA256 is
+`f82f14dd814205d8990cfe49c519f1e1315f9c2efbf3caeb5ac822dc1f75fca2`.
+The new provider reports `closed=1 drained-synced=1 mask=7 commands=3
+result=Success`, then quiesce succeeds with HCE=0. The phone reaches the RAM
+menu and returns to firmware. This exercises the actual private owned-page
+SYNC(10) and stop/disconnect/DMA-release path through BDS.
+
+Independent inspection recomputed reciprocal GPT CRCs, all 96 partition
+geometry/GUID records, LUN-2 header/current-candidate samples and sync/stop
+ordering. The 96 partition teardown flushes are expected refusals after public
+admission closes; they must not be counted as device sync successes. Private
+sync completes before stop/disconnect. The complete original boot_b was
+restored, Android B/root/all 18 hashes passed, and all 18 backup image bytes
+were independently rehashed. Pending restore is cleared; this token is consumed.
+
+The current board's firmware pin advances to an evidence-only commit after
+`cffefda`; it does not change the code exercised by this run. Its candidate
+retains the original three pins. Qualification is limited to the BDS-invoked
+provider: the complete DarwinBoot-to-XNU physical ownership transfer, XNU
+block devices, scratch writes and reboot persistence remain pending.
 
 ## Completion
 
