@@ -459,8 +459,9 @@ ownership handoff and all three reboot-persistence rounds remain pending.
 
 ## Storage handoff consumer
 
-The integration now pins generic `b54db17` and DarwinBoot `fb0e77f` in the
-device board configuration. Historical candidates retain their original pins.
+The handoff consumer was integrated at generic `b54db17` and DarwinBoot
+`fb0e77f`. Historical candidates retain their original pins; the current board
+also includes the portable transport foundation described below.
 UniXNUPkg defines an optional versioned storage-quiesce protocol. DarwinBoot
 calls all providers after closing boot files/volume and before its final memory
 map. Only exact EFI_SUCCESS permits entry; warnings, malformed providers and
@@ -524,6 +525,38 @@ The current board's firmware pin advances to an evidence-only commit after
 retains the original three pins. Qualification is limited to the BDS-invoked
 provider: the complete DarwinBoot-to-XNU physical ownership transfer, XNU
 block devices, scratch writes and reboot persistence remain pending.
+
+## Portable XNU transport foundation
+
+The board now pins generic `7cabc66`, which adds `drivers/UfsTransport` to the
+source-only IOStorageFamily archive. Its CPU and device addresses are separate,
+with checked full-span limits, caller-proven exclusive legacy ownership and
+real platform cache callbacks. The core builds its own UTRD/UPIU/PRDT commands,
+checks UnitDescriptor and SCSI capacity together, supports actual 512/4096-byte
+geometry and READ/WRITE(10)/(16), and sends an ordered device SYNC(10).
+
+Writing defaults to denial. An external platform grant must bind device,
+candidate, source, token, LUN, geometry and scratch; it is checked before copying
+and again before submission. Dali does not yet implement that grant. Partial
+operations, malformed completion, cache failure and uncertain requests poison
+the transport without automatic replay. Only a completed reset UNIT ATTENTION
+permits bounded TEST UNIT READY retries. Exposed DMA remains quarantined until
+close and an observed HCE=0.
+
+All 41 generic host tests pass, including 15 tests compiling the production
+transport. The QEMU UFS model verifies LUN 2, 4096-byte capacity, 4 KiB and
+128 KiB reads, rejected writes, one permitted block write, real synchronization
+and readback. The entire synthetic disk changes only at the permitted block.
+Evidence includes frozen compiled sources, before/after source hashes, library
+hash, submitted UPIUs and completed response bytes. Qtest copies host memory
+to guest DMA; these results do not qualify ARM cache maintenance or XNU DMA.
+
+The source builder requires the transport ABI symbol in both the actual archive
+and final kernel, and rejects source/header changes after compilation. Actual
+Apple toolchain compilation and final linking of this addition still require
+the workflow run. Dali resource initialization, kernel DMA allocation, physical
+IOBlockStorageDevice publication, runtime scratch authorization and persistence
+remain pending. The workflow records the QEMU model evidence separately.
 
 ## Completion
 

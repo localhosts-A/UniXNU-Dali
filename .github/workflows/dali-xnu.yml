@@ -106,6 +106,26 @@ jobs:
           brew install cmake ninja unifdef llvm lld qemu
           printf '%s\n' "$(brew --prefix llvm)/bin" "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
+      - name: Test portable UFS commands against the QEMU model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU/scripts/test-ufs-transport-qemu.py" \
+            --output "$RUNNER_TEMP/dali-ufs-transport-qemu"
+
+      - name: Upload portable UFS command evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-ufs-transport-qemu
+          path: |
+            ${{ runner.temp }}/dali-ufs-transport-qemu/report.json
+            ${{ runner.temp }}/dali-ufs-transport-qemu/qemu.log
+            ${{ runner.temp }}/dali-ufs-transport-qemu/disk.raw
+            ${{ runner.temp }}/dali-ufs-transport-qemu/sources
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Test device runner and actual XNU entry instructions
         shell: bash
         run: |
