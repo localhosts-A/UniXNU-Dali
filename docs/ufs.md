@@ -423,6 +423,38 @@ rejects null/missing/mixed crypto link inputs during physical packaging.
 Runtime/build qualification of the correction is pending; media writes remain
 disabled and physical read/sync/persistence are not qualified.
 
+## First qualified UEFI physical read-only diagnostic
+
+Run `run-20261025T123844Z-ea82d126` used firmware `1746ed7`, device
+`9067ecc` and generic `2ab7dfd`. The actual final-FD SHA function had passed
+five direct ARM64 QEMU cases before this trial. The phone returned to the RAM
+menu; the operator selected the firmware return and entered fastboot.
+The 49,836-byte raw console SHA256 is
+`d98c337f798fb81cd3534369f837d2aed58769b7e065552bd26884cf33635b56`.
+
+The trace reports successful controller initialization, 3 read-only roots,
+96 GPT partitions, 10 samples and actual SYNC(10) completions for LUNs 0/1/2,
+then successful diagnostic stop with HCE=0. LUN 2 has 4096-byte blocks and
+64,577,536 blocks; its complete partition geometry/GUID set and both GPT header
+hashes match the fresh Android baseline. Its boot_b sample matches the actual
+candidate rather than original Android. Contents of LUNs 0/1 have no Android
+baseline qualification; their geometry/read/sync observations remain distinct.
+
+The original runner exited 2 because its scorer incorrectly required UPIU task
+tag zero. Actual PassThru increments a UINT8 tag for each command, independently
+of transfer slot zero; the observed sync tags were 92/96/101. The corrected
+offline parser accepts only tags 0..255 while retaining exact completion-count,
+LUN/opcode/order/GPT/hash/stop checks. A new regression covers nonzero and
+out-of-range tags. Rescoring the hash-verified original raw capture passed;
+the original failure JSON remains preserved, with the correction in separate
+offline-rescore and independent-audit records. No reflash was needed.
+
+Independent verification also rehashed all 18 backup images, compared restored
+partition hashes, checked candidate/fresh-baseline bindings, live Android B/root
+and cleared pending/consumed-token state. UEFI named-LUN read-only, true sync
+and diagnostic stop are qualified. Physical XNU, writable scratch, firmware/XNU
+ownership handoff and all three reboot-persistence rounds remain pending.
+
 ## Storage handoff consumer
 
 The isolated `codex/dali-ufs-handoff` integration uses generic `b54db17` and

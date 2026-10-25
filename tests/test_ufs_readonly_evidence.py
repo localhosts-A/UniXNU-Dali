@@ -135,6 +135,15 @@ class ReadOnlyEvidenceTests(unittest.TestCase):
         self.assertEqual(out['pre_diagnostic_syncs'], {2: 2})
         self.assertFalse(self.score(log.replace('opcode=91 count=3', 'opcode=91 count=4'))['uefi_read_only_pass'])
 
+    def test_task_tag_is_an_eight_bit_identifier_independent_of_hardware_slot(self):
+        log = trace(self.baseline)
+        for tag in (0, 1, 92, 255):
+            with self.subTest(tag=tag):
+                self.assertTrue(self.score(log.replace('tag=0', f'tag={tag}'))['uefi_read_only_pass'])
+        for tag in ('-1', '256', '65536', 'ff', '18446744073709551616'):
+            with self.subTest(tag=tag):
+                self.assertFalse(self.score(log.replace('tag=0', f'tag={tag}', 1))['uefi_read_only_pass'])
+
     def test_old_duplicate_truncated_reordered_unknown_and_count_mismatch_fail(self):
         log = trace(self.baseline)
         rows = log.splitlines()

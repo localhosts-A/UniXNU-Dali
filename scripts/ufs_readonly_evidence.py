@@ -104,8 +104,12 @@ def score_readonly(text, token, baseline, candidate):
         counters = {}
 
         def sync_completion():
-            m = take(r'@SYNC_COMPLETE lun=([0-7]) tag=0 opcode=(35|91) count=(\d+)')
-            lun, count = int(m[1]), int(m[3])
+            # UPIU task tags are 8-bit command identifiers, independent of the
+            # one exposed hardware slot. The producer advances them normally.
+            m = take(r'@SYNC_COMPLETE lun=([0-7]) tag=(\d+) opcode=(35|91) count=(\d+)')
+            lun, tag, count = int(m[1]), int(m[2]), int(m[4])
+            if tag > 255:
+                raise ValueError('device SYNC task tag exceeds its UPIU field')
             geometry.natural(count, 'SYNC count', positive=True)
             if count != counters.get(lun, 0) + 1:
                 raise ValueError('device SYNC count is not the next validated completion')
