@@ -1,11 +1,12 @@
 # Native USB2 host engine
 
 The isolated USB board now pins firmware
-2c5079a7b2f9ba2a56f9be0ee4cc236f4c9d2cc4. This checkpoint adds native-only
-MTK USB2 periodic endpoint scheduling to DaliUsbNativeHostLib. It compiles the
-actual Mu transfer/register/schedule/memory source, owns the HC lifecycle and
-publishes a standard USB2 HC/path pair. Default board USB remains disabled; no
-UFS or kernel profile changed.
+a3b00646730a9ffa756dccaef261aad4cead8f3c. This checkpoint carries forward
+native-only MTK USB2 periodic endpoint scheduling and adds EDK2 source-hub
+activation of a valid high-speed multi-TT alternate setting. The host library
+compiles actual Mu transfer/register/schedule/memory source, owns the HC
+lifecycle and publishes a standard USB2 HC/path pair. Default board USB remains
+disabled; no UFS or kernel profile changed.
 
 The engine checks capabilities and explicit USB2 ports, selects supported
 4 KiB HC pages, verifies complete schedules before running, and retains queues
@@ -26,10 +27,14 @@ Actual board source/power/electrical/shared ownership and real DMA mapping
 remain external qualifications. The native-only MTK post-short-transfer event
 filter and USB2 high-speed/TT interrupt bandwidth scheduler are implemented and
 source-model tested. ESIT saturation, 32/64-bit endpoint contexts, TT admission,
-Y6 avoidance and reservation rollback pass Clang/GCC sanitizer tests. Multi-TT
-is activated only after interface protocol 2 is successfully selected; the
-source UsbHub class still leaves alt 0 active and does not select alt 1. The
-model does not exercise the hardware Configure Endpoint command path.
+Y6 avoidance and reservation rollback pass Clang/GCC sanitizer tests. For a
+high-speed multi-TT hub, UsbHubDxe now selects validated interface alternate
+setting 1 / protocol 2 before port power or hub-interrupt submission; missing or
+invalid alt 1 keeps single-TT mode. The selector fixture compiles the actual
+Mu source, and the actual EDK2 archive checks its definition and UsbHub caller.
+No test yet executes a Configure Endpoint failure after the hub accepted alt 1.
+The native host fail-stops on that command error and does not attempt an
+automatic alt0 rollback through uncertain context.
 The loader must call PrepareHandoff before the final memory map and refuse
 failed halt; this DarwinBoot wiring is still pending. Native-path QEMU,
 CDC/platform role integration and source-only XNU work are also pending.
