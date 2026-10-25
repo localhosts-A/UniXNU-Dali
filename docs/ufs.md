@@ -128,12 +128,11 @@ first-failure diagnostics, poisoned failure state and idempotent controller
 stop. TI reset writes use the source driver's masked read/modify/write rather
 than assume W1S semantics. Eleven tests execute the production C with simulated
 MMIO/SiP, including stale completion, timeout and failed-stop cases.
-The core is not called by the boot or register-probe path yet. It has no DMA
-buffers, SCSI commands or physical-media qualification; the host-controller
-adapter and device commands remain to be implemented; the mapping component
-described below still needs that integration.
+The default-disabled physical-host diagnostic now calls this core after BDS
+prepares the live FDT. The register-only probe remains separate. This integration
+has no physical-media or DMA qualification yet.
 
-`Mt6991UfsDmaLib` now supplies the private DMA ownership component: strictly UC
+`Mt6991UfsDmaLib` supplies the private DMA ownership component: Normal Non-cacheable
 pages, owned common-buffer mappings, separate data bounce pages, checked full
 spans and mapping IDs, serialized submission/completion, and quarantine after
 an uncertain request. Every release entry refuses poisoned memory until HCE=0
@@ -142,10 +141,24 @@ records for safe retry. The UEFI backend uses GCD/Cpu protocols and restores the
 complete original attributes; it does not program an IOMMU or use the platform's
 default coherent DmaLib. The initial DMA address window is below 4 GiB within
 the declared 64 GiB bus window; its 4096-byte allocation pages do not define
-the device's logical block size. Thirteen native fault-injection tests execute
-the actual core and backend with mocked UEFI services. It is included for build
-validation but not called by boot yet; host-protocol/PassThru integration and
-physical DMA validation are still pending.
+the device's logical block size. Fourteen native fault-injection tests execute
+the actual core and backend with mocked UEFI services. This pinned AArch64
+CpuDxe maps EFI_MEMORY_WC to Normal Non-cacheable and UC to Device memory;
+the allocator requires WC, with no UC fallback for packed generic descriptors.
+
+The new `UfsHostDxe` connects the controller/DMA components to UfsPassThru,
+ScsiBus, ScsiDisk and PartitionDxe. Its opt-in v4 platform policy rejects
+async/zero-timeout/write/unknown commands and independently checks descriptors,
+PRDT, ownership, learned geometry and responses at the hardware doorbell.
+Timeouts close submissions and confirm HCE=0 before cleanup; stop failure
+retains buffers. BDS stops, disconnects and releases this diagnostic host before
+the RAM menu. The generic DarwinBoot/XNU handoff is still pending.
+
+119 firmware host tests pass, including 8 wire-policy and 10 production
+PassThru fault tests. Both disabled and enabled AArch64 builds compile, but
+enabled host builds are refused by the existing off/register-probe packaging
+profile. A separate candidate verifier/runner, actual BlockIo read evidence,
+real ScsiDisk sync, scratch writes and hardware DMA qualification remain pending.
 
 The current NativeUfs implementation is sheng/SM8550-specific, including LUN 0,
 4 KiB assumptions and board persistence windows. Its command validation and
