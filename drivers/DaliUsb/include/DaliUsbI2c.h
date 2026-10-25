@@ -25,6 +25,8 @@ int dali_i2c6_timing_400k(uint32_t parent_hz, struct dali_i2c6_timing *);
 /* Zeroed persistent object, serialized worker; qualified requires validated
  * Dali FDT, exclusive WHOLE I2C6@13170000/APDMA@16410000 ownership (all remote
  * clients stopped), native MMIO, main/dma clocks and GPIO104/105 I2C pin states.
+ * DaliUsbI2cPins reports inherited MODE/EH/electrical fields but is not itself
+ * a persistent exclusion lease or proof of the board's electrical policy.
  * Only channel0/open-drain/stretching is supported, matching saved Dali FDT.
  * Reject active/foreign status before any writes. Retain partial-init context.
  * APDMA local reset follows the reference, but this FIFO-only driver never

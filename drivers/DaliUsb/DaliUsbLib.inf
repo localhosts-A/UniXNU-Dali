@@ -13,6 +13,7 @@
   DaliUsbNxpRepeater.c
   DaliUsbGpio.c
   DaliUsbI2c.c
+  DaliUsbI2cPins.c
   DaliUsbPhy.c
   DaliUsbDomains.c
   DaliUsbResources.c

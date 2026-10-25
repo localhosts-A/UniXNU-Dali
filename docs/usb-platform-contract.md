@@ -598,3 +598,47 @@ guard failures and EBS during acquisition/release. Saved Dali FDT validation and
 the AArch64 archive/full firmware builds are separate gates. Models establish
 software ordering only; physical power, external-writer exclusion, source-clock
 hold, I2C pins, DMA and native controllers remain unqualified.
+
+## Native I2C6 pin/reset discovery and inspection
+
+The native resource context now validates the exact MT6991 pinctrl register/name
+order, its self-referencing GPIO range, I2C6 GPIO104/105/channel0/open-drain and
+stretching configuration, and the enabled NXP4f reset graph. Reset enable and
+disable states must each contain one GPIO72 mode0 group with the declared high
+or low output. Additional unimplemented pinconf actions are refused; no reset
+state or pinctrl action is applied by this discovery or inspection path.
+
+Revision3 appends copied I2C resources and ReadI2cPins to the existing protocol;
+revision2 VUSB methods and the status prefix retain their ABI. Four additional
+CPU pages cover GPIO1002d000, IOCFG_LB2 13110000 and only the first4KiB of the
+I2C13170000/APDMA16410000 windows, for nine total unique pages with the five
+clock pages. Full FDT ranges remain descriptive, not extra mapped/access
+permission. GPIO's initial platform MMIO resource HOB leaves GCD ownership null;
+the context rechecks and claims that page using the same ownership/attribute/
+cache-maintenance/retained-failure rules as the other pages.
+
+Explicit BSP/application inspection requires a guard proving the GPIO/IOCFG
+blocks are powered and excluding pin writers throughout the call. It reads only
+the two MODE nibbles and their actual EH, IES, SMT, PU/PD, DRV and RSEL fields,
+with native device MMIO/fences and two masked captures. Both MODE values must be
+1. Each three-bit EH field must have bit0 set; the upper two drive bits may be
+nonzero, matching mtk_eh_ctrl's read/OR1/write behavior. The source does not
+establish unique IES/SMT/pull/drive/resistance settings; these are reported as
+inherited values without inventing an electrical policy.
+
+The guard is checked before and after capture; reentry shares the native
+context's serialization gate, and TPL/guard/change/EBS errors leave caller output
+unchanged. EBS during an MMIO callback suppresses the snapshot and prevents new
+register accesses. Entry still performs no register read, pin write, I2C transfer
+or power operation. The BSP-only contract does not authorize parallel AP calls
+or concurrent ExitBootServices from another execution context.
+
+Production-C models cover256 mux values,64 EH pairs, each binary electrical
+field combination, all drive/resistance codes,34 individual masked changes,
+unrelated neighbor changes and all18 callback read failures. Actual DXE/FDT
+tests cover graph mutations, real saved DTB, partial/inherited/foreign CPU
+mappings, guard failures, reentry, unsupported TPL and EBS before/after capture
+or during every read. Two snapshots cannot detect transient/ABA changes or
+replace a persistent writer-exclusion lease. Native source/power/bus exclusion
+policy, electrical suitability, runtime I2C/repeater composition, DMA and
+controllers still require separate implementation and qualification.
