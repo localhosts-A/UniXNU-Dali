@@ -612,8 +612,9 @@ These interfaces have no scratch write grant.
 Nineteen resource/controller/range tests execute the production validator and
 controller with synthetic FDT/MMIO/SiP. They do not execute IOKit allocation or
 matching. Actual Apple compilation/final linkage, instruction inspection,
-source-only XNU hardware handoff and physical reads remain pending. No new
-phone candidate or token has been used for this adapter.
+and the preserved QEMU baseline passed the CI below; source-only XNU hardware
+handoff and physical reads remain pending. No new phone candidate or token has
+been used for this adapter.
 
 The first actual Apple CI `40210052707` stopped at a C++ type error in partition
 traversal: the iterator returns OSObject, while recursion needs IORegistryEntry.
@@ -630,6 +631,33 @@ records, both block sizes, failed sync/stop, metadata framing and repeated stop.
 Device identity and the actual source/kernel/ADT/FD binding remain obligations
 of a future dedicated runner. Text scoring does not grant writes or qualify
 the complete firmware-to-XNU handoff or persistence.
+
+CI [`40211101567`](https://github.com/localhosts-A/UniXNU-Dali/actions/runs/40211101567)
+passed with device `1a92efa`, generic `3e7392b` and firmware `b502bdf`: actual
+Apple compilation and final kernel linkage, one-core baseline, both RAM storage
+runtime cases and the independent QEMU UFS model. Device `6aab1f2` subsequently
+fixes only the host evidence parser's MPIDR mask and its tests; driver code and
+build inputs are unchanged. All 117 device tests and 42 generic tests pass.
+
+The final kernel SHA256 is
+`0d6af093edb455a72f56a9875a7dc091ba519d38dc1b21ba14f507dbc30200ff`.
+Independent verification downloaded all five artifact archives and checked their
+GitHub digests. It rehashed both production objects, each archive member, the
+complete `libDaliUfs.a` (SHA256
+`9f4971e56e62f37fcca7844e83f3d5799ef65bceb9f824c9fc433b4c2fca831f`),
+source/header bindings and actual final kernel. Its disassembly confirms both
+cache operations with barriers, SMC argument setup, acquire/release checkpoint
+operations, the controller/allocation/transport calls, and sync/stop/release
+calls. The actual device-sync CDB is `35000000000000000000` with IMMED clear.
+
+Both raw RAM checkpoint reports match this kernel's real call target, return
+stack and complete results `0x315346000001007f` / `0x315346000002000f`. The
+separate arm64 QEMU UFS library matches its compiled snapshot and pinned source;
+all 12 raw response pairs and the complete synthetic disk were checked, with
+only block 64 changed. Private evidence is `dali-ufs-platform-ci-40211101567`.
+The RAM fixture does not invoke the physical Dali adapter. These checks qualify
+source build/link and software behavior, without qualifying MT6991 DMA/cache,
+physical XNU media, the full firmware handoff, scratch writing or persistence.
 
 ## Completion
 
