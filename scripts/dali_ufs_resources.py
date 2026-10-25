@@ -4,7 +4,9 @@ This is a resource contract, not DMA/coherency or write authorization. Keep the
 on-device HCI/IP/queue checks in DaliUfsPlatform as well. No device is contacted.
 """
 import hashlib
+import json
 import struct
+import uuid
 
 HCI = '/soc/ufshci@16810000'
 PHY = '/soc/ufsphy@16800000'
@@ -16,6 +18,8 @@ CLOCK_NAMES = ('ufs_sel', 'ufs_sel_min_src', 'ufs_sel_max_src', 'ufs_fde',
                'unipro_rx_sym1', 'unipro_sys', 'unipro_sap', 'ufs_phy_sap', 'ufshci_ufs', 'ufshci_aes')
 RESOURCE_WORDS = (0x31534655494c4144, 1, 0x16810000, 0x2a00, 0x168a0000, 0x1000,
                   0x16800000, 0x10000, 0x10000000, 0x800, 0, 0x1000000000, 1, 7, 14, 7)
+SCRATCH_GRANT_MAGIC = b'DALIUFSW'
+SCRATCH_GRANT_BYTES = 224
 
 
 def resource_contract(tree, raw_fdt):
@@ -96,3 +100,96 @@ def resource_contract(tree, raw_fdt):
     irq = tuple(value for n in (320, *range(329, 337)) for value in (0, n, 4, 0))
     cells(HCI, 'interrupts', irq)  # Inventory only. The initial driver polls, IE=0.
     return struct.pack('<16Q', *RESOURCE_WORDS) + hashlib.sha256(raw_fdt).digest()
+
+
+def encode_scratch_grant(document):
+    """Encode an explicit host-authorized grant for the XNU scratch test path.
+
+    This validates the grant's shape only. A scratch runner must independently
+    bind the finished candidate, source, device baseline and fresh token before
+    injecting this wire value; the encoder alone does not authenticate provenance.
+    """
+    if isinstance(document, (str, bytes, bytearray)):
+        try:
+            document = json.loads(document)
+        except (UnicodeError, json.JSONDecodeError):
+            raise ValueError('scratch grant is not valid JSON') from None
+    if not isinstance(document, dict):
+        raise ValueError('scratch grant must be a JSON object')
+    if document.get('profile') != 'boot-b-scratch-write-test-v1' or document.get('write_authorized') is not True:
+        raise ValueError('scratch grant is not explicitly authorized for the boot_b test profile')
+    if document.get('media_writes') is not True:
+        raise ValueError('scratch grant must explicitly enable media writes')
+
+    def integer(key, *, positive=False):
+        value = document.get(key)
+        if type(value) is not int or value < int(positive) or value > (1 << 64) - 1:
+            raise ValueError('invalid scratch grant field: ' + key)
+        return value
+
+    def digest(key):
+        value = document.get(key)
+        if not isinstance(value, str) or len(value) != 64 or value.lower() != value:
+            raise ValueError('invalid scratch grant digest: ' + key)
+        try:
+            raw = bytes.fromhex(value)
+        except ValueError:
+            raise ValueError('invalid scratch grant digest: ' + key) from None
+        if len(raw) != 32 or not any(raw):
+            raise ValueError('zero/invalid scratch grant digest: ' + key)
+        return raw
+
+    token = document.get('token')
+    if not isinstance(token, str) or len(token) != 32 or token.lower() != token:
+        raise ValueError('invalid scratch grant token')
+    try:
+        token_bytes = bytes.fromhex(token)
+    except ValueError:
+        raise ValueError('invalid scratch grant token') from None
+    if len(token_bytes) != 16:
+        raise ValueError('invalid scratch grant token')
+
+    device = digest('device_binding_sha256')
+    candidate = digest('candidate_sha256')
+    source = digest('source_sha256')
+    guid_text = document.get('partition_guid')
+    if not isinstance(guid_text, str) or guid_text.lower() != guid_text:
+        raise ValueError('invalid scratch grant partition GUID')
+    try:
+        guid = uuid.UUID(guid_text)
+    except (ValueError, AttributeError):
+        raise ValueError('invalid scratch grant partition GUID') from None
+    if str(guid) != guid_text or guid.int == 0:
+        raise ValueError('invalid scratch grant partition GUID')
+
+    lun = integer('lun')
+    block_bytes = integer('block_bytes', positive=True)
+    capacity = integer('capacity_blocks', positive=True)
+    boot_start = integer('boot_start_lba')
+    boot_blocks = integer('boot_blocks', positive=True)
+    payload_end = integer('payload_end_bytes', positive=True)
+    scratch_start = integer('scratch_start_lba')
+    scratch_blocks = integer('scratch_blocks', positive=True)
+    tail_blocks = integer('tail_guard_blocks', positive=True)
+    if lun >= 8 or block_bytes < 512 or block_bytes > 65536 or block_bytes & (block_bytes - 1):
+        raise ValueError('unsupported scratch grant LUN or block size')
+    if (1024 * 1024) % block_bytes or scratch_blocks != (1024 * 1024) // block_bytes or tail_blocks != scratch_blocks:
+        raise ValueError('scratch and tail guard must each be exactly 1 MiB')
+    if boot_start >= capacity or boot_blocks > capacity - boot_start or boot_blocks > ((1 << 64) - 1) // block_bytes:
+        raise ValueError('scratch grant boot_b range exceeds the LU')
+    boot_end = boot_start + boot_blocks
+    if scratch_start < boot_start or scratch_start > boot_end or scratch_blocks > boot_end - scratch_start:
+        raise ValueError('scratch grant exceeds boot_b')
+    if tail_blocks != boot_end - scratch_start - scratch_blocks:
+        raise ValueError('scratch grant tail guard does not end at boot_b boundary')
+    relative = scratch_start - boot_start
+    if relative > ((1 << 64) - 1) // block_bytes or relative * block_bytes < payload_end:
+        raise ValueError('scratch grant overlaps payload or overflows')
+
+    wire = struct.pack('<8sII32s32s32s32s16sIIQQQQQQQ', SCRATCH_GRANT_MAGIC, 1, 1,
+                       token.encode('ascii'), device, candidate, source, guid.bytes,
+                       lun, block_bytes, capacity, boot_start, boot_blocks, payload_end,
+                       scratch_start, scratch_blocks, tail_blocks)
+    if len(wire) != SCRATCH_GRANT_BYTES:
+        raise AssertionError('scratch-grant wire size changed')
+    return wire

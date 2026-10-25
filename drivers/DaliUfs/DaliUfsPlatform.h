@@ -13,8 +13,13 @@ constexpr uint64_t ResourceWords[] = {
   1, 7, 14, 7
 };
 constexpr size_t ResourceBytes = sizeof(ResourceWords) + 32;
+constexpr size_t ScratchGrantWireBytes = 224;
+struct ScratchGrant;
 bool resourceValid(const void *, size_t);
 bool tokenValid(const char *);
+bool decodeScratchGrant(const void *, size_t, ScratchGrant &);
+bool scratchAbsoluteLba(const ScratchGrant &, uint64_t relativeLba, uint32_t blocks, uint64_t &absoluteLba);
+bool parsePartitionGuid(const char *, uint8_t output[16]);
 
 struct Ops {
   void *context = nullptr;
@@ -25,8 +30,8 @@ struct Ops {
   uint64_t (*sip)(void *, uint32_t service, uint32_t selector, uint32_t a, uint32_t b) = nullptr;
 };
 
-// An opt-in, token-bound window for one synthetic scratch BlockIo. Normal LU
-// devices remain read-only; both admission and pre-doorbell checks use this.
+// An opt-in, token-bound window for one synthetic scratch BlockIo. The grant is
+// copied from the explicit scratch-grant-v1 ADT property; missing means deny.
 struct ScratchGrant {
   bool enabled = false;
   char token[33]{};
@@ -39,7 +44,7 @@ struct ScratchGrant {
 };
 
 struct ScratchObservation {
-  bool identityVerified = false, gptVerified = false, writeProtected = true;
+  bool identityVerified = false, gptVerified = false, writeProtected = true, scratchMediaReady = false;
   char token[33]{};
   uint8_t deviceBinding[32]{}, candidateSha256[32]{}, sourceSha256[32]{};
   uint8_t lun = 0;

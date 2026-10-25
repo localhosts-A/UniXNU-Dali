@@ -6,6 +6,7 @@ to program a controller or write media. All returned LBAs use the observed UFS
 logical block size, not sysfs sector units or the Android boot header page size.
 """
 import hashlib
+import re
 import struct
 import uuid
 import zlib
@@ -14,6 +15,27 @@ import zlib
 UINT64_MAX = (1 << 64) - 1
 MAX_ENTRY_BYTES = 4 * 1024 * 1024
 GPT_READ_ONLY = 1 << 60
+
+
+def device_identity_binding(manufacturer_id, serial_number):
+    """Reconstruct the raw UFS identity bytes used by the XNU transport hash.
+
+    Linux exposes the manufacturer ID as hex and the UFS serial descriptor as
+    decoded UTF-8. Accept only printable ASCII so UTF-16BE can be reconstructed
+    without lossy replacement or normalization.
+    """
+    if not isinstance(manufacturer_id, str) or not re.fullmatch(r"0x[0-9a-fA-F]{4}", manufacturer_id):
+        raise ValueError("missing or malformed UFS manufacturer ID")
+    if not isinstance(serial_number, str) or not serial_number or len(serial_number) > 126:
+        raise ValueError("missing or oversized UFS serial descriptor")
+    if any(ord(char) < 0x20 or ord(char) > 0x7e for char in serial_number):
+        raise ValueError("UFS serial descriptor is not losslessly representable as ASCII")
+    serial = serial_number.encode("utf-16-be")
+    descriptor_bytes = 2 + len(serial)
+    if descriptor_bytes > 255:
+        raise ValueError("UFS serial descriptor exceeds its one-byte length")
+    raw = int(manufacturer_id, 16).to_bytes(2, "big") + bytes((descriptor_bytes, 5)) + serial
+    return hashlib.sha256(raw).hexdigest()
 
 
 def natural(value, label, *, positive=False):

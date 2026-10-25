@@ -125,6 +125,9 @@ def collect(serial, backup, output):
         else:
             command = "cat " + shlex.quote(path)
         metadata[name] = {"path": path, "value": text(command) or None}
+    identity_binding = ufs.device_identity_binding(
+        text(controller + "/device_descriptor/manufacturer_id"),
+        text(controller + "/string_descriptors/serial_number"))
     after_android = cycle.current_android(serial)
     after_hashes = cycle.compare_partition_hashes(serial, records)
     if before_hashes != after_hashes or before_android != after_android:
@@ -135,6 +138,8 @@ def collect(serial, backup, output):
               "original_boot_b_sha256": records["boot_b"]["sha256"],
               "device_node": node, "parent_node": "/dev/block/" + disk,
               "scsi_path": scsi, "geometry": geo, "gpt": gpt,
+              "ufs_device_binding_sha256": identity_binding,
+              "ufs_device_identity_source": "fixed Linux UFS sysfs device/manufacturer and serial descriptors",
               "captures": captures, "metadata": metadata, "unit_descriptor_raw": descriptors,
               "partition_hashes": after_hashes, "all_partition_hashes_match": True,
               "known_block_matches_backup": True, "device_writes_performed": False,

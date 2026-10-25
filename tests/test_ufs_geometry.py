@@ -1,5 +1,6 @@
 """Corrupt media and unit mismatches must not create a scratch write grant."""
 import copy
+import hashlib
 from pathlib import Path
 import struct
 import sys
@@ -66,6 +67,14 @@ def candidate():
 
 
 class UfsGeometryTests(unittest.TestCase):
+    def test_linux_ufs_identity_reconstructs_the_xnu_raw_descriptor_binding(self):
+        raw = bytes.fromhex("1234") + bytes((14, 5)) + "ABC123".encode("utf-16-be")
+        self.assertEqual(ufs.device_identity_binding("0x1234", "ABC123"), hashlib.sha256(raw).hexdigest())
+        for manufacturer, serial in (("1234", "ABC123"), ("0x1234", ""),
+                                     ("0x1234", "ABC\n123"), ("0x1234", "é" * 127)):
+            with self.subTest(manufacturer=manufacturer, serial=serial), self.assertRaises(ValueError):
+                ufs.device_identity_binding(manufacturer, serial)
+
     def test_stock_zero_disk_guid_is_recorded_but_not_an_identity(self):
         raw = fixture()
         for index in (0, 2):

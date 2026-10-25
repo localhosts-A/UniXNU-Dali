@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Default-off Dali physical UFS diagnostic. Every published device is read-only.
+// Default-off Dali physical UFS diagnostic with an explicitly granted scratch child.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -29,12 +29,14 @@ class DaliUfs : public IOService {
   IOBufferMemoryDescriptor *dma_ = nullptr;
   uint8_t *staging_ = nullptr;
   DaliUfsBlock *children_[8]{};
+  DaliUfsBlock *scratchChild_ = nullptr;
   uint8_t resources_[dali_ufs::ResourceBytes]{};
   char token_[33]{};
   uint32_t dmaBytes_ = 0, line_ = 0;
   uint64_t dmaPhysical_ = 0, reads_ = 0, syncs_ = 0;
   uint32_t frequency_ = 0;
-  bool prepared_ = false, exposed_ = false, online_ = false, closed_ = false;
+  bool prepared_ = false, exposed_ = false, online_ = false, closed_ = false, scratchWriteMode_ = false;
+  bool scratchMediaReady_ = false;
   Status stopSync_ = Status::Success;
   dali_ufs::ScratchGrant scratchGrant_{};
   dali_ufs::ScratchObservation scratchObservation_{};
@@ -60,8 +62,11 @@ class DaliUfs : public IOService {
   bool initialize();
   bool diagnose();
   void partitions(uint8_t, IORegistryEntry *, unsigned depth, unsigned &count, bool &bootSample);
+  IOMedia *findBootB(IORegistryEntry *, unsigned depth, unsigned &count);
+  bool publishScratch(uint8_t, IOMedia *whole);
   bool quiesce(bool requireSync = false);
   IOReturn readBlocks(uint8_t, IOMemoryDescriptor *, uint64_t, uint64_t, uint64_t &actual);
+  IOReturn writeBlocks(uint8_t, IOMemoryDescriptor *, uint64_t, uint64_t, uint64_t &actual);
   IOReturn sync(uint8_t);
   static IOReturn error(Status);
 public:
@@ -74,24 +79,30 @@ class DaliUfsBlock : public IOBlockStorageDevice {
   OSDeclareDefaultStructors(DaliUfsBlock)
   DaliUfs *owner_ = nullptr; uint8_t lun_ = 0;
   unixnu_ufs::Geometry geometry_{};
+  uint64_t baseBlock_ = 0, exposedBlocks_ = 0;
+  bool writable_ = false, scratch_ = false;
 public:
-  bool initFor(DaliUfs *owner, uint8_t lun, const unixnu_ufs::Geometry &g) {
-    if (!IOBlockStorageDevice::init(nullptr)) return false;
-    owner_ = owner; lun_ = lun; geometry_ = g; return true;
+  bool initFor(DaliUfs *owner, uint8_t lun, const unixnu_ufs::Geometry &g,
+               uint64_t baseBlock, uint64_t blocks, bool writable, bool scratch) {
+    if (!owner || !g.valid || !blocks || baseBlock >= g.blocks || blocks > g.blocks - baseBlock ||
+        (writable && !scratch) || (scratch && (!writable || blocks != owner->scratchGrant_.scratchBlocks ||
+        baseBlock != owner->scratchGrant_.scratchStartLba)) || !IOBlockStorageDevice::init(nullptr)) return false;
+    owner_ = owner; lun_ = lun; geometry_ = g; baseBlock_ = baseBlock;
+    exposedBlocks_ = blocks; writable_ = writable; scratch_ = scratch; return true;
   }
   bool start(IOService *p) override { if (!IOBlockStorageDevice::start(p)) return false; registerService(); return true; }
   IOReturn doEjectMedia() override { return kIOReturnUnsupported; }
   IOReturn doFormatMedia(UInt64) override { return kIOReturnLockedWrite; }
   UInt32 doGetFormatCapacities(UInt64 *, UInt32) const override { return 0; }
   char *getVendorString() override { return const_cast<char *>("MediaTek"); }
-  char *getProductString() override { return const_cast<char *>("Dali UFS read-only"); }
+  char *getProductString() override { return const_cast<char *>(scratch_ ? "Dali UFS scratch test" : "Dali UFS read-only"); }
   char *getRevisionString() override { return const_cast<char *>("1"); }
   char *getAdditionalDeviceInfoString() override { return const_cast<char *>("MT6991 private DMA"); }
   IOReturn reportBlockSize(UInt64 *p) override { if (!p) return kIOReturnBadArgument; *p = geometry_.blockBytes; return kIOReturnSuccess; }
-  IOReturn reportMaxValidBlock(UInt64 *p) override { if (!p || !geometry_.valid) return kIOReturnBadArgument; *p = geometry_.blocks - 1; return kIOReturnSuccess; }
+  IOReturn reportMaxValidBlock(UInt64 *p) override { if (!p || !geometry_.valid || !exposedBlocks_) return kIOReturnBadArgument; *p = exposedBlocks_ - 1; return kIOReturnSuccess; }
   IOReturn reportEjectability(bool *p) override { if (!p) return kIOReturnBadArgument; *p = false; return kIOReturnSuccess; }
   IOReturn reportRemovability(bool *p) override { return reportEjectability(p); }
-  IOReturn reportWriteProtection(bool *p) override { if (!p) return kIOReturnBadArgument; *p = true; return kIOReturnSuccess; }
+  IOReturn reportWriteProtection(bool *p) override { if (!p) return kIOReturnBadArgument; *p = !writable_; return kIOReturnSuccess; }
   IOReturn reportMediaState(bool *present, bool *changed = nullptr) override {
     if (!present) return kIOReturnBadArgument;
     IOLockLock(owner_->gate_); *present = owner_->online_ && !owner_->closed_ && !owner_->transport_.poisoned();
@@ -100,16 +111,29 @@ public:
   IOReturn doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 block, UInt64 count,
                            IOStorageAttributes *, IOStorageCompletion *completion) override {
     if (!completion || !completion->action) return kIOReturnBadArgument;
-    uint64_t actual = 0; IOReturn status;
-    if (!buffer) status = kIOReturnBadArgument;
-    else if (buffer->getDirection() == kIODirectionOut) status = kIOReturnLockedWrite;
-    else if (buffer->getDirection() != kIODirectionIn) status = kIOReturnBadArgument;
-    else status = owner_->readBlocks(lun_, buffer, block, count, actual);
+    uint64_t actual = 0, absolute = 0; IOReturn status = kIOReturnBadArgument;
+    if (buffer && count && count <= UINT32_MAX && block < exposedBlocks_ && count <= exposedBlocks_ - block &&
+        count <= UINT64_MAX / geometry_.blockBytes) {
+      if (scratch_) {
+        if (!dali_ufs::scratchAbsoluteLba(owner_->scratchGrant_, block, static_cast<uint32_t>(count), absolute))
+          status = kIOReturnBadArgument;
+        else status = kIOReturnSuccess;
+      } else if (block <= UINT64_MAX - baseBlock_) {
+        absolute = baseBlock_ + block; status = kIOReturnSuccess;
+      }
+      if (status == kIOReturnSuccess && buffer->getLength() != count * geometry_.blockBytes)
+        status = kIOReturnBadArgument;
+      else if (status == kIOReturnSuccess && buffer->getDirection() == kIODirectionOut)
+        status = writable_ ? owner_->writeBlocks(lun_, buffer, block, count, actual) : kIOReturnLockedWrite;
+      else if (status == kIOReturnSuccess && buffer->getDirection() == kIODirectionIn)
+        status = owner_->readBlocks(lun_, buffer, absolute, count, actual);
+      else if (status == kIOReturnSuccess) status = kIOReturnBadArgument;
+    }
     IOStorage::complete(completion, status, actual);
     return kIOReturnSuccess; // Exactly one completion; generic driver must not repeat it.
   }
   IOReturn doSynchronize(UInt64 block, UInt64 count, IOStorageSynchronizeOptions options = 0) override {
-    if (options || block >= geometry_.blocks || (count && count > geometry_.blocks - block)) return kIOReturnBadArgument;
+    if (options || block >= exposedBlocks_ || (count && count > exposedBlocks_ - block)) return kIOReturnBadArgument;
     return owner_->sync(lun_); // Actual ordered device SYNC(10), even on a RO LU.
   }
   IOMedia *copyMedia() {
@@ -166,9 +190,9 @@ bool DaliUfs::portWrite(void *p, uint32_t off, uint32_t v) { return off <= 0x2a0
 bool DaliUfs::exclusive(void *p) { auto s = static_cast<DaliUfs *>(p); return s->controller_.ready() && read(p, dali_ufs::Hci + 0x300) == 0; }
 bool DaliUfs::allowWrite(void *p, uint8_t lun, const unixnu_ufs::Geometry &geometry, uint64_t lba, uint32_t blocks) {
   auto s = static_cast<DaliUfs *>(p);
-  // Transport calls are serialized by gate_; no lock recursion here. These
-  // fields remain default-off until the validated GPT/profile parser is wired.
-  if (!s->online_ || s->closed_ || !geometry.valid) return false;
+  // Transport calls are serialized by gate_; no lock recursion here. The
+  // scratch child stays unarmed until its published media is independently checked.
+  if (!s->online_ || s->closed_ || !s->scratchMediaReady_ || !geometry.valid) return false;
   auto observed = s->scratchObservation_;
   observed.lun = lun; observed.blockBytes = geometry.blockBytes;
   observed.capacityBlocks = geometry.blocks; observed.writeProtected = geometry.writeProtected;
@@ -252,18 +276,42 @@ bool DaliUfs::initialize() {
   Status status = transport_.start(port, {cpu, dmaPhysical_, UINT32_MAX, dmaBytes_});
   if (status == Status::Success) status = transport_.initializeDevice();
   if (status != Status::Success) { record("transport-failed", static_cast<uint32_t>(status)); return false; }
-  bool any = false;
+  if (scratchWriteMode_) {
+    uint8_t identity[256] = {}, digest[32] = {}; uint32_t identityBytes = 0;
+    status = transport_.readDeviceIdentity(identity, sizeof identity, identityBytes);
+    if (status != Status::Success || !identityBytes) { record("identity-read-failed", static_cast<uint32_t>(status)); return false; }
+    SHA256_CTX hash; SHA256_Init(&hash); SHA256_Update(&hash, identity, identityBytes); SHA256_Final(digest, &hash);
+    bzero(identity, sizeof identity);
+    if (memcmp(digest, scratchGrant_.deviceBinding, sizeof digest)) {
+      bzero(digest, sizeof digest); record("identity-mismatch"); return false;
+    }
+    memcpy(scratchObservation_.token, token_, sizeof scratchObservation_.token);
+    memcpy(scratchObservation_.deviceBinding, digest, sizeof digest);
+    memcpy(scratchObservation_.candidateSha256, scratchGrant_.candidateSha256, sizeof scratchObservation_.candidateSha256);
+    memcpy(scratchObservation_.sourceSha256, scratchGrant_.sourceSha256, sizeof scratchObservation_.sourceSha256);
+    scratchObservation_.identityVerified = true;
+    bzero(digest, sizeof digest);
+  }
+  bool any = false, grantLunSeen = false;
   for (uint8_t lun = 0; lun < 8; ++lun) {
     status = transport_.probe(lun); const auto &c = transport_.completion();
     if (status == Status::NotReady || (status == Status::Target && c.transaction == 0x16 && c.opcode == 1 && c.target == 0xfc)) continue;
     if (status != Status::Success) { record("probe-failed", lun, static_cast<uint32_t>(status), c.target); return false; }
     const auto &g = *transport_.geometry(lun); record("geometry", lun, g.blocks, g.blockBytes);
+    if (scratchWriteMode_ && lun == scratchGrant_.lun) {
+      if (g.blocks != scratchGrant_.capacityBlocks || g.blockBytes != scratchGrant_.blockBytes) {
+        record("scratch-geometry-mismatch", g.blocks, g.blockBytes); return false;
+      }
+      grantLunSeen = true;
+      scratchObservation_.lun = lun; scratchObservation_.blockBytes = g.blockBytes;
+      scratchObservation_.capacityBlocks = g.blocks; scratchObservation_.writeProtected = g.writeProtected;
+    }
     auto child = new DaliUfsBlock;
     if (!child) return false;
-    if (!child->initFor(this, lun, g)) { child->release(); return false; }
+    if (!child->initFor(this, lun, g, 0, g.blocks, false, false)) { child->release(); return false; }
     children_[lun] = child; any = true;
   }
-  if (!any) return false;
+  if (!any || (scratchWriteMode_ && !grantLunSeen)) return false;
   online_ = true; // initialize is called with the host gate held.
   return true;
 }
@@ -284,6 +332,37 @@ IOReturn DaliUfs::readBlocks(uint8_t lun, IOMemoryDescriptor *buffer, uint64_t b
           if (copied != bytes) { result = kIOReturnIOError; break; }
         }
         if (status != Status::Success) { result = error(status); break; }
+        done += chunk;
+      }
+    }
+  }
+  IOLockUnlock(gate_); return result;
+}
+IOReturn DaliUfs::writeBlocks(uint8_t lun, IOMemoryDescriptor *buffer, uint64_t block, uint64_t count, uint64_t &actual) {
+  actual = 0;
+  if (!buffer || !count || count > UINT32_MAX) return kIOReturnBadArgument;
+  IOLockLock(gate_);
+  const auto g = transport_.geometry(lun);
+  IOReturn result = kIOReturnNotReady;
+  uint64_t absolute = 0;
+  if (online_ && !closed_ && scratchWriteMode_ && g && g->valid && !transport_.poisoned()) {
+    result = kIOReturnLockedWrite;
+    if (!g->writeProtected && dali_ufs::scratchAbsoluteLba(scratchGrant_, block, static_cast<uint32_t>(count), absolute) &&
+        count <= UINT64_MAX / g->blockBytes && buffer->getLength() == count * g->blockBytes) {
+      result = kIOReturnSuccess;
+      for (uint64_t done = 0; done < count;) {
+        uint32_t chunk = static_cast<uint32_t>(count - done < unixnu_ufs::DataMax / g->blockBytes ?
+                                               count - done : unixnu_ufs::DataMax / g->blockBytes);
+        uint32_t bytes = chunk * g->blockBytes;
+        IOByteCount copied = buffer->readBytes(actual, staging_, bytes);
+        if (copied != bytes) { result = kIOReturnIOError; break; }
+        Status status = transport_.write(lun, absolute + done, chunk, staging_);
+        uint32_t completed = status == Status::Success ? transport_.completion().bytes :
+                             status == Status::Partial ? transport_.completion().bytes : 0;
+        if (completed) actual += completed;
+        if (status != Status::Success || completed != bytes) {
+          result = status == Status::Success ? kIOReturnIOError : error(status); break;
+        }
         done += chunk;
       }
     }
@@ -325,6 +404,94 @@ void DaliUfs::partitions(uint8_t lun, IORegistryEntry *root, unsigned depth, uns
   }
   entries->release();
 }
+IOMedia *DaliUfs::findBootB(IORegistryEntry *root, unsigned depth, unsigned &count) {
+  if (!root || depth > 8 || count >= 512) return nullptr;
+  auto entries = root->getChildIterator(gIOServicePlane); if (!entries) return nullptr;
+  IOMedia *found = nullptr;
+  while (auto object = entries->getNextObject()) {
+    if (++count > 512) break;
+    auto entry = OSDynamicCast(IORegistryEntry, object); if (!entry) continue;
+    auto media = OSDynamicCast(IOMedia, entry);
+    if (media && !media->isWhole() && strcmp(media->getName(), "boot_b") == 0) {
+      media->retain(); found = media; break;
+    }
+    found = findBootB(entry, depth + 1, count);
+    if (found) break;
+  }
+  entries->release(); return found;
+}
+bool DaliUfs::publishScratch(uint8_t lun, IOMedia *whole) {
+  if (!scratchWriteMode_) return true;
+  if (!whole || lun != scratchGrant_.lun) return false;
+  if (scratchChild_) {
+    IOLockLock(gate_); bool ready = scratchMediaReady_; IOLockUnlock(gate_);
+    return ready;
+  }
+  const auto geometry = transport_.geometry(lun);
+  if (!geometry || !geometry->valid || geometry->writeProtected || !scratchObservation_.identityVerified) {
+    record("scratch-observation-refused", lun); return false;
+  }
+  IOMedia *boot = nullptr;
+  for (unsigned attempt = 0; attempt < 500 && !boot; ++attempt) {
+    unsigned count = 0; boot = findBootB(whole, 0, count);
+    if (!boot) IOSleep(10);
+  }
+  if (!boot) { record("scratch-boot-b-missing", lun); return false; }
+  bool valid = false; uint8_t guid[16] = {};
+  ScratchObservation verified{};
+  auto uuid = OSDynamicCast(OSString, boot->getProperty(kIOMediaUUIDKey));
+  const uint64_t blockBytes = geometry->blockBytes;
+  const uint64_t baseBytes = boot->getBase(), sizeBytes = boot->getSize();
+  if (uuid && dali_ufs::parsePartitionGuid(uuid->getCStringNoCopy(), guid) && blockBytes &&
+      boot->getPreferredBlockSize() == blockBytes && baseBytes % blockBytes == 0 &&
+      sizeBytes % blockBytes == 0 && sizeBytes != 0) {
+    const uint64_t bootStart = baseBytes / blockBytes, bootBlocks = sizeBytes / blockBytes;
+    valid = bootStart == scratchGrant_.bootStartLba && bootBlocks == scratchGrant_.bootBlocks &&
+            !memcmp(guid, scratchGrant_.partitionGuid, sizeof guid);
+    if (valid) {
+      IOLockLock(gate_); verified = scratchObservation_; IOLockUnlock(gate_);
+      memcpy(verified.partitionGuid, guid, sizeof guid);
+      verified.bootStartLba = bootStart; verified.bootBlocks = bootBlocks;
+      verified.gptVerified = true; verified.writeProtected = geometry->writeProtected;
+      verified.scratchMediaReady = false;
+    }
+  }
+  boot->release();
+  if (!valid) { record("scratch-gpt-refused", lun); return false; }
+
+  auto child = new DaliUfsBlock;
+  if (!child) return false;
+  if (!child->initFor(this, lun, *geometry, scratchGrant_.scratchStartLba, scratchGrant_.scratchBlocks, true, true)) {
+    child->release(); return false;
+  }
+  scratchChild_ = child;
+  if (!child->attach(this)) { scratchChild_ = nullptr; child->release(); return false; }
+  if (!child->start(this)) { child->detach(this); scratchChild_ = nullptr; child->release(); return false; }
+  IOMedia *scratchMedia = nullptr;
+  for (unsigned attempt = 0; attempt < 500 && !scratchMedia; ++attempt) {
+    scratchMedia = child->copyMedia(); if (!scratchMedia) IOSleep(10);
+  }
+  if (!scratchMedia || scratchMedia->getPreferredBlockSize() != blockBytes ||
+      scratchMedia->getSize() != scratchGrant_.scratchBlocks * blockBytes || !scratchMedia->isWritable()) {
+    if (scratchMedia) scratchMedia->release();
+    record("scratch-media-refused", lun); return false;
+  }
+  uint64_t mediaBytes = scratchMedia->getSize();
+  uint32_t mediaBlockBytes = scratchMedia->getPreferredBlockSize();
+  scratchMedia->release();
+  verified.scratchMediaReady = true;
+  if (!dali_ufs::scratchWriteAllowed(scratchGrant_, verified, scratchGrant_.scratchStartLba, 1)) {
+    record("scratch-policy-refused", lun); return false;
+  }
+  IOLockLock(gate_);
+  bool arm = online_ && !closed_ && !transport_.poisoned() && !scratchMediaReady_;
+  if (arm) { scratchObservation_ = verified; scratchMediaReady_ = true; }
+  IOLockUnlock(gate_);
+  if (!arm) { record("scratch-arm-refused", lun); return false; }
+  record("scratch-media", lun, mediaBytes, mediaBlockBytes);
+  record("scratch-child", lun, scratchGrant_.scratchStartLba, scratchGrant_.scratchBlocks);
+  return true;
+}
 bool DaliUfs::diagnose() {
   bool boot = false, all = true;
   for (uint8_t lun = 0; lun < 8; ++lun) if (children_[lun]) {
@@ -337,6 +504,10 @@ bool DaliUfs::diagnose() {
     all &= sample(lun, media, 0, "whole"); all &= sample(lun, media, 1, "whole"); all &= sample(lun, media, g.blocks - 1, "whole");
     // Let asynchronous partition matching finish before recording its children.
     IOSleep(1000); unsigned count = 0; partitions(lun, media, 0, count, boot);
+    if (scratchWriteMode_ && lun == scratchGrant_.lun) {
+      if (all) all &= publishScratch(lun, media);
+      else scratchObservation_.identityVerified = false;
+    }
     IOReturn result = children_[lun]->doSynchronize(0, 0);
     IOLockLock(gate_); uint64_t syncCount = syncs_; IOLockUnlock(gate_);
     record("sync", lun, result, syncCount); if (result) all = false;
@@ -347,7 +518,9 @@ bool DaliUfs::diagnose() {
 }
 bool DaliUfs::quiesce(bool requireSync) {
   IOLockLock(gate_); bool wasClosed = closed_; closed_ = true; online_ = false;
-  // No writes in this profile. Sync before close; never replay a failed command.
+  scratchMediaReady_ = false; scratchObservation_.scratchMediaReady = false;
+  // Close admission, synchronize the owned LUNs, then stop before freeing DMA.
+  // A failed or uncertain scratch write is never replayed.
   if (!wasClosed && exposed_) {
     if (transport_.poisoned()) stopSync_ = Status::NotReady;
     else for (uint8_t lun = 0; lun < 8; ++lun) if (transport_.geometry(lun)->valid) {
@@ -378,26 +551,37 @@ void DaliUfs::worker(void *p, wait_result_t) {
     if (!child->start(self)) { child->detach(self); initialized = false; break; }
   }
   self->record("initialized", initialized);
-  if (initialized) self->diagnose();
+  bool diagnosed = initialized && self->diagnose();
+  self->record("diagnostics", diagnosed, self->scratchWriteMode_);
+  if (initialized && self->scratchWriteMode_ && !diagnosed) self->quiesce();
   else {
-    IOLockLock(self->gate_); const auto c = self->transport_.completion(); IOLockUnlock(self->gate_);
-    self->record("failed-command", static_cast<uint32_t>(c.status), c.opcode, c.interrupt);
-    self->quiesce();
+    if (!initialized) {
+      IOLockLock(self->gate_); const auto c = self->transport_.completion(); IOLockUnlock(self->gate_);
+      self->record("failed-command", static_cast<uint32_t>(c.status), c.opcode, c.interrupt);
+      self->quiesce();
+    }
   }
-  // Keep the read-only devices usable until the explicit physical key action.
+  // Keep only the explicitly published storage devices usable until manual recovery.
   dali_ufs_wait_for_manual_recovery(self->token_, stopBeforeReset, self);
   self->quiesce(); self->release(); thread_terminate(current_thread());
 }
 bool DaliUfs::start(IOService *provider) {
-  unsigned enabled = 0, early = 0, autoFastboot = 0, pid1 = 0; char reset[16] = {};
+  unsigned enabled = 0, early = 0, autoFastboot = 0, pid1 = 0, scratch = 0; char reset[16] = {};
   if (!PE_parse_boot_argn("dali-ufs-readonly", &enabled, sizeof enabled) || enabled != 1) return false;
+  bool scratchArg = PE_parse_boot_argn("dali-ufs-scratch-write", &scratch, sizeof scratch);
   PE_parse_boot_argn("dali-earlyboot", &early, sizeof early); PE_parse_boot_argn("dali-auto-fastboot", &autoFastboot, sizeof autoFastboot); PE_parse_boot_argn("dali-pid1", &pid1, sizeof pid1);
-  if (early != 1 || autoFastboot || pid1 || PE_parse_boot_argn("dali-reset-method", reset, sizeof reset) ||
+  if ((scratchArg && scratch != 1) || early != 1 || autoFastboot || pid1 || PE_parse_boot_argn("dali-reset-method", reset, sizeof reset) ||
       !PE_parse_boot_argn("dali-run", token_, sizeof token_) || !dali_ufs::tokenValid(token_)) return false;
   auto node = IORegistryEntry::fromPath("/arm-io/dali-ufs", gIODTPlane);
   auto resource = node ? OSDynamicCast(OSData, node->getProperty("resources-v1")) : nullptr;
   if (!resource || !dali_ufs::resourceValid(resource->getBytesNoCopy(), resource->getLength())) { if (node) node->release(); return false; }
   memcpy(resources_, resource->getBytesNoCopy(), sizeof resources_);
+  if (scratchArg) {
+    auto grant = OSDynamicCast(OSData, node->getProperty("scratch-grant-v1"));
+    if (!grant || !dali_ufs::decodeScratchGrant(grant->getBytesNoCopy(), grant->getLength(), scratchGrant_) ||
+        strcmp(scratchGrant_.token, token_)) { node->release(); return false; }
+    scratchWriteMode_ = true;
+  }
   node->release();
   if (!IOService::start(provider)) return false;
   gate_ = IOLockAlloc(); if (!gate_) return false;
@@ -415,6 +599,8 @@ void DaliUfs::free() {
   // still receive offline queries; retain their owner/gate instead of dangling
   // it. Controller/DMA have already been quiesced above.
   for (auto child : children_) if (child && child->getProvider() == this) { record("published-owner-retained"); return; }
+  if (scratchChild_ && scratchChild_->getProvider() == this) { record("published-scratch-owner-retained"); return; }
+  if (scratchChild_) { scratchChild_->release(); scratchChild_ = nullptr; }
   for (auto &child : children_) if (child) { child->release(); child = nullptr; }
   if (staging_) { IOFree(staging_, unixnu_ufs::DataMax); staging_ = nullptr; }
   if (hci_) hci_->release(); if (ao_) ao_->release(); if (console_) console_->release();

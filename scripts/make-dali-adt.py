@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Build a minimal Apple DT from a verified live MT6991 FDT for single-core XNU."""
 import argparse
+import json
 import os
 from pathlib import Path
 import secrets
 import struct
 import zlib
-from dali_ufs_resources import resource_contract
+from dali_ufs_resources import encode_scratch_grant, resource_contract
 
 
 class Fdt:
@@ -129,6 +130,8 @@ def main():
     parser.add_argument("--ramdisk", action="store_true", help="zero RAMDisk slot for DarwinBoot to fill")
     parser.add_argument("--trust-cache", action="store_true", help="zero TrustCache slot for the explicit own test input")
     parser.add_argument("--ufs-readonly", action="store_true", help="validate and include the optional physical UFS nub")
+    parser.add_argument("--ufs-scratch-grant", type=Path, help="explicit private grant JSON for a boot_b scratch-write test")
+    parser.add_argument("--run-token", help="fresh run token; must match the explicit scratch grant")
     args = parser.parse_args()
     if args.fdt is None:
         parser.error("a private live Dali FDT is required (--fdt or DALI_RUNTIME_FDT)")
@@ -138,6 +141,21 @@ def main():
         ufs_mode = os.environ.get("DALI_XNU_UFS_READ_ONLY", "false")
         if ufs_mode not in ("true", "false"):
             raise ValueError("DALI_XNU_UFS_READ_ONLY must be true or false")
+        scratch_mode = os.environ.get("DALI_XNU_UFS_SCRATCH_WRITE", "false")
+        if scratch_mode not in ("true", "false"):
+            raise ValueError("DALI_XNU_UFS_SCRATCH_WRITE must be true or false")
+        if bool(args.ufs_scratch_grant) != (scratch_mode == "true"):
+            raise ValueError("scratch-write mode requires exactly one explicit grant JSON")
+        scratch_grant = None
+        if args.ufs_scratch_grant:
+            if not (args.ufs_readonly or ufs_mode == "true") or not args.run_token:
+                raise ValueError("scratch grant requires the physical UFS node and the matching run token")
+            document = json.loads(args.ufs_scratch_grant.read_text())
+            if not isinstance(args.run_token, str) or len(args.run_token) != 32 or args.run_token.lower() != args.run_token:
+                raise ValueError("invalid scratch grant run token")
+            if not isinstance(document, dict) or document.get("token") != args.run_token:
+                raise ValueError("scratch grant token differs from the candidate run token")
+            scratch_grant = encode_scratch_grant(document)
         ufs_resources = resource_contract(tree, raw_fdt) if args.ufs_readonly or ufs_mode == "true" else None
         root = tree.nodes.get("/", {})
         if b"mediatek,MT6991" not in tree.string_list("/", "compatible"):
@@ -230,6 +248,7 @@ def main():
         ], [intc, boot_log, *([apple_node("dali-ufs", [
             ("compatible", b"localhosts,dali-ufs\0"),
             ("resources-v1", ufs_resources),
+            *([("scratch-grant-v1", scratch_grant)] if scratch_grant is not None else []),
         ])] if ufs_resources is not None else [])]),
         apple_node("defaults", [("sleep-disabled", struct.pack("<I", 1))]),
         apple_node("options"),

@@ -15,6 +15,64 @@ bool tokenValid(const char *s) {
 static bool nonzero(const uint8_t *bytes, size_t count) {
   uint8_t value = 0; for (size_t i = 0; i < count; ++i) value |= bytes[i]; return value != 0;
 }
+static uint32_t little32(const uint8_t *p) {
+  return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+}
+static uint64_t little64(const uint8_t *p) {
+  return uint64_t(little32(p)) | uint64_t(little32(p + 4)) << 32;
+}
+bool decodeScratchGrant(const void *data, size_t bytes, ScratchGrant &g) {
+  static const uint8_t magic[8] = {'D','A','L','I','U','F','S','W'};
+  const auto p = static_cast<const uint8_t *>(data);
+  if (!p || bytes != ScratchGrantWireBytes || memcmp(p, magic, sizeof magic) ||
+      little32(p + 8) != 1 || little32(p + 12) != 1) return false;
+  ScratchGrant candidate{};
+  candidate.enabled = true;
+  memcpy(candidate.token, p + 16, 32); candidate.token[32] = 0;
+  memcpy(candidate.deviceBinding, p + 48, 32);
+  memcpy(candidate.candidateSha256, p + 80, 32);
+  memcpy(candidate.sourceSha256, p + 112, 32);
+  memcpy(candidate.partitionGuid, p + 144, 16);
+  uint32_t lun = little32(p + 160);
+  if (lun >= 8) return false;
+  candidate.lun = static_cast<uint8_t>(lun);
+  candidate.blockBytes = little32(p + 164);
+  candidate.capacityBlocks = little64(p + 168);
+  candidate.bootStartLba = little64(p + 176);
+  candidate.bootBlocks = little64(p + 184);
+  candidate.payloadEndBytes = little64(p + 192);
+  candidate.scratchStartLba = little64(p + 200);
+  candidate.scratchBlocks = little64(p + 208);
+  candidate.tailGuardBlocks = little64(p + 216);
+  if (!scratchGrantValid(candidate)) return false;
+  g = candidate;
+  return true;
+}
+bool scratchAbsoluteLba(const ScratchGrant &g, uint64_t relativeLba, uint32_t blocks, uint64_t &absoluteLba) {
+  absoluteLba = 0;
+  if (!scratchGrantValid(g) || !blocks || relativeLba >= g.scratchBlocks ||
+      blocks > g.scratchBlocks - relativeLba || relativeLba > UINT64_MAX - g.scratchStartLba) return false;
+  absoluteLba = g.scratchStartLba + relativeLba;
+  return true;
+}
+static int hexDigit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
+}
+bool parsePartitionGuid(const char *text, uint8_t output[16]) {
+  if (!text || !output || strnlen(text, 37) != 36) return false;
+  const unsigned hyphens[] = {8, 13, 18, 23};
+  for (unsigned at : hyphens) if (text[at] != '-') return false;
+  unsigned byte = 0;
+  for (unsigned i = 0; i < 36;) {
+    if (text[i] == '-') { ++i; continue; }
+    int hi = hexDigit(text[i++]); int lo = hexDigit(text[i++]);
+    if (hi < 0 || lo < 0 || byte >= 16) return false;
+    output[byte++] = static_cast<uint8_t>((hi << 4) | lo);
+  }
+  return byte == 16;
+}
 bool scratchGrantValid(const ScratchGrant &g) {
   constexpr uint64_t ScratchBytes = 1024 * 1024;
   if (!g.enabled || !tokenValid(g.token) || g.lun >= 8 ||
@@ -40,7 +98,7 @@ bool scratchGrantValid(const ScratchGrant &g) {
   return true;
 }
 bool scratchWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uint64_t lba, uint32_t blocks) {
-  if (!scratchGrantValid(g) || !o.identityVerified || !o.gptVerified || o.writeProtected ||
+  if (!scratchGrantValid(g) || !o.identityVerified || !o.gptVerified || !o.scratchMediaReady || o.writeProtected ||
       !tokenValid(o.token) || strcmp(g.token, o.token) ||
       memcmp(o.deviceBinding, g.deviceBinding, sizeof g.deviceBinding) ||
       memcmp(o.candidateSha256, g.candidateSha256, sizeof g.candidateSha256) ||

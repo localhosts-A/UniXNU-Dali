@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import struct
@@ -9,10 +10,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
-from dali_ufs_resources import resource_contract, RESOURCE_WORDS, CLOCK_NAMES, HCI, PHY, AO, CLK, RESET
+from dali_ufs_resources import encode_scratch_grant, resource_contract, RESOURCE_WORDS, CLOCK_NAMES, HCI, PHY, AO, CLK, RESET
 spec = importlib.util.spec_from_file_location('ufs_adt', SCRIPTS/'make-dali-adt.py')
 adt = importlib.util.module_from_spec(spec); spec.loader.exec_module(adt)
 
@@ -46,6 +48,20 @@ def fixture():
                   '/soc/pinctrl@1002d000':{'reg':cells(0,0x1002d000,0,0x1000),'phandle':cells(10)},'/gpio-keys':{},
                   '/gpio-keys/volumedown':{'gpios':cells(10,60,1)},'/chosen':{'aee,enable':b'mini\0','mrdump,lk':b'MRDUMP11\0','mrdump,cblock':bytes(8)}})
     return nodes
+
+
+def scratch_grant(**updates):
+    value = {
+        'profile': 'boot-b-scratch-write-test-v1', 'write_authorized': True, 'media_writes': True,
+        'token': '0123456789abcdef0123456789abcdef',
+        'device_binding_sha256': '11' * 32, 'candidate_sha256': '22' * 32, 'source_sha256': '33' * 32,
+        'partition_guid': '00000046-39c2-4488-9bb0-00cb43c9ccd4',
+        'lun': 2, 'block_bytes': 4096, 'capacity_blocks': 64577536,
+        'boot_start_lba': 418560, 'boot_blocks': 16384, 'payload_end_bytes': 5062656,
+        'scratch_start_lba': 434432, 'scratch_blocks': 256, 'tail_guard_blocks': 256,
+    }
+    value.update(updates)
+    return value
 
 
 def dtb(nodes):
@@ -111,3 +127,35 @@ class ResourceTests(unittest.TestCase):
             subprocess.run(command,env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='false'),check=True,capture_output=True)
             self.assertIn(b'dali-ufs\0',output.read_bytes())
             self.assertIn(resource_contract(adt.Fdt(raw),raw),output.read_bytes())
+
+    def test_explicit_scratch_grant_wire_and_profile_validation(self):
+        value=scratch_grant();wire=encode_scratch_grant(value)
+        self.assertEqual(len(wire),224)
+        self.assertEqual(wire[:16],b'DALIUFSW'+struct.pack('<II',1,1))
+        self.assertEqual(wire[16:48],value['token'].encode())
+        self.assertEqual(wire[48:80],bytes.fromhex('11'*32))
+        self.assertEqual(wire[144:160],uuid.UUID(value['partition_guid']).bytes)
+        self.assertEqual(struct.unpack_from('<IIQQQQQQQ',wire,160),
+                         (2,4096,64577536,418560,16384,5062656,434432,256,256))
+        invalid=(
+            {'write_authorized':False}, {'media_writes':False}, {'token':'bad'},
+            {'lun':8}, {'block_bytes':512}, {'scratch_blocks':255},
+            {'tail_guard_blocks':1}, {'scratch_start_lba':434431},
+            {'device_binding_sha256':'00'*32}, {'partition_guid':'00000000-0000-0000-0000-000000000000'},
+        )
+        for change in invalid:
+            with self.subTest(change=change),self.assertRaises(ValueError):encode_scratch_grant(scratch_grant(**change))
+
+    def test_scratch_grant_is_emitted_only_by_explicit_write_profile_with_same_token(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'fdt';output=root/'adt';grant=root/'grant.json';raw=dtb(fixture());source.write_bytes(raw)
+            value=scratch_grant();grant.write_text(json.dumps(value))
+            command=[sys.executable,str(SCRIPTS/'make-dali-adt.py'),'--fdt',str(source),'--dram-size','0x300000000',
+                     '--output',str(output),'--ufs-scratch-grant',str(grant),'--run-token',value['token']]
+            env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='true',DALI_XNU_UFS_SCRATCH_WRITE='true')
+            subprocess.run(command,env=env,check=True,capture_output=True)
+            self.assertIn(encode_scratch_grant(value),output.read_bytes())
+            for bad_env in (dict(env,DALI_XNU_UFS_SCRATCH_WRITE='false'),dict(env,DALI_XNU_UFS_READ_ONLY='false')):
+                self.assertNotEqual(subprocess.run(command,env=bad_env,capture_output=True).returncode,0)
+            wrong=command.copy();wrong[-1]='ffffffffffffffffffffffffffffffff'
+            self.assertNotEqual(subprocess.run(wrong,env=env,capture_output=True).returncode,0)
