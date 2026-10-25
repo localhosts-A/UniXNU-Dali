@@ -1,14 +1,12 @@
 # UniXNU-Dali
 
-The active milestone is the [unattended diagnostic cycle](docs/unattended-cycle.md):
-source-XNU checkpoints, PSCI cold/warm plus retained ramoops, automatic fastboot,
-and verified original Android recovery. AEE research follows only if needed;
-UFS logging and the Linux USB reader are deferred. Official MiCode base/device/vendor-module
-inputs are pinned in [the source inventory](references/mt6991-linux.toml).
-The RAM-root/PID1 milestone below and full native USB/OTG work are paused.
-No Dali physical UFS writer, Linux reader or complete unattended cycle is qualified.
-
-The paused milestone is an owned static PID1 on a read-only mockfs RAM root.
+The `codex/dali-pid1-offline` branch resumes the owned static PID1 milestone on a
+read-only mockfs RAM root. Work first runs entirely on the host and macOS CI;
+real-device ramoops and original Android recovery remain required for completion.
+The [unattended diagnostic cycle](docs/unattended-cycle.md), physical UFS and
+native USB/OTG are separate efforts, not dependencies of this RAM-root milestone.
+Official MiCode base/device/vendor-module inputs are pinned in
+[the source inventory](references/mt6991-linux.toml).
 The source profile now includes mockfs. Its original BCM2837 development
 configuration has no Image4/AMFI provider, so trust-cache runtime initialization
 stays disabled: enabling it panics before platform start. The one-entry own
@@ -52,10 +50,14 @@ re-enumeration nor the end-reset request proves unattended fastboot.
 The record includes the exact `--restore-run` command, stable device serial,
 backup path and original boot hash. That mode only restores the original boot_b
 and collects evidence; it never starts another candidate experiment.
+Select `validation_profile=pid1` when dispatching `dali-xnu.yml` on this branch.
+That profile forces `auto_fastboot=false`; its artifact records the PID1 boot
+entry and cannot be used by the automatic early-checkpoint cycle runner.
+QEMU reports are retained for one day on successful and failed qualification.
 
-Device repository for REDMI K80 Ultra (dali / MT6991). The current target is a
-single-core XNU early-boot checkpoint through UniXNU and DarwinBoot. Storage,
-root and iOS userland are outside this stage.
+Device repository for REDMI K80 Ultra (dali / MT6991). The current target extends
+the single-core XNU checkpoint through UniXNU and DarwinBoot into the owned
+RAM-root PID1. Physical storage and complete iOS userland remain outside this stage.
 
 Keep the repositories as siblings:
 
@@ -73,8 +75,9 @@ Repositories: [firmware](https://github.com/localhosts-A/UEFI-Dali),
 
 `board.toml` records the Dali source-kernel profile, platform archives, and the
 ADT generator. The source-only kernel build needs macOS/Xcode and is run by the
-`dali-xnu.yml` GitHub Action. The short-lived public artifact contains only the
-unprelinked arm64 kernel Mach-O and its SHA-256 manifest; no IPSW, kernelcache,
+`dali-xnu.yml` GitHub Action. The short-lived public artifact contains the
+unprelinked arm64 kernel Mach-O, SHA-256 manifest and, for the PID1 profile,
+the owned process and explicit one-entry test trust bundle; no IPSW, kernelcache,
 device FDT, boot image, or ramoops logs are uploaded. The Action now defaults to
 `reset-qualification`, disabling hardware WDT and firmware reset deadlines;
 PID1 requires its separate explicit profile. Each hardware cycle builds a private

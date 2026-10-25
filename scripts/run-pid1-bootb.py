@@ -142,7 +142,7 @@ def main():
         cycle.verify_clean_repository(repository)
     cycle.verify_clean_repository(a.uefi, allow_mu_patches=True)
     _, records = cycle.verify_backup(backup, a.serial)
-    kernel, artifact = cycle.verify_kernel_artifact(a.artifact_dir, a.unixnu, DEVICE)
+    kernel, artifact = cycle.verify_kernel_artifact(a.artifact_dir, a.unixnu, DEVICE, pid1=True)
     if cycle.run_capture(['git', 'rev-parse', 'HEAD'], cwd=a.uefi).strip() != artifact['uefi_commit']:
         raise cycle.CycleError('UEFI checkout differs from the tested artifact pin')
     inputs = verify_pid1_artifact(a.artifact_dir, artifact)
@@ -165,8 +165,7 @@ def main():
                       '--output', adt, '--dram-size', '0x300000000', '--ramdisk', '--trust-cache'],
                      run / 'adt.log', timeout=60)
     token = secrets.token_hex(16)
-    # The old artifact's recovery settings are for its early-checkpoint profile.
-    # This explicit continuation profile always disables that firmware watchdog.
+    # The artifact and this continuation profile both disable the short watchdog.
     recovery = {'auto_fastboot': False, 'device_watchdog_timeout_seconds': 31}
     image, manifest = cycle.build_candidate(a, backup, kernel, adt, recovery, token, run, pid1_inputs=inputs)
     if image.stat().st_size > records['boot_b']['bytes']:

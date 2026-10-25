@@ -302,7 +302,9 @@ def artifact_directory(args, run_dir):
     return destination
 
 
-def verify_kernel_artifact(directory, unixnu, device_repo, *, reset_qualification=False):
+def verify_kernel_artifact(directory, unixnu, device_repo, *, reset_qualification=False, pid1=False):
+    if reset_qualification and pid1:
+        raise CycleError("PID1 continuation and reset qualification are separate artifact profiles")
     kernel = directory / "kernel.macho"
     manifest_path = directory / "manifest.json"
     if not kernel.is_file() or not manifest_path.is_file():
@@ -331,7 +333,13 @@ def verify_kernel_artifact(directory, unixnu, device_repo, *, reset_qualificatio
     if xnu_source is None or manifest.get("xnu_commit") != xnu_source.get("commit"):
         raise CycleError("source artifact was built from a different pinned XNU source revision")
     recovery = manifest.get("recovery", {})
-    if reset_qualification:
+    if pid1:
+        if recovery.get("auto_fastboot") is not False or not isinstance(manifest.get("pid1"), dict) or \
+                "reset_qualification" in manifest:
+            raise CycleError("PID1 continuation requires its own artifact with auto_fastboot=false")
+    elif "pid1" in manifest:
+        raise CycleError("PID1 artifacts require the explicit PID1 continuation runner")
+    elif reset_qualification:
         policy = manifest.get('reset_qualification', {})
         if recovery.get('auto_fastboot') is not False or policy.get('methods') != ['off', 'psci-cold', 'psci-warm', 'aee'] or \
                 policy.get('delay_seconds') != 5 or policy.get('hardware_watchdog_enabled') is not False or \

@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       validation_profile:
-        description: Qualification target (PID1 work is paused by default)
+        description: Qualification target (PID1 disables the short recovery watchdog)
         type: choice
         options: [reset-qualification, pid1]
         default: reset-qualification
@@ -239,8 +239,8 @@ jobs:
             --entitlement-negative-fixture "$RUNNER_TEMP/dali-pid1-entitlement-negative" \
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu/pid1"
 
-      - name: Upload bounded QEMU diagnostics after failure
-        if: failure()
+      - name: Upload bounded QEMU qualification evidence
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dali-xnu-qemu-diagnostics
@@ -272,6 +272,7 @@ jobs:
             host_timeout=120
             profile_args+=(--reset-qualification)
           elif [[ "$VALIDATION_PROFILE" == pid1 ]]; then
+            auto=false
             profile_args+=(--pid1-directory "$RUNNER_TEMP/dali-pid1-fixture")
           else
             echo "Unsupported validation profile" >&2
