@@ -92,6 +92,43 @@ production C against PMIC-byte/I2C/GPIO models, with per-operation faults in
 power-on, mode, pull-up, idle, wake and shutdown. They do not qualify real PMIF,
 I2C, GPIO or USB operation.
 
+The separate `DaliUsbGpio.c` implements actual MT6991 GPIO72 MMIO access using
+the fixed pinctrl field tables. MODE is `0x390[3:0]`; DIR/DO/DI are
+`0x20/0x120/0x220[8]` relative to GPIO base `0x1002d000`
+(`pinctrl-mt6991.c:40-110`). `FLAG_RACE_FREE_ACCESS` selects SET/CLR at+4/+8;
+mode uses MWR+0xc (`pinctrl-mtk-common-v2.c:22-35,100-129,245-292`). This backend
+only accepts inherited GPIO mode0 and never writes MODE. After USB quiesce it
+writes DO SET/CLR before DIR SET, then reads DO/DIR/MODE back. Other pin fields
+are untouched. Failed accesses retain context and unknown output; reset-low
+may be retried but enable stays refused after a fault. Destroy confirms reset
+low before clearing context. The actual GPIO/NXP combined fixture still models
+MMIO and I2C: it proves code order and neighboring-bit protection, not pad voltage.
+
+## I2C6 reference locator (backend pending)
+
+The original sparse reference did not expand I2C/pinctrl; this was a checkout
+omission rather than missing source. Both directories now belong to the pinned
+source inventory and required-file hashes. Existing isolated checkouts can be
+expanded using the manifest's complete `paths` with `git sparse-checkout set
+--no-cone --stdin`, after confirming the exact HEAD and clean state, then rerun
+the fetcher to regenerate and verify its source manifest. No original tree is used.
+
+`drivers/i2c/busses/i2c-mt65xx.c:725-756` explicitly matches MT6991, v2 registers,
+16-byte FIFO, 32-bit register accesses, byte-wide DATA_PORT, APDMA sync, speed_v2
+and separate slave-address/aux-length registers. WRRD optimization for equal
+slave write/read messages clears auto_restart (`:2353-2362`); the combined
+transaction uses CONTROL DIR_CHANGE/RS, two lengths and transaction-count2.
+The intended NXP requests are1+1-byte WRRD reads and2-byte writes; neither needs
+DMA. Polling masks interrupts only on its explicit FIFO path (`:1979-2007`).
+
+Before implementation main must read complete transfer/IRQ `:1838-2492`,
+register/accessor definitions `:155-292,767-866`, init/clock `:868-1104`,
+speed_v2 calculation/selection `:1352-1607` and DT/probe `:2508-2559,2681-2793`.
+The saved FDT gives400kHz, clock-div1, main/dma clocks, SPI343, controller
+`0x13170000/0x20000` and APDMA `0x16410000/0x10000`; it does not prove actual
+clock rate, inherited timing, stopped DMA or ownership. Generic Linux MT65xx
+similarity alone cannot qualify this newer vendor register version.
+
 `drivers/phy/mediatek/phy-mtk-xsphy.c` initializes/powers/modes the repeater list
 in order (`:2512-2520,2570-2583,2604-2618,2643-2654`). USB2 mode sets/clears
 DTM1 FORCE_IDDIG/RG_IDDIG, while SoC and repeater calibration apply mode-specific

@@ -10,6 +10,7 @@
   DaliUsbTypec.c
   DaliUsbMt6379Repeater.c
   DaliUsbNxpRepeater.c
+  DaliUsbGpio.c
 [Packages]
   MdePkg/MdePkg.dec
   UsbCore/UsbCore.dec
