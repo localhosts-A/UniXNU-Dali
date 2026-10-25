@@ -132,6 +132,20 @@ The core is not called by the boot or register-probe path yet. It has no DMA
 buffers, SCSI commands or physical-media qualification; the host-controller
 adapter, mappings and device commands remain to be implemented.
 
+`Mt6991UfsDmaLib` now supplies the private DMA ownership component: strictly UC
+pages, owned common-buffer mappings, separate data bounce pages, checked full
+spans and mapping IDs, serialized submission/completion, and quarantine after
+an uncertain request. Every release entry refuses poisoned memory until HCE=0
+has been confirmed. Attribute-restoration and page-free failures retain their
+records for safe retry. The UEFI backend uses GCD/Cpu protocols and restores the
+complete original attributes; it does not program an IOMMU or use the platform's
+default coherent DmaLib. The initial DMA address window is below 4 GiB within
+the declared 64 GiB bus window; its 4096-byte allocation pages do not define
+the device's logical block size. Thirteen native fault-injection tests execute
+the actual core and backend with mocked UEFI services. It is included for build
+validation but not called by boot yet; host-protocol/PassThru integration and
+physical DMA validation are still pending.
+
 The current NativeUfs implementation is sheng/SM8550-specific, including LUN 0,
 4 KiB assumptions and board persistence windows. Its command validation and
 tests are references; copying its hardware constants or windows is not a Dali
