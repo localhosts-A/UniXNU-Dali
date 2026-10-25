@@ -304,6 +304,26 @@ produces an unqualified result; collection-directory and result-write failures
 cannot prevent the original restore. A failed original recovery still keeps
 the identity-bound pending record and stops new trials.
 
+The first physical control diagnostic, `run-20261025T095537Z-e8b7064d`, used
+firmware `3dc6d5a`, device `57e34be` and generic `2ab7dfd`. Both candidate modes
+had passed full builds, final-FD module checks and the real CLI dry-run. On the
+phone it stopped during LINK_STARTUP: `link=4 stage=6 fault=16810020/4`.
+The raw console then recorded successful quiesce and HCE=0. Initialization
+returned before private DMA allocation or physical media commands, so this is
+failed control-plane qualification, not one of the three persistence rounds.
+The operator entered fastboot and the runner restored complete original boot_b;
+Android B/root/all 18 original hashes and the cleared ledger were independently
+rechecked against raw evidence and the backup. The token remains consumed.
+
+The fixed Linux source decodes UIC interrupt bit 2 before deciding whether it
+is fatal; LINK_STARTUP may also produce a PA generic/LINERESET indication. This
+run did not capture the layer-error registers and cannot establish that cause.
+The source comparison also identified the missing initial device-reset sequence:
+the MTK callback asserts the SiP device-reset line, stops HBA, waits 10–15 us,
+releases reset, then waits 10–15 ms before the initial HCI enable. The next
+controller revision must add that source-backed prerequisite and preserve the
+first failure's detailed UIC status; a fix has not yet been hardware-qualified.
+
 ## Completion
 
 UEFI and XNU must each demonstrate known-block reads, bounded scratch writes,
