@@ -4,6 +4,9 @@ version = 1
 timeout = 10
 default = "xnu"
 rotate = 0
+# The physical UFS host is quiesced before this menu starts. Reconnecting all
+# UEFI controllers would restart UfsPassThru and invalidate the handoff.
+connect_all = false
 
 [ui]
 title = "UniXNU / REDMI K80 Ultra"

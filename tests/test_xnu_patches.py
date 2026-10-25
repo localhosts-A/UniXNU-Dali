@@ -75,6 +75,7 @@ class BootMenuConfigTests(unittest.TestCase):
         hardware = tomllib.loads((ROOT / 'package/unixnu.toml').read_text())['boot']
         board = tomllib.loads((ROOT / 'board.toml').read_text())['payload']
         self.assertEqual(hardware['default'], 'xnu')
+        self.assertFalse(hardware['connect_all'])
         self.assertGreaterEqual(hardware['timeout'], 10)
         self.assertEqual(board['timeout'], hardware['timeout'])
 
