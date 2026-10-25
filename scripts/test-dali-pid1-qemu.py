@@ -105,6 +105,18 @@ def main():
     with (a.output_dir / 'probe.log').open('w') as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=240)
     if result.returncode:
+        # Expose the actual bounded guest failure in CI without requiring a
+        # full artifact download; the complete raw report is still uploaded.
+        report_path = a.output_dir / 'probe/gdb-stop.json'
+        if report_path.is_file():
+            try:
+                failed = json.loads(report_path.read_text())
+                print(json.dumps({key: failed.get(key) for key in (
+                    'kernel_sha256', 'kernel_exception', 'stop_symbol',
+                    'bounded_timeout_interrupted', 'native_user_el0_observed',
+                    'amfi_interface_pointer', 'requested_kernel_symbols')}, indent=2), flush=True)
+            except (OSError, ValueError) as error:
+                print(f'PID1 guest report unavailable: {error}', flush=True)
         raise SystemExit(f'PID1 QEMU probe failed; see {a.output_dir / "probe.log"}')
     report = json.loads((a.output_dir / 'probe/gdb-stop.json').read_text())
     summary = validate_report(report, *hashes)
