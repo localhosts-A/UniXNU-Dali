@@ -32,7 +32,7 @@ class DaliUsbStorageBuilderTests(unittest.TestCase):
             }
             command, cwd = BUILDER.compile_command(
                 record_path, record, replacement, root / "new.o", [root / "pinned-storage"])
-            self.assertEqual(cwd, root)
+            self.assertEqual(cwd, root.resolve())
             self.assertEqual(command[:4], ["xcrun", "--sdk", "iphoneos", "clang++"])
             self.assertIn(str(replacement), command)
             self.assertNotIn(str(original), command)
