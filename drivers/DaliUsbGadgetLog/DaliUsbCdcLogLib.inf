@@ -13,6 +13,8 @@
 [Packages]
   MdePkg/MdePkg.dec
   UsbCore/UsbCore.dec
+[LibraryClasses]
+  UsbCoreLib
 
 [BuildOptions]
   *_*_*_CC_FLAGS = -DUNIXNU_USB_EDK2
