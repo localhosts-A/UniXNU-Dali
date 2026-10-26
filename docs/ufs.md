@@ -758,3 +758,32 @@ Export evidence before the complete original `boot_b` restore, which overwrites
 the scratch by design. Every cycle ends with Android B, root and all 18 original
 hashes verified. A pending restore prevents another candidate. No GPT, RPMB,
 userdata, expdb, blackbox, LK, preloader, AVB or misc writes are permitted.
+# 2026-10-26: source-XNU physical read/sync milestone
+
+Run `run-20261026T040708Z-2c3e6b7e` used device `fe20ee1`, generic
+`a3dfbe4`, UEFI `d3cb686`, kernel SHA
+`f1b2129d213cd51885b92d9ea46b3b04c5c9ff0c803844b54f68a0befac821b1`
+and candidate SHA
+`f8418e08ac74593c2eb82fbcc8fae1793ffffa2a627402781584bbd826b7bb54`.
+One marked XNU boot reaches the platform checkpoint, controller readiness and
+its own DMA span, discovers three 4096-byte-block LUNs, and reads ten samples.
+LUN2 has 64,577,536 blocks; its known GPT headers, all 96 partition identities
+and geometries, and the current candidate's boot_b first block match the
+Android/candidate evidence. LUN0/1 samples are observed but were not independently
+compared with Android content. The three LUN synchronizations report success.
+
+Raw console: 492,877 bytes, SHA-256
+`4ea0136bcd2f1b20ed5fc5a8b272c37c791fc84c1c79f23011224675a93693e8`.
+The original scorer stopped at the producer's valid `diagnostics` summary,
+which its fixture omitted. The corrected offline scorer now requires that
+exact successful read-only summary and records content/LUN-sync milestones.
+The original result remains unchanged. There is no XNU quiesce/stop record
+before the operator's forced restart: full read-only/stop/handoff qualification
+therefore remains false, as do all write and persistence qualifications.
+
+Original-only recovery restored the full original boot_b, Android B/root and
+all 18 original hashes; the primary audit also rehashed all original backup
+bytes, independently reconstructed reciprocal GPT CRCs and all partition rows,
+and verified the candidate/raw/token/cleared-ledger bindings. This run does not
+satisfy the pre-restore evidence-export requirement for later write trials.
+

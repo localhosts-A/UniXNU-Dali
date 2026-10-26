@@ -41,6 +41,7 @@ def select_xnu_boot(text, token):
 
 def score_xnu_readonly(text, token, baseline, candidate, firmware_luns=None):
     result = dict(run_token=token, xnu_read_only_pass=False, xnu_sync_report_pass=False,
+                  xnu_content_pass=False, xnu_lun_sync_pass=False, xnu_diagnostics_pass=False,
                   xnu_stop_report_pass=False, device_identity_verified_by_scorer=False,
                   physical_ufs_qualified=False, firmware_xnu_handoff_qualified=False,
                   media_writes_qualified=False, persistence_qualified=False)
@@ -169,6 +170,13 @@ def score_xnu_readonly(text, token, baseline, candidate, firmware_luns=None):
         end = take('diagnostics-end')
         if end[1] != 1 or end[2] < samples or end[3] != previous_sync:
             raise ValueError('failed/inconsistent final diagnostic counters')
+        # worker() always reports this summary after diagnose() returns. Require
+        # exact read-only mode; a scratch diagnostic cannot qualify this profile.
+        exact('diagnostics', (1, 0, 0))
+        result.update(xnu_content_pass=True, xnu_lun_sync_pass=True, xnu_diagnostics_pass=True,
+                      verified_content_luns=[baseline['lun']], observed_roots=roots,
+                      observed_partitions=len(partitions), samples=samples,
+                      candidate_sha256=sha256(candidate), baseline_sha256=baseline['baseline_sha256'])
         stopped_sync = None
         while position < len(rows):
             row = take('quiesce-sync')

@@ -37,6 +37,7 @@ def trace(baseline, token=TOKEN):
         if part['name']=='boot_b':
             sample(lun,0,start,size,block,'boot_b',evidence.sha256(CANDIDATE[:block]))
     record('sync',lun,0,1); record('diagnostics-end',1,4,1)
+    record('diagnostics',1,0,0)
     record('quiesce-sync',0,2); record('quiesce',8,1,0)
     return '\n'.join(rows)
 
@@ -139,6 +140,28 @@ class XnuEvidenceTests(unittest.TestCase):
                         ('stage=diagnostics-end a=1 b=4','stage=diagnostics-end a=1 b=3')):
             self.assertFalse(self.score(log.replace(old,new))['xnu_read_only_pass'])
         self.assertFalse(self.score('\n'.join(log.splitlines()[:-2]))['xnu_read_only_pass'])
+
+    def test_actual_worker_summary_is_required_in_exact_read_only_mode(self):
+        log = trace(self.baseline)
+        summary = f'DALI-XNU-UFS: run={TOKEN} stage=diagnostics a=1 b=0 c=0'
+        for bad in (log.replace(summary, ''), log.replace(summary, summary+'\n'+summary),
+                    log.replace('stage=diagnostics a=1', 'stage=diagnostics a=0'),
+                    log.replace(summary, summary.replace('b=0', 'b=1'))):
+            out = self.score(bad)
+            self.assertFalse(out['xnu_read_only_pass'])
+
+    def test_content_and_lun_sync_milestones_do_not_qualify_missing_or_failed_stop(self):
+        log = trace(self.baseline)
+        for bad in ('\n'.join(log.splitlines()[:-2]),
+                    log.replace('stage=quiesce a=8 b=1 c=0', 'stage=quiesce a=8 b=0 c=1')):
+            out = self.score(bad)
+            self.assertTrue(out['xnu_content_pass'], out)
+            self.assertTrue(out['xnu_lun_sync_pass'])
+            self.assertTrue(out['xnu_diagnostics_pass'])
+            for key in ('xnu_read_only_pass', 'xnu_sync_report_pass', 'xnu_stop_report_pass',
+                        'firmware_xnu_handoff_qualified', 'physical_ufs_qualified',
+                        'media_writes_qualified', 'persistence_qualified'):
+                self.assertFalse(out[key], key)
     def test_firmware_must_sync_stop_and_release_each_discovered_lun_before_xnu(self):
         log=trace(self.baseline)
         for old,new in (('mask=4 commands=1','mask=0 commands=0'),
