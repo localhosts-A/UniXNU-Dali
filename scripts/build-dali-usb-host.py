@@ -25,6 +25,7 @@ REQUIRED_SYMBOLS = (
     "usb_xhci_read_capabilities",
     "usb_xhci_transfer_ring_init", "usb_xhci_transfer_ring_mark_active",
     "usb_xhci_transfer_ring_enqueue", "usb_xhci_transfer_ring_complete_through",
+    "usb_xhci_transfer_ring_complete_event", "usb_xhci_event_decode",
     "usb_xhci_transfer_ring_halted", "usb_xhci_transfer_ring_destroy",
     "usb_xhci_event_ring_init", "usb_xhci_event_ring_mark_active",
     "usb_xhci_event_ring_read", "usb_xhci_event_ring_dequeue_address",

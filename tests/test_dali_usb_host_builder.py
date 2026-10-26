@@ -127,6 +127,7 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
                          "usb_block_io_sync", "usb_block_io_quiesce",
                          "usb_block_io_detach", "usb_xhci_read_capabilities",
                          "usb_xhci_transfer_ring_init", "usb_xhci_transfer_ring_enqueue",
+                         "usb_xhci_transfer_ring_complete_event", "usb_xhci_event_decode",
                          "usb_xhci_event_ring_init", "usb_xhci_event_ring_read"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))
 
