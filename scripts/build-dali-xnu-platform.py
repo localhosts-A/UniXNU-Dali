@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import subprocess
 import struct
@@ -153,6 +154,37 @@ def mali_archive():
             "hardware_exercised": False, "abi_version": 1, "requires_bootargs": ["dali-mali=1", "maxmem=1992"]}
 
 
+def mali_accelerator():
+    source = ROOT/'drivers/DaliMaliAccelerator/DaliMaliAccelerator.cpp'
+    obj = OUT/'DaliMaliAccelerator.o'
+    compile_source(source, obj)
+    bundle = OUT/'DaliMaliAccelerator.kext'
+    bundle.mkdir(parents=True, exist_ok=True)
+    executable = bundle/'DaliMaliAccelerator'
+    command = ['xcrun', 'ld', '-kext', '-arch', 'arm64', '-undefined', 'dynamic_lookup',
+               '-platform_version', 'ios', '17.0', '26.0', '-o', executable, obj]
+    result = subprocess.run([str(x) for x in command], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    (OUT/'DaliMaliAccelerator-link.log').write_text(result.stdout)
+    if result.returncode:raise SystemExit('Mali accelerator kext link failed:\n'+result.stdout)
+    magic, cpu, _, kind = struct.unpack_from('<4I', executable.read_bytes())
+    if (magic, cpu, kind) != (0xfeedfacf, 0x100000c, 11):
+        raise SystemExit('Accelerator companion must be actual arm64 MH_KEXT_BUNDLE')
+    symbols = subprocess.check_output(['xcrun','nm','-g',executable],text=True)
+    (OUT/'DaliMaliAccelerator-symbols.txt').write_text(symbols)
+    for symbol in ['_kmod_info','DaliMaliAccelerator10gMetaClassE']:
+        if not any(symbol in line and ' U ' not in line for line in symbols.splitlines()):
+            raise SystemExit('Accelerator companion missing '+symbol)
+    (bundle/'Info.plist').write_bytes(plistlib.dumps(dict(
+        CFBundleIdentifier='org.unixnu.DaliMaliAccelerator',CFBundleExecutable='DaliMaliAccelerator',
+        CFBundlePackageType='KEXT',CFBundleVersion='1.0.0',OSBundleRequired='Root',
+        OSBundleLibraries={'com.apple.iokit.IOGPUFamily':'1.0.0','com.apple.kpi.iokit':'23.0.0','com.apple.kpi.libkern':'23.0.0'},
+        IOKitPersonalities={'Dali Mali Metal':dict(IOClass='DaliMaliAccelerator',IOProviderClass='DaliMali',
+            CFBundleIdentifier='org.unixnu.DaliMaliAccelerator',MetalPluginName='NativeMaliMetal',MetalPluginClassName='NativeMaliMetalDevice')})))
+    return {'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),
+            'executable_sha256':hashlib.sha256(executable.read_bytes()).hexdigest(),
+            'dependency':'com.apple.iokit.IOGPUFamily','hardware_exercised':False,'runtime_link_qualified':False}
+
+
 sources = {
     "armdt": (ROOT / "drivers/ArmDTPlatform/ArmDTPlatform.cpp", ROOT / "build/armdt-platform/libArmDTPlatform.a"),
     "armcpu": (ROOT / "drivers/ArmCpu/ArmCpu.cpp", ROOT / "build/armcpu/libArmCpu.a"),
@@ -161,6 +193,7 @@ sources = {
 report = {name: archive(name, *pair) for name, pair in sources.items()}
 report["dali-ufs"] = ufs_archive()
 report["dali-mali"] = mali_archive()
+report['dali-mali-accelerator'] = mali_accelerator()
 report["xnu_version"] = {"darwin": os.environ["UNIXNU_XNU_DARWIN"], "build": os.environ["UNIXNU_XNU_VERSION"]}
 report["compile_record"] = str(record_path.relative_to(ROOT))
 report["compile_record_sha256"] = hashlib.sha256(record_path.read_bytes()).hexdigest()

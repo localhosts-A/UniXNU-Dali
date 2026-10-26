@@ -6,6 +6,7 @@
 #include <pexpert/pexpert.h>
 #include <vm/vm_map.h>
 #include <mach/vm_param.h>
+#include <kern/task.h>
 extern "C" uint64_t gPhysBase;
 using namespace native_mali;
 DaliMali::Window *DaliMali::window(WindowId id){for(size_t i=0;i<windowCount_;++i)if(windows_[i].id==id)return windows_+i;return nullptr;}
@@ -150,7 +151,8 @@ IOReturn DaliMali::newUserClient(task_t task,void *security,UInt32 type,OSDictio
     *out=client;return kIOReturnSuccess;
 }
 bool DaliMaliUserClient::initWithTask(task_t task,void *security,UInt32 type,OSDictionary *properties){
-    if(!task||type||!IOUserClient::initWithTask(task,security,type,properties))return false;
+    if(!task||type||!get_task_map(task)||vm_map_page_size(get_task_map(task))!=4096||
+        !IOUserClient::initWithTask(task,security,type,properties))return false;
     task_=task;task_reference(task);lock_=IOLockAlloc();return lock_!=nullptr;
 }
 bool DaliMaliUserClient::start(IOService *provider){
