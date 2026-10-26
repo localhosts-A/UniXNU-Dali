@@ -1,7 +1,9 @@
 import importlib.util
 from pathlib import Path
+import struct
 import tempfile
 import unittest
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("userdata_log_runner", ROOT / "scripts/run-userdata-log.py")
@@ -30,7 +32,39 @@ def transcript(*, complete=True):
     return "\n".join(lines)
 
 
+def apple_node(name, props=(), children=()):
+    values = [("name", name.encode("ascii") + b"\0"), *props]
+    data = bytearray(struct.pack("<II", len(values), len(children)))
+    for key, value in values:
+        data.extend(struct.pack("<32sI", key.encode("ascii"), len(value)))
+        data.extend(value); data.extend(bytes(-len(value) % 4))
+    for child in children: data.extend(child)
+    return bytes(data)
+
+
+def userdata_wire(token):
+    return runner.encode_scratch_grant(dict(
+        profile="userdata-logs-diagnostic-v1", target_partition="unixnu_logs",
+        write_authorized=True, media_writes=True, token=token,
+        device_binding_sha256="11" * 32, candidate_sha256="22" * 32,
+        source_sha256="33" * 32, partition_guid="cde9ab32-18d8-4777-8ced-691e7cd5c636",
+        lun=2, block_bytes=4096, capacity_blocks=64577536, boot_start_lba=64565240,
+        boot_blocks=8192, payload_end_bytes=0, scratch_start_lba=64565240,
+        scratch_blocks=1024, tail_guard_blocks=7168, sequence=1))
+
+
 class UserdataLogRunnerTests(unittest.TestCase):
+    def test_exact_v4_grant_is_bound_into_the_candidate_adt_with_pinned_encoder(self):
+        adt = apple_node("device-tree", children=[apple_node("arm-io", children=[
+            apple_node("dali-ufs", [("compatible", b"localhosts,dali-ufs\0")])])])
+        wire = userdata_wire(TOKEN)
+        uefi = ROOT.parent / "UEFI-Dali-ufs-scratch"
+        bound = runner.bind_userdata_grant_to_adt(uefi, adt, wire, TOKEN)
+        self.assertNotEqual(bound, adt)
+        self.assertEqual(runner.bind_userdata_grant_to_adt(uefi, bound, wire, TOKEN), bound)
+        with self.assertRaisesRegex(runner.cycle.CycleError, "authorized userdata grant"):
+            runner.bind_userdata_grant_to_adt(uefi, adt, wire, "f" * 32)
+
     def test_transcript_requires_write_sync_and_same_candidate_readback_for_both_owners(self):
         complete = runner.score_userdata_transcript(transcript(), TOKEN, 1)
         self.assertTrue(complete["uefi_write_sync_pass"])

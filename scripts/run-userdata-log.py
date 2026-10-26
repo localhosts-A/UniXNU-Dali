@@ -18,6 +18,7 @@ import re
 import secrets
 import shlex
 import stat
+import struct
 import subprocess
 import sys
 import tomllib
@@ -147,6 +148,22 @@ def provisional_boot_image(original):
     return image
 
 
+def bind_userdata_grant_to_adt(uefi, adt_bytes, wire, token):
+    """Apply the exact pinned payload builder's userdata grant ADT encoding."""
+    payload_path = Path(uefi) / "tools/make_payload.py"
+    spec = importlib.util.spec_from_file_location("userdata_trial_payload_tools", payload_path)
+    if spec is None or spec.loader is None:
+        raise cycle.CycleError("pinned UEFI payload ADT encoder is unavailable")
+    payload_tools = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(payload_tools)
+    try:
+        payload_tools.validate_userdata_log_wire(wire, token)
+        return payload_tools.append_apple_dt_property(
+            adt_bytes, "/device-tree/arm-io/dali-ufs", "userdata-logs-grant-v4", wire)
+    except (OSError, ValueError, UnicodeError, struct.error) as error:
+        raise cycle.CycleError("cannot bind the authorized userdata grant into the XNU ADT: " + str(error)) from None
+
+
 def build_trial(args, lease):
     for repo in (DEVICE, args.unixnu): cycle.verify_clean_repository(repo)
     cycle.verify_clean_repository(args.uefi, allow_mu_patches=True)
@@ -178,6 +195,10 @@ def build_trial(args, lease):
                   candidate_image=provisional, original_boot_b=args.backup / "boot_b.img",
                   log_partition_bytes=log_raw)
     grant, wire, proposal = build_userdata_logs_grant(**inputs)
+    bound_adt = bind_userdata_grant_to_adt(args.uefi, adt.read_bytes(), wire, token)
+    staged_adt = run / "dali-grant-bound.adt"
+    copy_bytes(bound_adt, staged_adt)
+    os.replace(staged_adt, adt)
     copy_bytes(wire, candidate / "grant.bin")
     packed = run / "candidate-build"; packed.mkdir(mode=0o700)
     boot, manifest = cycle.build_candidate(args, args.backup, candidate / "source-kernel.macho", adt,
