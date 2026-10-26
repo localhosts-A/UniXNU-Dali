@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build the portable USB host core with the source-only XNU C ABI."""
+import argparse
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 OBJECTS = ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837"
 OUT = ROOT / "build/dali-usb-host"
+ARCHIVE = OUT / "libDaliUsbHost.a"
 SOURCES = (ROOT / "drivers/UsbCore/UsbCore.c", ROOT / "drivers/UsbCore/UsbHost.c",
            ROOT / "drivers/UsbCore/UsbStorage.c")
 REQUIRED_SYMBOLS = (
@@ -113,6 +115,24 @@ def validate_object(path):
         raise ValueError("USB host/storage object lacks the expected iOS build version")
 
 
+def normalized_symbols(output):
+    return {line.split()[-1].lstrip("_") for line in output.splitlines() if line.split()}
+
+
+def missing_symbols(output, required):
+    symbols = normalized_symbols(output)
+    return sorted(set(required) - symbols)
+
+
+def check_kernel_symbols(defined, undefined):
+    missing = missing_symbols(defined, REQUIRED_SYMBOLS)
+    unresolved = sorted(set(REQUIRED_SYMBOLS) - set(missing_symbols(undefined, REQUIRED_SYMBOLS)))
+    if missing or unresolved:
+        raise ValueError("USB host kernel link mismatch; missing=" + ",".join(missing) +
+                         " unresolved=" + ",".join(unresolved))
+    return list(REQUIRED_SYMBOLS)
+
+
 def run_logged(command, directory, log):
     result = subprocess.run(command, cwd=directory, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
@@ -150,11 +170,10 @@ def build():
                             "object": str(obj.relative_to(ROOT)), "object_sha256": digest(obj),
                             "command": command, "log": str(log.relative_to(ROOT)),
                             "log_sha256": digest(log)})
-    archive = OUT / "libDaliUsbHost.a"
-    archive.unlink(missing_ok=True)
-    subprocess.run(["xcrun", "ar", "rcs", str(archive), *map(str, objects)], check=True)
-    symbols = subprocess.check_output(["xcrun", "nm", "-gU", str(archive)], text=True)
-    normalized = {line.split()[-1].lstrip("_") for line in symbols.splitlines() if line.split()}
+    ARCHIVE.unlink(missing_ok=True)
+    subprocess.run(["xcrun", "ar", "rcs", str(ARCHIVE), *map(str, objects)], check=True)
+    symbols = subprocess.check_output(["xcrun", "nm", "-gU", str(ARCHIVE)], text=True)
+    normalized = normalized_symbols(symbols)
     missing = sorted(set(REQUIRED_SYMBOLS) - normalized)
     if missing:
         raise ValueError("USB host/storage archive lacks production symbols: " + ", ".join(missing))
@@ -162,8 +181,8 @@ def build():
         "compile_record": str(record_path.relative_to(ROOT)),
         "compile_record_sha256": digest(record_path),
         "objects": object_rows,
-        "archive": str(archive.relative_to(ROOT)),
-        "archive_sha256": digest(archive),
+        "archive": str(ARCHIVE.relative_to(ROOT)),
+        "archive_sha256": digest(ARCHIVE),
         "required_symbols": list(REQUIRED_SYMBOLS),
         "source_archive_built": True,
         "kernel_link_verified": False,
@@ -174,12 +193,32 @@ def build():
     print("PASS: Dali USB host/storage core archive built from the XNU C compile record; runtime remains unqualified")
 
 
-def main():
+def verify_kernel(kernel):
+    kernel = kernel.resolve()
+    report = json.loads((OUT / "build-report.json").read_text())
+    if (report.get("source_archive_built") is not True or
+            report.get("required_symbols") != list(REQUIRED_SYMBOLS) or
+            report.get("archive_sha256") != digest(ARCHIVE)):
+        raise ValueError("Dali USB host archive/report mismatch")
+    defined = subprocess.check_output(["xcrun", "nm", "-gU", str(kernel)], text=True)
+    undefined = subprocess.check_output(["xcrun", "nm", "-u", str(kernel)], text=True)
+    checks = check_kernel_symbols(defined, undefined)
+    result = dict(report, kernel_link_verified=True, kernel_sha256=digest(kernel),
+                  kernel_symbol_checks=checks, host_runtime_qualified=False,
+                  hardware_qualified=False)
+    (OUT / "kernel-link-report.json").write_text(json.dumps(result, indent=2) + "\n")
+    print("PASS: Dali USB host enumeration, hub, HID and BOT symbols resolve in the XNU kernel")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--verify-kernel", type=Path)
+    args = parser.parse_args(argv)
     enabled = os.environ.get("XNU_NATIVE_USB_HOST", "0")
     if enabled == "0":
         print("SKIP: source-only USB host/storage core disabled")
     elif enabled == "1":
-        build()
+        verify_kernel(args.verify_kernel) if args.verify_kernel else build()
     else:
         raise SystemExit("XNU_NATIVE_USB_HOST must be 0 or 1")
 

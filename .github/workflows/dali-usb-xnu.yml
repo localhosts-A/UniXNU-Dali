@@ -131,6 +131,7 @@ jobs:
           ./unixnu build kernel --source-only -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS" 2>&1 | tee "$RUNNER_TEMP/dali-usb-xnu-build.log"
           tree="$UNIXNU_OUT/dali/tree"
           kernel="$tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+          python3 "$tree/scripts/build-dali-usb-host.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-dali-usb-storage.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-storage.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-hid.py" --verify-kernel "$kernel"
