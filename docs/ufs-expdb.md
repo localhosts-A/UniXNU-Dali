@@ -68,17 +68,43 @@ then compares the observed UFS identity, geometry/WP and reciprocal GPT layout
 after all four GPT reads. Only that final callback can fill the live grant.
 The publisher requires an authorizer and follows the live grant for revocation;
 stop and quiesce clear it before further submissions, including deferred busy
-shutdown. This has native tests and RO/off ARM64 builds; the enabled runtime
-branch still needs binary and hardware qualification. The current build keeps
-the grant zero, and no complete write runner is enabled. Standard fastboot fetch was tested and is
-unavailable on this LK; a real pre-restore evidence-export path remains required.
-No existing post-restore Android pstore collector may be counted as that path.
+shutdown. The optional console-log consumer now has native fault tests and
+RO/enabled/off ARM64 builds. The enabled build used a compile-only fixture wire;
+it was not packaged or flashed. A dedicated trial builder is still required.
+Standard fastboot fetch is unavailable on this LK. The operator explicitly
+cancelled QR and the former pre-restore-export requirement; collection uses
+original boot_b restoration followed by Android ramoops, as requested.
 
 For each future round, keep the same candidate through write and read-only
 reboot verification. The read-only child opens with reader access and cannot
-replay a marker or payload. Export the evidence before restoring original data.
-Restore expdb's original bytes and verify them at the defined pre-Android stage,
-then restore the complete original boot_b and verify Android B/root/all 18
-original partition hashes. Vendor writes to expdb during original Android boot
-must be reported separately; they cannot be hidden as an exact restore match.
-Pending or failed restoration prohibits the next round.
+replay a marker or payload. Keep ramoops enabled until actual log writing, device
+sync and reboot/readback succeed, then reconnect/verify automatic fastboot before
+disabling ramoops. None of the current software results qualifies that transition.
+
+`restore-expdb-log.py --serial SERIAL --backup BACKUP --restore-run RUN` is a
+recovery-only entry for an already armed `dali-expdb-log-trial` in the canonical
+lease. It does not create or flash a test candidate. It reopens the sealed kernel,
+source manifest, v3 grant, both baselines, full expdb image and raw GPT/identity
+captures, and refuses a different pending run/token/device.
+
+Recovery restores original boot_b, starts original Android B, stores ramoops and
+exports the complete current expdb into a new private attempt folder. It decodes
+the window against the sealed identity and retains corrupt/torn bytes as a failed
+diagnostic. Collection/storage errors keep recovery pending. Empty successfully
+collected pstore or an invalid expdb record cannot qualify writes/persistence.
+
+Before its sole window write, the Android backend rechecks UFS identity, actual
+LUN/block size/capacity, sysfs and Unit Descriptor write protection, reciprocal
+GPT, GUID and partition range, Android B/root and all 18 original hashes. The
+head and all bytes after the window must match the original backup. The complete
+original window is staged as a regular file and checked remotely for exact length
+and SHA before a bounded dd with fsync, followed by blockdev flush and a complete
+partition hash readback. Actual Android Toybox lacks `iflag=fullblock`; no block
+write consumes a potentially short input pipe. No write/sync failure is retried
+automatically. Another explicit recovery can inspect and restore original bytes.
+
+Only after the entire expdb matches its original hash and Android B/root/all 18
+original hashes pass may the separate pending_expdb ledger flag be cleared.
+Vendor modifications outside the window are exported and reported; they cannot
+be hidden by overwriting the guard or labelled an exact restoration. Pending or
+failed restoration prohibits the next round.
