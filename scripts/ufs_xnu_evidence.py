@@ -12,6 +12,33 @@ from ufs_readonly_evidence import TOKEN, sha256
 import ufs_geometry as geometry
 
 
+BOOT_BOUNDARY = 'DALI: UEFI relocation shim entered'
+
+
+def select_xnu_boot(text, token):
+    """Select one marked boot; never join checkpoints or handoff across reboots."""
+    if not isinstance(text, str) or len(text) > 16 * 1024 * 1024 or not isinstance(token, str) or not TOKEN.fullmatch(token):
+        raise ValueError('invalid token or oversized console')
+    lines = text.splitlines()
+    boundaries = [i for i, line in enumerate(lines) if line == BOOT_BOUNDARY]
+    if not boundaries:
+        raise ValueError('missing firmware boot boundary')
+    prefix = 'DALI-XNU-UFS: run=' + token + ' '
+
+    def has_xnu(rows):
+        return any(line.startswith(prefix) or
+                   (line.startswith('DALI-XNU: ') and ' run=' + token + ' ' in line)
+                   for line in rows)
+
+    if has_xnu(lines[:boundaries[0]]):
+        raise ValueError('current-token XNU records before firmware boot boundary')
+    blocks = [lines[start:end] for start, end in zip(boundaries, boundaries[1:] + [len(lines)])]
+    candidates = [rows for rows in blocks if has_xnu(rows)]
+    if len(candidates) != 1:
+        raise ValueError('missing or ambiguous current-token XNU boot')
+    return '\n'.join(candidates[0])
+
+
 def score_xnu_readonly(text, token, baseline, candidate, firmware_luns=None):
     result = dict(run_token=token, xnu_read_only_pass=False, xnu_sync_report_pass=False,
                   xnu_stop_report_pass=False, device_identity_verified_by_scorer=False,
@@ -24,7 +51,7 @@ def score_xnu_readonly(text, token, baseline, candidate, firmware_luns=None):
         block = baseline['block_size']
         if not block <= len(candidate) <= baseline['boot_b_blocks'] * block:
             raise ValueError('candidate outside baseline boot_b bounds')
-        raw = text.splitlines()
+        raw = select_xnu_boot(text, token).splitlines()
         prefix = 'DALI-XNU-UFS: run=' + token + ' '
         rows = []
         for index, line in enumerate(raw):
@@ -82,19 +109,24 @@ def score_xnu_readonly(text, token, baseline, candidate, firmware_luns=None):
             if expected is not None and observed != expected:
                 raise ValueError('known block differs from Android/current candidate')
 
-        start_record = exact('start', (0, 0, 0))
+        exact('start', (0, 0, 0))
         sha = exact('sha-pass', (0, 0, 0))
         checkpoints = [(i, line) for i, line in enumerate(raw) if line.startswith('DALI-XNU: ') and ' run=' + token + ' ' in line]
         checkpoint = (r'DALI-XNU: darwin=[0-9.]+ build=[0-9.]+ run=' + token +
                       r' bootarg=1 registered=1 platform=1 gic=1 timer=([1-9][0-9]*) mpidr=0x([0-9a-f]{1,16}) checkpoint=PASS')
         platform = re.fullmatch(checkpoint, checkpoints[0][1]) if len(checkpoints) == 1 else None
-        if (not platform or checkpoints[0][0] >= start_record[4] or checkpoints[0][0] >= sha[4] or
+        # Service registration logs 'start' before the asynchronous worker waits
+        # for the persisted checkpoint. SHA and all controller access follow it.
+        if (not platform or checkpoints[0][0] >= sha[4] or
                 int(platform[2], 16) & 0xff00ffffff or int(platform[1]) > geometry.UINT64_MAX):
             raise ValueError('missing successful platform checkpoint before hardware')
         exact('controller', (7, 7, 0))
         dma = take('dma')
         if not dma[1] or dma[1] & 4095 or not 0x22000 <= dma[2] <= 0xffffffff or dma[2] & 4095 or dma[1] + dma[2] > 0x100000000 or dma[3] not in (16, 32, 64, 128, 256, 512, 1024, 2048, 4096):
             raise ValueError('invalid full DMA span/cache line')
+        if position < len(rows) and rows[position][0] == 'probe-failed':
+            failed = take('probe-failed')
+            raise ValueError('XNU LUN probe failed: lun=%d status=%d target=0x%x' % failed[1:4])
         roots = {}
         while position < len(rows) and rows[position][0] == 'geometry':
             row = take('geometry'); lun, count, bs = row[1:4]

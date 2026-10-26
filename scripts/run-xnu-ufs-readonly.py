@@ -14,7 +14,7 @@ import sys
 
 DEVICE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEVICE / 'scripts'))
-from ufs_xnu_evidence import score_xnu_readonly
+from ufs_xnu_evidence import score_xnu_readonly, select_xnu_boot
 
 probe_spec = importlib.util.spec_from_file_location('dali_xnu_ufs_probe_helpers', DEVICE / 'scripts/run-ufs-probe.py')
 probe = importlib.util.module_from_spec(probe_spec)
@@ -122,7 +122,14 @@ def xnu_scorer(args, run, state):
                     manifest.get('payload', {}).get('xnu_run_token') != token or
                     manifest.get('ufs_xnu', {}).get('run_token') != token):
                 raise ValueError('sealed source-XNU candidate/token changed')
-            uefi = probe.readonly.score_readonly(text, token, baseline, candidate)
+            try:
+                boot_text = select_xnu_boot(text, token)
+            except ValueError as error:
+                # This combined runner must bind both sides to one XNU boot.
+                # Never fall back to joining firmware records across reboots.
+                uefi = {'uefi_read_only_pass': False, 'failure': str(error)}
+            else:
+                uefi = probe.readonly.score_readonly(boot_text, token, baseline, candidate)
             firmware_luns = uefi.get('observed_roots', {}).keys() if uefi.get('uefi_read_only_pass') else None
             result = score_xnu_readonly(text, token, baseline, candidate, firmware_luns)
             restored_bound = (state.get('restore_verified') is True and
@@ -138,6 +145,7 @@ def xnu_scorer(args, run, state):
                           uefi_sync_command_pass=bool(uefi.get('uefi_sync_command_pass')),
                           uefi_diagnostic_stop_pass=bool(uefi.get('diagnostic_stop_pass')),
                           uefi_read_only_qualified=bool(uefi_bound),
+                          uefi_evidence_failure=uefi.get('failure'),
                           observation_complete=bool(uefi.get('uefi_read_only_pass') and result.get('xnu_read_only_pass')),
                           device_identity_bound_to_run=restored_bound,
                           candidate_bound_to_run=restored_bound,
@@ -314,7 +322,7 @@ def run_trial(args, lease):
     lease.arm(run, state)
     cycle.write_json(run / 'candidate.json', manifest)
     print('ORIGINAL-ONLY RECOVERY: ' + shlex.join(state['restore_command']), flush=True)
-    print('XNU UFS candidate is running. Hold Volume Up until the deliberate recovery request; immediately hold Volume Down during the 2-second LK watchdog window to enter fastboot. The runner will restore the complete original Android boot_b.', flush=True)
+    print('XNU UFS candidate is running. Leave the default UniXNU single-core early boot entry untouched for its 10-second countdown, or select it and confirm with Power. A frozen menu image does not establish a boot failure. After XNU diagnostics, hold Volume Up for the deliberate recovery request, then immediately hold Volume Down during the 2-second LK watchdog window for fastboot. If no request appears, use Power plus Volume Down for manual fastboot. The runner restores the complete original Android boot_b.', flush=True)
     try:
         cycle.flash_boot_b(args.fastboot_serial, private_dir / 'UniXNU-dali-uefi-boot.img')
         cycle.fastboot_command(args.fastboot_serial, 'reboot', timeout=20)

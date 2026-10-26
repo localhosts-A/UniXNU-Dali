@@ -680,10 +680,34 @@ idempotent. The XNU driver then uses its own queue and DMA allocation. Manual
 recovery for this profile is the XNU prompt: hold Volume Up to request recovery,
 then hold Volume Down through the two-second LK watchdog interval to enter
 fastboot. This differs from the UEFI-only menu recovery used by earlier probes.
+Start the default `UniXNU single-core early boot` entry by waiting for its
+10-second countdown or by selecting it and pressing Power. The menu does not
+redraw a zero-second frame before launching; a retained menu image alone cannot
+establish where execution stopped. If XNU's recovery prompt does not appear,
+Power plus Volume Down can be used to force fastboot for original-only recovery.
 The scorer requires both the token-bound UEFI BlockIo read/sync/stop transcript
-and the later XNU read/sync/stop transcript in the same ramoops capture. It binds
+and the later XNU read/sync/stop transcript in the same marked firmware boot. It binds
 the firmware stop mask to the LUN set observed by UEFI before requiring the XNU
 platform checkpoint and controller records.
+
+Firmware shim entry markers delimit reboots in a capture. Exactly one marked
+boot may contain current-token XNU records; the combined runner uses only that
+boot for both firmware and XNU scoring. A later diagnostic-only boot cannot
+provide missing checkpoints, samples, synchronization or handoff. Missing or
+ambiguous boundaries are rejected without falling back to the full capture.
+The service's `stage=start` record may precede the asynchronous platform
+checkpoint. The checkpoint must still be persisted before `sha-pass` and all
+controller/DMA access, matching the token-bound readiness gate.
+
+The 2026-10-26 `957f304f` trial proved default-timeout launch, successful firmware
+storage quiesce/ExitBootServices and entry into source XNU's platform checkpoint.
+XNU's first LUN 0 TEST UNIT READY then returned `Status::Target` (7), SCSI CHECK
+CONDITION (2), after NOP/device-init and OCS checks. It did not qualify XNU media
+reads or complete ownership handoff. Android B/root and all 18 original hashes
+were restored. The failure path now records the last observed completion's
+UPIU transaction/LUN/tag, parsed sense key/ASC/ASCQ, target/OCS/polls and transfer
+counts before quiesce; these fields do not enable retries or writes. The exact
+device condition and the stale display remain unresolved until fresh evidence.
 
 The runner's current evidence collection reads ramoops from Android after the
 original `boot_b` has been restored. That is sufficient to keep this

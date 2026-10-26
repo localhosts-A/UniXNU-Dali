@@ -12,7 +12,7 @@ from ufs_readonly_evidence import load_baseline
 
 
 def trace(baseline, token=TOKEN):
-    rows = []
+    rows = [evidence.BOOT_BOUNDARY]
     def record(stage, a=0, b=0, c=0):
         rows.append(f'DALI-XNU-UFS: run={token} stage={stage} a={a:x} b={b:x} c={c:x}')
     def text(kind, value):
@@ -22,11 +22,10 @@ def trace(baseline, token=TOKEN):
     def sample(lun, lba, base, size, block, kind, digest):
         record('sample', lun, lba, block); record(kind, base, size, block); record(digest)
     block, count, lun = baseline['block_size'], baseline['last_lba'] + 1, baseline['lun']
-    record('start'); start_record=rows.pop()
     rows.append(f'DALI-UFS-HANDOFF: run={token} closed=1 drained-synced=1 mask={1 << lun:x} commands=1 result=Success')
     rows.append(f'DALI-UFS-HOST: run={token} quiesce=Success hce=0')
+    record('start')
     rows.append(f'DALI-XNU: darwin=24.5.0 build=10063.141.1 run={token} bootarg=1 registered=1 platform=1 gic=1 timer=12 mpidr=0x0 checkpoint=PASS')
-    rows.append(start_record)
     record('sha-pass'); record('controller',7,7); record('dma',0x90000000,0x22000,64)
     record('geometry',lun,count,block); record('initialized',1)
     record('media',lun,count*block,block)
@@ -72,6 +71,46 @@ class XnuEvidenceTests(unittest.TestCase):
             self.assertTrue(self.score(log.replace('mpidr=0x0','mpidr=0x'+mpidr))['xnu_read_only_pass'])
         for mpidr in ('1','100','10000','100000000','ffffffffffffffff'):
             self.assertFalse(self.score(log.replace('mpidr=0x0','mpidr=0x'+mpidr))['xnu_read_only_pass'])
+    def test_service_start_can_precede_checkpoint_but_hardware_cannot(self):
+        rows = trace(self.baseline).splitlines()
+        start = next(i for i, line in enumerate(rows) if 'stage=start ' in line)
+        checkpoint = next(i for i, line in enumerate(rows) if 'checkpoint=PASS' in line)
+        self.assertLess(start, checkpoint)
+        self.assertTrue(self.score('\n'.join(rows))['xnu_read_only_pass'])
+        early = rows.copy()
+        early[start], early[checkpoint] = early[checkpoint], early[start]
+        self.assertTrue(self.score('\n'.join(early))['xnu_read_only_pass'])
+        for stage in ('sha-pass', 'controller', 'dma'):
+            late = rows.copy(); saved = late.pop(checkpoint)
+            index = next(i for i, line in enumerate(late) if 'stage=' + stage + ' ' in line)
+            late.insert(index + 1, saved)
+            result = self.score('\n'.join(late))
+            self.assertFalse(result['xnu_read_only_pass'], result)
+        self.assertFalse(self.score('\n'.join(rows + [rows[checkpoint]]))['xnu_read_only_pass'])
+    def test_probe_failure_reports_target_status_without_qualifying_reads(self):
+        rows = trace(self.baseline).splitlines()
+        end = next(i for i, line in enumerate(rows) if 'stage=dma ' in line) + 1
+        rows = rows[:end] + [f'DALI-XNU-UFS: run={TOKEN} stage=probe-failed a=0 b=7 c=2',
+                            f'DALI-XNU-UFS: run={TOKEN} stage=initialized a=0 b=0 c=0']
+        result = self.score('\n'.join(rows))
+        self.assertFalse(result['xnu_read_only_pass'])
+        self.assertEqual(result['failure'], 'XNU LUN probe failed: lun=0 status=7 target=0x2')
+    def test_marked_boots_cannot_supply_each_others_checkpoint_or_handoff(self):
+        rows = trace(self.baseline).splitlines()
+        for stage in ('start', 'sha-pass', 'controller', 'dma'):
+            index = next(i for i, line in enumerate(rows) if 'stage=' + stage + ' ' in line)
+            mixed = '\n'.join(rows[:index] + [evidence.BOOT_BOUNDARY] + rows[index:])
+            self.assertFalse(self.score(mixed)['xnu_read_only_pass'], stage)
+        self.assertFalse(self.score('\n'.join(rows[1:]))['xnu_read_only_pass'])
+        self.assertFalse(self.score(rows[3] + '\n' + '\n'.join(rows))['xnu_read_only_pass'])
+    def test_only_one_current_token_xnu_boot_is_selected(self):
+        log = trace(self.baseline)
+        diagnostic = (evidence.BOOT_BOUNDARY + '\n' +
+                      f'DALI-UFS-HANDOFF: run={TOKEN} closed=1 drained-synced=1 mask=4 commands=1 result=Success\n' +
+                      f'DALI-UFS-HOST: run={TOKEN} quiesce=Success hce=0')
+        self.assertTrue(self.score(diagnostic + '\n' + log + '\n' + diagnostic)['xnu_read_only_pass'])
+        self.assertEqual(evidence.select_xnu_boot(diagnostic + '\n' + log + '\n' + diagnostic, TOKEN), log)
+        self.assertFalse(self.score(log + '\n' + log)['xnu_read_only_pass'])
     def test_platform_sha_controller_and_full_dma_bounds_are_required(self):
         log=trace(self.baseline)
         for old,new in (('checkpoint=PASS','checkpoint=FAIL'),('registered=1','registered=2'),

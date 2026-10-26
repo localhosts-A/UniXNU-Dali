@@ -228,17 +228,44 @@ class SourceXnuRunnerTests(unittest.TestCase):
             score = runner.xnu_scorer(args, live.parent, state)
             xnu_log = '\n'.join(line for line in xnu_fixtures.trace(baseline).splitlines()
                                  if not line.startswith('DALI-UFS-HANDOFF:') and
-                                 not line.startswith('DALI-UFS-HOST: run=' + token + ' quiesce='))
+                                 not line.startswith('DALI-UFS-HOST: run=' + token + ' quiesce=') and
+                                 line != xnu_fixtures.evidence.BOOT_BOUNDARY)
             firmware_log = ro_fixtures.trace(baseline)
-            result = score(firmware_log + '\n' + xnu_log, token)
+            marker = xnu_fixtures.evidence.BOOT_BOUNDARY
+            full_log = marker + '\n' + firmware_log + '\n' + xnu_log
+            result = score(full_log, token)
             self.assertTrue(result['observation_complete'], result)
             self.assertTrue(result['xnu_ufs_read_only_qualified'], result)
             self.assertTrue(result['uefi_read_only_qualified'], result)
             self.assertTrue(result['firmware_xnu_handoff_qualified'], result)
             self.assertFalse(result['media_writes_qualified'])
-            partial = score(firmware_log + '\n' + '\n'.join(xnu_log.splitlines()[:-2]), token)
+            partial = score(marker + '\n' + firmware_log + '\n' + '\n'.join(xnu_log.splitlines()[:-2]), token)
             self.assertFalse(partial['observation_complete'], partial)
             self.assertFalse(partial['xnu_ufs_read_only_qualified'])
+            # A later same-token firmware diagnostic reboot must not add its
+            # samples/syncs to the XNU boot or erase that boot's real failure.
+            diagnostic = marker + '\n' + firmware_log
+            repeated = score(full_log + '\n' + diagnostic, token)
+            self.assertTrue(repeated['observation_complete'], repeated)
+            self.assertTrue(repeated['firmware_xnu_handoff_qualified'], repeated)
+            split = score(marker + '\n' + firmware_log + '\n' + marker + '\n' + xnu_log, token)
+            self.assertFalse(split['firmware_xnu_handoff_qualified'], split)
+            failed_rows = xnu_log.splitlines()
+            end = next(i for i, line in enumerate(failed_rows) if 'stage=dma ' in line) + 1
+            failed_xnu = '\n'.join(failed_rows[:end] + [
+                f'DALI-XNU-UFS: run={token} stage=probe-failed a=0 b=7 c=2',
+                f'DALI-XNU-UFS: run={token} stage=initialized a=0 b=0 c=0'])
+            failed = score(marker + '\n' + firmware_log + '\n' + failed_xnu + '\n' + diagnostic, token)
+            self.assertEqual(failed['failure'], 'XNU LUN probe failed: lun=0 status=7 target=0x2')
+            self.assertTrue(failed['uefi_read_only_qualified'], failed)
+            self.assertFalse(failed['xnu_ufs_read_only_qualified'], failed)
+            self.assertFalse(failed['firmware_xnu_handoff_qualified'], failed)
+            for ambiguous in (firmware_log + '\n' + xnu_log, full_log + '\n' + full_log,
+                              marker + '\n' + firmware_log + '\n' + marker + '\n' + failed_xnu + '\n' + marker + '\n' + xnu_log):
+                rejected = score(ambiguous, token)
+                self.assertFalse(rejected['uefi_read_only_qualified'], rejected)
+                self.assertFalse(rejected['xnu_ufs_read_only_qualified'], rejected)
+                self.assertFalse(rejected['firmware_xnu_handoff_qualified'], rejected)
 
     def test_restore_only_run_may_not_overlap_backup_or_device_ledger(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -772,6 +772,12 @@ void DaliUfs::worker(void *p, wait_result_t) {
     if (!initialized) {
       IOLockLock(self->gate_); const auto c = self->transport_.completion(); IOLockUnlock(self->gate_);
       self->record("failed-command", static_cast<uint32_t>(c.status), c.opcode, c.interrupt);
+      // Preserve parsed completion metadata before quiesce changes the transport.
+      // These numeric fields contain no device identity or transferred payload.
+      self->record("failed-upiu", c.transaction, c.lun, c.tag);
+      self->record("failed-sense", c.senseKey, c.asc, c.ascq);
+      self->record("failed-completion", c.target, c.ocs, c.polls);
+      self->record("failed-transfer", c.bytes, c.residual);
       self->quiesce();
     }
   }
