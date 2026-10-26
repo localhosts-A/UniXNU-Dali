@@ -62,8 +62,15 @@ actual backed-up expdb. UEFI RO/off ARM64 builds are separate evidence. The
 changed XNU adapter still needs its own source-only Apple build and hardware
 qualification. None of these results is an expdb device-write or persistence pass.
 
-UEFI's static live grant remains zero. No expdb runtime grant producer or
-complete write runner is enabled. Standard fastboot fetch was tested and is
+UEFI now has a default-off runtime producer: it validates the v3 wire against
+independent RAM provenance and the compiled token before controller access,
+then compares the observed UFS identity, geometry/WP and reciprocal GPT layout
+after all four GPT reads. Only that final callback can fill the live grant.
+The publisher requires an authorizer and follows the live grant for revocation;
+stop and quiesce clear it before further submissions, including deferred busy
+shutdown. This has native tests and RO/off ARM64 builds; the enabled runtime
+branch still needs binary and hardware qualification. The current build keeps
+the grant zero, and no complete write runner is enabled. Standard fastboot fetch was tested and is
 unavailable on this LK; a real pre-restore evidence-export path remains required.
 No existing post-restore Android pstore collector may be counted as that path.
 
