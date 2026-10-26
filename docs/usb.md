@@ -137,6 +137,17 @@ API in the final kernel. Action 40313584406 also verifies the corrected
 `xhci0` resource service in the final kernel. No production controller/child
 owner publishes the HID child yet.
 
+The generic USB core now contains `UsbXhci.c` for read-only xHCI capability and
+USB2 root-port discovery plus coherent DMA32 command/transfer/event-ring
+primitives. Clang/GCC sanitizer models check reserved page-size bits, DMA sync
+direction and ownership, cycle wrap, ordered completion, tail invalidation,
+malformed event pointers and descriptor-memory retention until an explicit stop
+proof. The opt-in source-XNU archive builder and EDK2 library builder now include
+and verify these production symbols. This portable layer does not map the
+controller, start xHCI, ring doorbells, own an interrupt/DMA provider, implement
+the complete `usb_host_ops`, or publish children. Its archive/link evidence is
+not runtime controller qualification.
+
 The opt-in `DaliUsbXhciResources` service now matches the Dali `xhci0`
 platform device, checks its exact compatible string, and decodes the versioned
 resource property without casting its packed wire bytes to a native structure.

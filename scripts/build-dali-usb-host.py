@@ -14,7 +14,7 @@ OBJECTS = ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837"
 OUT = ROOT / "build/dali-usb-host"
 ARCHIVE = OUT / "libDaliUsbHost.a"
 SOURCES = (ROOT / "drivers/UsbCore/UsbCore.c", ROOT / "drivers/UsbCore/UsbHost.c",
-           ROOT / "drivers/UsbCore/UsbStorage.c")
+           ROOT / "drivers/UsbCore/UsbStorage.c", ROOT / "drivers/UsbCore/UsbXhci.c")
 REQUIRED_SYMBOLS = (
     "usb_host_enumerate", "usb_host_start_storage", "usb_host_poll_input",
     "usb_host_disconnect", "usb_host_hub_start", "usb_host_hub_poll",
@@ -22,6 +22,14 @@ REQUIRED_SYMBOLS = (
     "usb_parse_configuration", "usb_bot_command", "usb_bot_read_only", "usb_block_io_init",
     "usb_block_io_transfer", "usb_block_io_sync", "usb_block_io_quiesce",
     "usb_block_io_detach",
+    "usb_xhci_read_capabilities",
+    "usb_xhci_transfer_ring_init", "usb_xhci_transfer_ring_mark_active",
+    "usb_xhci_transfer_ring_enqueue", "usb_xhci_transfer_ring_complete_through",
+    "usb_xhci_transfer_ring_halted", "usb_xhci_transfer_ring_destroy",
+    "usb_xhci_event_ring_init", "usb_xhci_event_ring_mark_active",
+    "usb_xhci_event_ring_read", "usb_xhci_event_ring_dequeue_address",
+    "usb_xhci_event_ring_erst_address", "usb_xhci_event_ring_halted",
+    "usb_xhci_event_ring_destroy",
 )
 
 
@@ -207,7 +215,7 @@ def verify_kernel(kernel):
                   kernel_symbol_checks=checks, host_runtime_qualified=False,
                   hardware_qualified=False)
     (OUT / "kernel-link-report.json").write_text(json.dumps(result, indent=2) + "\n")
-    print("PASS: Dali USB host enumeration, hub, HID and BOT symbols resolve in the XNU kernel")
+    print("PASS: Dali USB host, hub, HID, BOT and xHCI-core symbols resolve in the XNU kernel")
 
 
 def main(argv=None):
