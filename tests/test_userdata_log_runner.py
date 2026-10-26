@@ -58,7 +58,17 @@ class UserdataLogRunnerTests(unittest.TestCase):
         adt = apple_node("device-tree", children=[apple_node("arm-io", children=[
             apple_node("dali-ufs", [("compatible", b"localhosts,dali-ufs\0")])])])
         wire = userdata_wire(TOKEN)
-        uefi = ROOT.parent / "UEFI-Dali-ufs-scratch"
+        # Developer workspaces name the pinned checkout after its branch,
+        # while CI checks it out under the stable workflow path `UEFI-Dali`.
+        # Ignore unrelated sibling clones that do not contain this wire API.
+        uefi = next((candidate for candidate in (
+            ROOT.parent / "UEFI-Dali-ufs-scratch", ROOT.parent / "UEFI-Dali")
+            if (candidate / "tools/make_payload.py").is_file() and
+            "validate_userdata_log_wire" in
+            (candidate / "tools/make_payload.py").read_text(encoding="utf-8") and
+            "append_apple_dt_property" in
+            (candidate / "tools/make_payload.py").read_text(encoding="utf-8")), None)
+        self.assertIsNotNone(uefi, "pinned UEFI ADT encoder checkout is unavailable")
         bound = runner.bind_userdata_grant_to_adt(uefi, adt, wire, TOKEN)
         self.assertNotEqual(bound, adt)
         self.assertEqual(runner.bind_userdata_grant_to_adt(uefi, bound, wire, TOKEN), bound)
