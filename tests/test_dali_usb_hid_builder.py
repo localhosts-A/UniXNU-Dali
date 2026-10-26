@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -15,6 +16,19 @@ HID = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HID)
 
 class DaliUsbHidBuilderTests(unittest.TestCase):
+    def test_usb_profile_builds_and_force_loads_source_hid_family(self):
+        board = tomllib.loads((ROOT / 'board.toml').read_text())
+        self.assertIn('build-source-hid.py', board['kernel']['archives'])
+        profile = (ROOT / 'configs/dali_usb_defconfig').read_text()
+        for fragment in (
+            'CONFIG_XNU_BUILD_ARCHIVES=y',
+            'CONFIG_XNU_SOURCE_HID_FAMILY=y',
+            '-Wl,-force_load,{tree}/build/source-hid/libIOHIDFamily.a',
+            '{tree}/build/source-hid/libIOHIDFamily.a',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, profile)
+
     def test_disabled_skips_apple_tools_and_enabled_requires_source_family(self):
         with patch.dict(os.environ, {'XNU_NATIVE_USB_HOST': '0'}), redirect_stdout(io.StringIO()) as output:
             HID.main([])
