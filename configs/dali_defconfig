@@ -15,5 +15,5 @@ CONFIG_XNU_NATIVE_ARCH_TIMER=y
 # MT6991 and the QEMU A710 implement PAN; copyin/copyout must bracket access.
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
-CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliUfs.a"
-CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-xnu-platform/libDaliUfs.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliUfs.a -Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliMali.a"
+CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-xnu-platform/libDaliUfs.a {tree}/build/dali-xnu-platform/libDaliMali.a"

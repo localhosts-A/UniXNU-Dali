@@ -1,7 +1,7 @@
 diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 --- a/iokit/KernelConfigTables.cpp
 +++ b/iokit/KernelConfigTables.cpp
-@@ -53,9 +53,21 @@
+@@ -53,9 +53,27 @@
      "     'IOClass'         = ArmDTPlatform;"
      "     'IOProviderClass' = IOPlatformExpertDevice;"
      "     'IONameMatch'     = 'device-tree';"
@@ -17,6 +17,12 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 +    "     'IOClass'         = DaliUfs;"
 +    "     'IOProviderClass' = IOPlatformDevice;"
 +    "     'IONameMatch'     = 'dali-ufs';"
++    "     'IOProbeScore'    = 2000:32;"
++    "   },"
++    "   {"
++    "     'IOClass'         = DaliMali;"
++    "     'IOProviderClass' = IOPlatformDevice;"
++    "     'IONameMatch'     = 'dali-mali';"
 +    "     'IOProbeScore'    = 2000:32;"
 +    "   },"
 +    "   {"

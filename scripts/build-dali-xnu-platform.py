@@ -69,7 +69,8 @@ def compile_source(source, output):
     if not replaced:
         raise SystemExit(f"Could not replace compile-record source {record_source} in {record_path}")
     command += ["-I", str(ROOT / "build/storage-abi/include"),
-                "-I", str(ROOT / "refer/IOStorageFamily"), "-I", str(ROOT / "drivers/UfsTransport")]
+                "-I", str(ROOT / "refer/IOStorageFamily"), "-I", str(ROOT / "drivers/UfsTransport"),
+                "-I", str(ROOT / "drivers/NativeMali")]
     result = subprocess.run(command, cwd=record_directory, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
     output.with_suffix(output.suffix + ".log").write_text(result.stdout)
@@ -123,6 +124,35 @@ def ufs_archive():
             "physical_ufs_qualified": False, "write_authorized": False}
 
 
+def mali_archive():
+    destination = OUT / "libDaliMali.a"
+    sources = sorted((ROOT / "drivers/NativeMali").glob("*.cpp")) + sorted((ROOT / "drivers/DaliMali").glob("*.cpp"))
+    if len(sources) < 14:
+        raise SystemExit("NativeMali core/IOKit sources missing from pinned generic/device tree")
+    objects, entries = [], []
+    for source in sources:
+        obj = OUT / (source.stem + ".o")
+        obj.unlink(missing_ok=True)
+        compile_source(source, obj)
+        magic, cpu, _, kind = struct.unpack_from("<4I", obj.read_bytes())
+        if (magic, cpu, kind) != (0xfeedfacf, 0x100000c, 1):
+            raise SystemExit("NativeMali must contain arm64 Mach-O objects")
+        objects.append(obj)
+        entries.append({"source": str(source.relative_to(ROOT)), "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                        "object_sha256": hashlib.sha256(obj.read_bytes()).hexdigest()})
+    destination.unlink(missing_ok=True)
+    subprocess.run(["xcrun", "ar", "rcs", str(destination), *map(str, objects)], check=True)
+    symbols = subprocess.check_output(["xcrun", "nm", "-g", str(destination)], text=True)
+    (OUT / "dali-mali-symbols.txt").write_text(symbols)
+    for symbol in ("DaliMali10gMetaClassE", "DaliMaliUserClient10gMetaClassE"):
+        if not any(symbol in line and " U " not in line for line in symbols.splitlines()):
+            raise SystemExit(f"NativeMali archive lacks actual metaclass {symbol}")
+    headers = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for directory in
+               (ROOT / "drivers/NativeMali", ROOT / "drivers/DaliMali") for p in sorted(directory.glob("*.h"))}
+    return {"sources": entries, "headers": headers, "archive_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            "hardware_exercised": False, "abi_version": 1, "requires_bootargs": ["dali-mali=1", "maxmem=1992"]}
+
+
 sources = {
     "armdt": (ROOT / "drivers/ArmDTPlatform/ArmDTPlatform.cpp", ROOT / "build/armdt-platform/libArmDTPlatform.a"),
     "armcpu": (ROOT / "drivers/ArmCpu/ArmCpu.cpp", ROOT / "build/armcpu/libArmCpu.a"),
@@ -130,9 +160,10 @@ sources = {
 }
 report = {name: archive(name, *pair) for name, pair in sources.items()}
 report["dali-ufs"] = ufs_archive()
+report["dali-mali"] = mali_archive()
 report["xnu_version"] = {"darwin": os.environ["UNIXNU_XNU_DARWIN"], "build": os.environ["UNIXNU_XNU_VERSION"]}
 report["compile_record"] = str(record_path.relative_to(ROOT))
 report["compile_record_sha256"] = hashlib.sha256(record_path.read_bytes()).hexdigest()
 OUT.mkdir(parents=True, exist_ok=True)
 (OUT / "build-report.json").write_text(json.dumps(report, indent=2) + "\n")
-print("PASS: Dali logging/UFS, ArmDTPlatform, and ArmCpu archives built")
+print("PASS: Dali logging/UFS/Mali, ArmDTPlatform, and ArmCpu archives built")
