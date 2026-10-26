@@ -322,7 +322,7 @@ def run_trial(args, lease):
     lease.arm(run, state)
     cycle.write_json(run / 'candidate.json', manifest)
     print('ORIGINAL-ONLY RECOVERY: ' + shlex.join(state['restore_command']), flush=True)
-    print('XNU UFS candidate is running. Leave the default UniXNU single-core early boot entry untouched for its 10-second countdown, or select it and confirm with Power. A frozen menu image does not establish a boot failure. After XNU diagnostics, hold Volume Up for the deliberate recovery request, then immediately hold Volume Down during the 2-second LK watchdog window for fastboot. If no request appears, use Power plus Volume Down for manual fastboot. The runner restores the complete original Android boot_b.', flush=True)
+    print('XNU UFS candidate is running. Let the default UniXNU single-core early boot entry start after 10 seconds; a retained menu image does not establish a boot failure. Wait another 15 seconds, then manually reboot the SAME candidate to its menu, immediately select Return to firmware diagnostics and confirm with Power. Hold only Volume Down during the firmware recovery window to enter fastboot. XNU has no visible recovery prompt. Direct Power plus Volume Down can force fastboot if necessary, but previous trials lost pstore evidence on that route. The runner restores the complete original Android boot_b.', flush=True)
     try:
         cycle.flash_boot_b(args.fastboot_serial, private_dir / 'UniXNU-dali-uefi-boot.img')
         cycle.fastboot_command(args.fastboot_serial, 'reboot', timeout=20)

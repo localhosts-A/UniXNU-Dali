@@ -676,15 +676,21 @@ artifact and all three repository pins, captures a fresh Android UFS baseline,
 and persists a per-device lease and original-only restore command before
 flashing `boot_b`. The physical UFS diagnostic runs in source XNU after the
 firmware provider's sync/stop gate; a second DarwinBoot quiesce call is
-idempotent. The XNU driver then uses its own queue and DMA allocation. Manual
-recovery for this profile is the XNU prompt: hold Volume Up to request recovery,
-then hold Volume Down through the two-second LK watchdog interval to enter
-fastboot. This differs from the UEFI-only menu recovery used by earlier probes.
+idempotent. The XNU driver then uses its own queue and DMA allocation. Its GPIO
+recovery helper requires 200 ms of released keys followed by a 700 ms Volume Up
+hold, then arms a two-second watchdog; Volume Down selects LK fastboot. The
+helper only logs to ramoops and has no visible prompt. Physical acceptance of
+this XNU key path has not been demonstrated; manual recovery is allowed.
 Start the default `UniXNU single-core early boot` entry by waiting for its
 10-second countdown or by selecting it and pressing Power. The menu does not
 redraw a zero-second frame before launching; a retained menu image alone cannot
-establish where execution stopped. If XNU's recovery prompt does not appear,
-Power plus Volume Down can be used to force fastboot for original-only recovery.
+establish where execution stopped. After at least 15 seconds in XNU, the current
+evidence-preserving operator route reboots the same candidate to its menu,
+selects `Return to firmware diagnostics` before the default launches again,
+confirms with Power, then holds only Volume Down during the firmware recovery
+window. Direct Power plus Volume Down remains an original-only recovery fallback,
+but some such trials produced no pstore. This extra reboot exports no evidence
+before restoration and is not a persistence qualification cycle.
 The scorer requires both the token-bound UEFI BlockIo read/sync/stop transcript
 and the later XNU read/sync/stop transcript in the same marked firmware boot. It binds
 the firmware stop mask to the LUN set observed by UEFI before requiring the XNU
@@ -708,6 +714,16 @@ were restored. The failure path now records the last observed completion's
 UPIU transaction/LUN/tag, parsed sense key/ASC/ASCQ, target/OCS/polls and transfer
 counts before quiesce; these fields do not enable retries or writes. The exact
 device condition and the stale display remain unresolved until fresh evidence.
+
+The subsequent `e73418fd` capture retained two source-XNU boots and a final diag
+exit. Both reached controller Ready/PostLink and failed the first LUN0 TUR with
+OCS=0, CHECK CONDITION=2 and sense `6/29/02` (bus-reset Unit Attention). The
+combined scorer correctly rejects two current-token XNU boots; separate audits
+retain each observed failure without qualifying reads. Original Android B/root
+and all 18 hashes were restored. The transport now treats only `6/29/00` and
+`6/29/02` as reset acknowledgements for completed, no-data TUR, with at most
+three total attempts. Other sense/status errors and uncertain commands stop;
+data reads/writes, queries and synchronization do not gain retry behavior.
 
 The runner's current evidence collection reads ramoops from Android after the
 original `boot_b` has been restored. That is sufficient to keep this
