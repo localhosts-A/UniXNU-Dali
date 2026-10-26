@@ -86,6 +86,8 @@ bool DaliMali::start(IOService *provider){
     if(!loop_||!timer_||loop_->addEventSource(timer_)!=kIOReturnSuccess){boot_->stop();
         if(boot_->hardware().quiesced()&&memory_.empty()){held_=false;release();}return false;}
     setName(NML_SERVICE_NAME);setProperty("NativeMaliABI",uint64_t(NML_ABI_VERSION),32);
+    // Metal initializes the GPU in backboardd; the XNU grant matches this exact process.
+    setProperty("NativeSandboxGrantProcess", "backboardd");
     setProperty("GPU-ID",uint64_t(boot_->properties()->gpuId),32);setProperty("hardware-qualified",false);
     online_=true;timer_->setTimeoutMS(2);registerService();return true;
 }

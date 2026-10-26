@@ -31,6 +31,25 @@ class XnuPatchFormatTests(unittest.TestCase):
         self.assertEqual((old_count, new_count), (declared_old, declared_new))
 
 
+class MaliSandboxGrantTests(unittest.TestCase):
+    def test_dali_grants_only_backboardd_through_the_generic_xnu_contract(self):
+        source = (ROOT / 'drivers/DaliMali/DaliMali.cpp').read_text()
+        grants = re.findall(r'setProperty\("NativeSandboxGrantProcess",\s*"([^"]+)"\)', source)
+        self.assertEqual(grants, ['backboardd'])
+
+        service_name = source.index('setName(NML_SERVICE_NAME)')
+        grant = source.index('setProperty("NativeSandboxGrantProcess", "backboardd")')
+        registration = source.index('registerService()', service_name)
+        self.assertLess(service_name, grant)
+        self.assertLess(grant, registration)
+
+        generic_patch = ROOT.parent / 'UniXNU/patches/xnu/zzw-native-adreno-sandbox-grant.patch'
+        self.assertTrue(generic_patch.is_file(), 'pinned generic XNU grant patch must be present')
+        patch_text = generic_patch.read_text()
+        self.assertIn('getProperty("NativeSandboxGrantProcess")', patch_text)
+        self.assertIn('native_sandbox_grant(service)', patch_text)
+
+
 class BoardArchiveTests(unittest.TestCase):
     def test_kernel_archive_scripts_are_tree_script_basenames(self):
         board = tomllib.loads((ROOT / 'board.toml').read_text())
