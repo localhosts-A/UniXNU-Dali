@@ -99,9 +99,24 @@ not reproduce the unpublished 2031 event ABI. Source compile/link and runtime
 remain unpassed gates. The private FastPath user-client source is
 absent from the fixed public Git tree; an explicit source port leaves unknown
 client types to the superclass rather than supplying a replacement class.
-This HID build is under CI validation. Actual keyboard/mouse publication and
-USB report delivery remain pending until the real family compile/link passes
-and a controller/child owner is connected.
+The source port also replaces two unpublished registration/DriverKit-start
+property keys with project-scoped internal keys; all source readers and writers
+use the same names. This HID build is under CI validation. Run 40247821997
+generated all three real IIG bridges and reached C++ compilation; the complete
+family archive and kernel link have not passed yet.
+
+`DaliUsbHid` is a concrete source `IOHIDDevice` child. It snapshots the USB
+interface identity, supplies descriptors matching the forced Boot protocol,
+and copies each 8-byte keyboard or 3-byte mouse report before calling the real
+`handleReport`. Its host owner must close admission, let the current report
+finish, send a neutral report, prove endpoint/slot DMA stopped, then detach and
+terminate. A retained lifetime lease survives failed quiescence/stop proof;
+framework stop requests during a report are completed after the report returns.
+Clang/GCC sanitizer tests execute this production child through a test-only
+IOKit seam. Those models do not prove kernel ABI or real HID descriptor parsing.
+The opt-in builder compiles against the actual source-family headers and checks
+the linked kernel symbols. This new child still awaits its first macOS compile,
+and no production controller/child owner publishes it yet.
 
 The device tree also contains a production SID14 PMIF-M transport under
 `drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,

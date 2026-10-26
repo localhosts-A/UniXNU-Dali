@@ -8,12 +8,16 @@ on:
       - 'board.toml'
       - 'configs/dali_usb_defconfig'
       - 'drivers/DaliUsbStorage/**'
+      - 'drivers/DaliUsbHid/**'
       - 'patches/xnu/**'
       - 'references/usb-sources.toml'
       - 'scripts/build-dali-usb-host.py'
       - 'scripts/build-dali-usb-storage.py'
+      - 'scripts/build-dali-usb-hid.py'
       - 'scripts/fetch-usb-references.py'
       - 'tests/test_dali_usb_storage_builder.py'
+      - 'tests/test_dali_usb_hid_builder.py'
+      - 'tests/usb_hid_model/**'
   workflow_dispatch:
 
 permissions:
@@ -127,6 +131,7 @@ jobs:
           python3 "$tree/scripts/build-dali-usb-storage.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-storage.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-hid.py" --verify-kernel "$kernel"
+          python3 "$tree/scripts/build-dali-usb-hid.py" --verify-kernel "$kernel"
 
       - name: Summarize source build scope
         if: always()
@@ -163,6 +168,8 @@ jobs:
             UniXNU/out/dali/tree/build/dali-usb-host/*.log
             UniXNU/out/dali/tree/build/dali-usb-storage/*.json
             UniXNU/out/dali/tree/build/dali-usb-storage/*.log
+            UniXNU/out/dali/tree/build/dali-usb-hid/*.json
+            UniXNU/out/dali/tree/build/dali-usb-hid/*.log
             UniXNU/out/dali/tree/build/source-storage/*.json
             UniXNU/out/dali/tree/build/source-storage/*.log
             UniXNU/out/dali/tree/build/source-hid/*.json
@@ -179,6 +186,7 @@ jobs:
             UniXNU/out/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf
             UniXNU/out/dali/tree/build/dali-usb-host/*.a
             UniXNU/out/dali/tree/build/dali-usb-storage/*.a
+            UniXNU/out/dali/tree/build/dali-usb-hid/*.a
             UniXNU/out/dali/tree/build/source-storage/*.a
             UniXNU/out/dali/tree/build/source-hid/*.a
           if-no-files-found: error
