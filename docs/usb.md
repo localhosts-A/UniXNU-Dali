@@ -166,8 +166,10 @@ EP0, endpoint setup and the CDC device/log-ring lifecycle into
 `dali_usb_cdc_log_write()` producer is inert until a future provider binds an
 initialized gadget; it returns immediately and drops bytes when no sink is
 bound. The provider must unbind and drain in-flight writers before stopping or
-destroying the gadget object. No current source redirects `IOLog` into this
-producer, so it does not capture general XNU logs. The kernel also has no MTU3
+destroying the gadget object. The opt-in Dali profile enables a source-XNU tap
+at `_cnputc` and the direct serial `kprintf` path, which forwards emitted
+characters to this producer. Console policy can suppress output before the tap,
+and this does not capture all `OSLog` records. The kernel also has no MTU3
 provider, device-role or VBUS/clock/PHY lease, qualified DMA/IRQ worker, or CDC
 runtime. UEFI preserves early `SerialPortWrite()` output in ramoops and has no
 installed USB function provider. The archive sends no CDC bytes over USB.

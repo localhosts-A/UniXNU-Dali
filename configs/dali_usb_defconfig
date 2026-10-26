@@ -15,5 +15,6 @@ CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 CONFIG_XNU_NATIVE_USB_HOST=y
+CONFIG_XNU_NATIVE_USB_CDC_LOG=y
 CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-usb-host/libDaliUsbHost.a -Wl,-force_load,{tree}/build/dali-usb-gadget/libDaliUsbGadget.a -Wl,-force_load,{tree}/build/dali-usb-xhci-resources/libDaliUsbXhciResources.a -Wl,-force_load,{tree}/build/dali-usb-storage/libDaliUsbStorage.a -Wl,-force_load,{tree}/build/source-hid/libIOHIDFamily.a -Wl,-force_load,{tree}/build/dali-usb-hid/libDaliUsbHid.a -Wl,-force_load,{tree}/build/source-msdosfs/libmsdosfs.a"
 CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-usb-host/libDaliUsbHost.a {tree}/build/dali-usb-gadget/libDaliUsbGadget.a {tree}/build/dali-usb-xhci-resources/libDaliUsbXhciResources.a {tree}/build/dali-usb-storage/libDaliUsbStorage.a {tree}/build/source-hid/libIOHIDFamily.a {tree}/build/dali-usb-hid/libDaliUsbHid.a {tree}/build/source-msdosfs/libmsdosfs.a"

@@ -26,7 +26,9 @@ class DaliUsbGadgetBuilderTests(unittest.TestCase):
         board = tomllib.loads((ROOT / "board.toml").read_text())
         archive = "build/dali-usb-gadget/libDaliUsbGadget.a"
         self.assertNotIn("libDaliUsbGadget.a", default)
+        self.assertNotIn("CONFIG_XNU_NATIVE_USB_CDC_LOG=", default)
         self.assertIn("CONFIG_XNU_NATIVE_USB_HOST=y", profile)
+        self.assertIn("CONFIG_XNU_NATIVE_USB_CDC_LOG=y", profile)
         self.assertIn("-Wl,-force_load,{tree}/" + archive, profile)
         self.assertIn("{tree}/" + archive, profile)
         self.assertIn("build-dali-usb-gadget.py", board["kernel"]["archives"])
