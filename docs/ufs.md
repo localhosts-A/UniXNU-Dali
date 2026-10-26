@@ -690,7 +690,17 @@ artifact and all three repository pins, captures a fresh Android UFS baseline,
 and persists a per-device lease and original-only restore command before
 flashing `boot_b`. The physical UFS diagnostic runs in source XNU after the
 firmware provider's sync/stop gate; a second DarwinBoot quiesce call is
-idempotent. The XNU driver then uses its own queue and DMA allocation. Its GPIO
+idempotent. The XNU driver then uses its own queue and DMA allocation.
+The combined qualification profile now requires
+`dali-ufs-stop-after-diagnostics=1` in the actual packed boot arguments. After
+diagnostics return, the worker closes admission and invokes `quiesce(true)`
+before waiting for the operator: real synchronization must succeed, the
+controller must stop and DMA may only be released after the existing safety
+checks. Missing, duplicated or changed stop arguments refuse packaging;
+scratch-write arguments are forbidden in this read-only profile. Callers
+without the explicit stop option retain the published devices until manual
+recovery. This adds no automatic reset and does not establish hardware stop
+qualification without the token-bound raw records. Its GPIO
 recovery helper requires 200 ms of released keys followed by a 700 ms Volume Up
 hold, then arms a two-second watchdog; Volume Down selects LK fastboot. The
 helper only logs to ramoops and has no visible prompt. Physical acceptance of

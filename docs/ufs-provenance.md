@@ -61,6 +61,11 @@ firmware/candidate qualification still requires fresh build evidence. The
 frozen read-only candidate is unchanged; UEFI's grant remains zero and no
 physical scratch write is authorized.
 
+Board now pins UEFI `0f82a6a85d28660cbaa5db662507ea2a78891c44`, retaining the
+loader binding and requiring explicit normal shutdown after the combined
+read-only diagnostics. The production worker's ordering is tested on the host;
+actual source-only compilation and device stop qualification remain separate.
+
 Remaining gates include actual new-pin final-FD/candidate and source-only build
 evidence, runtime UFS geometry/GPT/layout authorization, evidence export before
 restoring original boot_b, full firmware/XNU ownership, and separate UEFI/XNU

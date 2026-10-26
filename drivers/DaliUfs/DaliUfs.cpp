@@ -46,6 +46,7 @@ class DaliUfs : public IOService {
   uint32_t frequency_ = 0;
   bool prepared_ = false, exposed_ = false, online_ = false, closed_ = false, scratchWriteMode_ = false;
   bool scratchMediaReady_ = false, scratchTestActive_ = false;
+  bool stopAfterDiagnostics_ = false;
   thread_t scratchTestThread_ = nullptr;
   uint64_t scratchTestRelativeLba_ = UINT64_MAX;
   Status stopSync_ = Status::Success;
@@ -783,7 +784,10 @@ void DaliUfs::worker(void *p, wait_result_t) {
   self->record("initialized", initialized);
   bool diagnosed = initialized && self->diagnose();
   self->record("diagnostics", diagnosed, self->scratchWriteMode_);
-  if (initialized && self->scratchWriteMode_ && !diagnosed) self->quiesce();
+  // The explicit qualification profile records normal sync/stop/DMA release
+  // before the operator's forced reboot can discard that evidence.
+  if (initialized && self->stopAfterDiagnostics_) self->quiesce(true);
+  else if (initialized && self->scratchWriteMode_ && !diagnosed) self->quiesce();
   else {
     if (!initialized) {
       IOLockLock(self->gate_); const auto c = self->transport_.completion(); IOLockUnlock(self->gate_);
@@ -797,18 +801,21 @@ void DaliUfs::worker(void *p, wait_result_t) {
       self->quiesce();
     }
   }
-  // Keep only the explicitly published storage devices usable until manual recovery.
+  // Ordinary diagnostic callers retain the devices until manual recovery;
+  // stop-after-diagnostics callers enter this wait with admission closed.
   dali_ufs_wait_for_manual_recovery(self->token_, stopBeforeReset, self);
   self->quiesce(); self->release(); thread_terminate(current_thread());
 }
 bool DaliUfs::start(IOService *provider) {
-  unsigned enabled = 0, early = 0, autoFastboot = 0, pid1 = 0, scratch = 0; char reset[16] = {};
+  unsigned enabled = 0, early = 0, autoFastboot = 0, pid1 = 0, scratch = 0, stopAfter = 0; char reset[16] = {};
   if (!PE_parse_boot_argn("dali-ufs-readonly", &enabled, sizeof enabled) || enabled != 1) return false;
   bool scratchArg = PE_parse_boot_argn("dali-ufs-scratch-write", &scratch, sizeof scratch);
+  bool stopArg = PE_parse_boot_argn("dali-ufs-stop-after-diagnostics", &stopAfter, sizeof stopAfter);
   PE_parse_boot_argn("dali-earlyboot", &early, sizeof early); PE_parse_boot_argn("dali-auto-fastboot", &autoFastboot, sizeof autoFastboot); PE_parse_boot_argn("dali-pid1", &pid1, sizeof pid1);
-  if ((scratchArg && scratch != 1) || early != 1 || autoFastboot || pid1 || PE_parse_boot_argn("dali-reset-method", reset, sizeof reset) ||
+  if ((scratchArg && scratch != 1) || (stopArg && stopAfter != 1) || early != 1 || autoFastboot || pid1 || PE_parse_boot_argn("dali-reset-method", reset, sizeof reset) ||
       !PE_parse_boot_argn("dali-run", token_, sizeof token_) || !dali_ufs::tokenValid(token_)) return false;
   auto node = IORegistryEntry::fromPath("/arm-io/dali-ufs", gIODTPlane);
+  stopAfterDiagnostics_ = stopArg;
   auto resource = node ? OSDynamicCast(OSData, node->getProperty("resources-v1")) : nullptr;
   if (!resource || !dali_ufs::resourceValid(resource->getBytesNoCopy(), resource->getLength())) { if (node) node->release(); return false; }
   memcpy(resources_, resource->getBytesNoCopy(), sizeof resources_);
