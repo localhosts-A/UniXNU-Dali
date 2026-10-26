@@ -38,6 +38,7 @@ archives = [
   "build-source-hid.py",
   "build-source-msdosfs.py",
   "build-dali-usb-host.py",
+  "build-dali-usb-xhci-resources.py",
   "build-dali-usb-storage.py",
   "build-dali-usb-hid.py",
   "build-dali-xnu-platform.py",

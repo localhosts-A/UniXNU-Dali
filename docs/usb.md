@@ -116,8 +116,11 @@ only for the existing NXEvent wrapper. It preserves event construction and
 dispatch, and does not enable general Apple vendor report parsing. The complete
 family archive now compiles in Action 40280750435 (SHA-256
 `294b427c33c3d2dcb75bf339bf2209882620312a5da3bfdb30236ed4c2de1b63`).
-The subsequent msdosfs build stopped on a missing SDK include; child
-compilation, kernel link and runtime still require a pass.
+That run later stopped at an msdosfs SDK include. The follow-up
+Action 40299886122 built the Dali HID child, storage child, source IOHIDFamily,
+IOStorageFamily and msdosfs, then verified their required symbols against one
+unstripped source-XNU kernel. That closes compilation and linking only; actual
+controller ownership and runtime delivery remain pending.
 
 `DaliUsbHid` is a concrete source `IOHIDDevice` child. It snapshots the USB
 interface identity, supplies descriptors matching the forced Boot protocol,
@@ -129,8 +132,18 @@ framework stop requests during a report are completed after the report returns.
 Clang/GCC sanitizer tests execute this production child through a test-only
 IOKit seam. Those models do not prove kernel ABI or real HID descriptor parsing.
 The opt-in builder compiles against the actual source-family headers and checks
-the linked kernel symbols. This new child still awaits its first macOS compile,
-and no production controller/child owner publishes it yet.
+the linked kernel symbols. Action 40299886122 verifies this child and its report
+API in the final kernel. No production controller/child owner publishes it yet.
+
+The opt-in `DaliUsbXhciResources` service now matches the Dali `xhci0`
+platform device, checks its exact compatible string, and decodes the versioned
+resource property without casting its packed wire bytes to a native structure.
+Its copy API gives a future controller owner the validated description. Clang
+and GCC sanitizer models exercise the production decoder and service through a
+test-only IOKit seam. This service does not map MMIO or touch controller
+registers. The source-XNU archive and final-kernel link still require the
+macOS/Xcode build gate; a native xHCI owner, provider leases, enumeration,
+runtime and hardware qualification remain pending.
 
 The profile also selects `XNU_SOURCE_MSDOSFS` and the fixed
 msdosfs-608.120.4 source target. Its builder compiles all six actual kernel C

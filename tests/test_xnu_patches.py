@@ -1,5 +1,7 @@
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 import tomllib
 import unittest
 
@@ -29,6 +31,69 @@ class XnuPatchFormatTests(unittest.TestCase):
         declared_old = int(header.group(1) or 1)
         declared_new = int(header.group(2) or 1)
         self.assertEqual((old_count, new_count), (declared_old, declared_new))
+
+    def test_dali_xhci_resources_personality_patch_hunk_counts_match_body(self):
+        lines = (ROOT / 'patches/xnu/dali-usb-xhci-resources-personality.patch').read_text().splitlines()
+        headers = [(index, HUNK.match(line)) for index, line in enumerate(lines) if HUNK.match(line)]
+        self.assertEqual(len(headers), 1)
+
+        start, header = headers[0]
+        old_count = new_count = 0
+        for line in lines[start + 1:]:
+            if line.startswith('@@ ') or line.startswith('diff --git '):
+                break
+            if line.startswith(' '):
+                old_count += 1
+                new_count += 1
+            elif line.startswith('-') and not line.startswith('---'):
+                old_count += 1
+            elif line.startswith('+') and not line.startswith('+++'):
+                new_count += 1
+
+        declared_old = int(header.group(1) or 1)
+        declared_new = int(header.group(2) or 1)
+        self.assertEqual((old_count, new_count), (declared_old, declared_new))
+        self.assertLess(
+            sorted(path.name for path in (ROOT / 'patches/xnu').glob('*.patch')).index(
+                'dali-bootlog-personality.patch'),
+            sorted(path.name for path in (ROOT / 'patches/xnu').glob('*.patch')).index(
+                'dali-usb-xhci-resources-personality.patch'))
+
+    def test_dali_xhci_personality_replays_after_generic_and_bootlog_entries(self):
+        # This is the table body from the pinned XNU d8b8029 KernelConfigTables.cpp.
+        baseline = '''const char * gIOKernelConfigTables =
+    "("
+    "   {"
+    "     'IOClass'         = IOPanicPlatform;"
+    "     'IOProviderClass' = IOPlatformExpertDevice;"
+    "     'IOProbeScore'    = 0:32;"
+    "   },"
+    "   {"
+    "     'IOClass'         = IOExclaveProxy;"
+    "     'IOProviderClass' = IOService;"
+    "     'IOExclaveProxy'  = 1:32;"
+    "   }"
+    ")";
+'''
+        with tempfile.TemporaryDirectory(prefix='dali-xhci-personality-stack-') as temporary:
+            tree = Path(temporary)
+            table = tree / 'iokit/KernelConfigTables.cpp'
+            table.parent.mkdir(parents=True)
+            table.write_text(baseline)
+            patches = [
+                ROOT.parent / 'UniXNU/patches/xnu/armvirt-platform-personality.patch',
+                ROOT / 'patches/xnu/dali-bootlog-personality.patch',
+                ROOT / 'patches/xnu/dali-usb-xhci-resources-personality.patch',
+            ]
+            for patch in patches:
+                result = subprocess.run(
+                    ['git', 'apply', str(patch)], cwd=tree, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = table.read_text()
+            self.assertIn("'IOClass'         = ArmDTPlatform;", result)
+            self.assertIn("'IOClass'         = DaliBootLog;", result)
+            self.assertIn("'IOClass'         = DaliUsbXhciResources;", result)
+            self.assertIn("'IONameMatch'     = 'xhci0';", result)
 
 
 class BoardArchiveTests(unittest.TestCase):
