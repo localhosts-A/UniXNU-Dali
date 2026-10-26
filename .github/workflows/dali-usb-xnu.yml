@@ -11,6 +11,7 @@ on:
       - 'drivers/DaliUsbHid/**'
       - 'drivers/DaliUsbXhciResources/**'
       - 'drivers/DaliUsbXhciOwner/**'
+      - 'drivers/DaliUsbGadgetLog/**'
       - 'patches/xnu/**'
       - 'references/usb-sources.toml'
       - 'scripts/build-dali-usb-host.py'
@@ -26,6 +27,7 @@ on:
       - 'tests/fixtures/usb_xhci_resource_v1_test.c'
       - 'tests/usb_xhci_resources_model/**'
       - 'tests/usb_hid_model/**'
+      - 'tests/usb_cdc_log_model/**'
   workflow_dispatch:
 
 permissions:

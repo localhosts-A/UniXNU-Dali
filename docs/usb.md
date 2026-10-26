@@ -162,12 +162,15 @@ qualification remain separate.
 
 The opt-in XNU profile also compiles the portable MTU3 gadget units for QMU,
 EP0, endpoint setup and the CDC device/log-ring lifecycle into
-`libDaliUsbGadget.a`, with final-kernel symbol checks. This is a source ABI
-compile/link gate only: the kernel has no MTU3 provider, device-role or
-VBUS/clock/PHY lease, qualified DMA/IRQ worker, or `IOLog` producer feeding
-`usb_mtu3_device_log()`. UEFI preserves early `SerialPortWrite()` output in
-ramoops and has no installed USB function provider. This archive sends no CDC
-bytes over USB.
+`libDaliUsbGadget.a`, with final-kernel symbol checks. Its optional
+`dali_usb_cdc_log_write()` producer is inert until a future provider binds an
+initialized gadget; it returns immediately and drops bytes when no sink is
+bound. The provider must unbind and drain in-flight writers before stopping or
+destroying the gadget object. No current source redirects `IOLog` into this
+producer, so it does not capture general XNU logs. The kernel also has no MTU3
+provider, device-role or VBUS/clock/PHY lease, qualified DMA/IRQ worker, or CDC
+runtime. UEFI preserves early `SerialPortWrite()` output in ramoops and has no
+installed USB function provider. The archive sends no CDC bytes over USB.
 
 The UEFI resource-context revision6 also copies the four CPU-endian cells from
 the xHCI FDT `interrupts` property (`0, 600, 4, 0`) with the register window.

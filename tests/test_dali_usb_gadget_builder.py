@@ -1,8 +1,12 @@
 """Build contracts for the opt-in source-XNU MTU3 gadget core."""
 import importlib.util
 import io
+import os
 from contextlib import redirect_stdout
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -26,15 +30,45 @@ class DaliUsbGadgetBuilderTests(unittest.TestCase):
         self.assertIn("-Wl,-force_load,{tree}/" + archive, profile)
         self.assertIn("{tree}/" + archive, profile)
         self.assertIn("build-dali-usb-gadget.py", board["kernel"]["archives"])
-        self.assertEqual([source.name for source in BUILDER.SOURCES], [
+        self.assertEqual([source.name for source in BUILDER.SOURCES[:4]], [
             "UsbMtu3Qmu.c", "UsbMtu3Ep0.c", "UsbMtu3Endpoints.c", "UsbMtu3Device.c"])
+        self.assertEqual(BUILDER.SOURCES[4].relative_to(ROOT).as_posix(),
+                         "drivers/DaliUsbGadgetLog/DaliUsbCdcLog.c")
         self.assertIn("usb_mtu3_device_log", BUILDER.REQUIRED_SYMBOLS)
+        self.assertIn("dali_usb_cdc_log_write", BUILDER.REQUIRED_SYMBOLS)
         self.assertTrue({"usb_qmu_init", "usb_mtu3_ep0_start", "usb_mtu3_endpoints_configure",
                          "usb_mtu3_device_start", "usb_mtu3_device_stop"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))
         workflow = (ROOT / ".github/workflows/dali-usb-xnu.yml").read_text()
         self.assertIn('build-dali-usb-gadget.py" --verify-kernel "$kernel"', workflow)
         self.assertIn("build/dali-usb-gadget/*.a", workflow)
+        self.assertIn("drivers/DaliUsbGadgetLog/**", workflow)
+        self.assertIn("tests/usb_cdc_log_model/**", workflow)
+
+    def test_production_log_sink_model_and_inflight_unbind(self):
+        generic = ROOT.parent / "UniXNU"
+        self.assertTrue((generic / "drivers/UsbCore/include/UsbMtu3Device.h").is_file())
+        compilers = []
+        for name in (os.environ.get("CC", "clang"), "gcc"):
+            compiler = shutil.which(name)
+            if compiler and compiler not in compilers:
+                compilers.append(compiler)
+        self.assertTrue(compilers, "a Clang or GCC C compiler is required")
+        model = ROOT / "tests/usb_cdc_log_model/sink.c"
+        source = ROOT / "drivers/DaliUsbGadgetLog/DaliUsbCdcLog.c"
+        for compiler in compilers:
+            with self.subTest(compiler=Path(compiler).name), tempfile.TemporaryDirectory() as temporary:
+                binary = Path(temporary) / "cdc-log-sink"
+                command = [compiler, "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                           "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-pthread",
+                           "-I", str(generic / "drivers/UsbCore/include"),
+                           "-I", str(ROOT / "drivers/DaliUsbGadgetLog"), str(source), str(model),
+                           "-o", str(binary)]
+                result = subprocess.run(command, text=True, capture_output=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = subprocess.run([str(binary)], text=True, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("PASS: nonblocking Dali CDC log sink", result.stdout)
 
     def test_kernel_symbol_check_requires_each_gadget_unit(self):
         defined = "\n".join("00000000 T _" + name for name in BUILDER.REQUIRED_SYMBOLS)
@@ -62,7 +96,7 @@ class DaliUsbGadgetBuilderTests(unittest.TestCase):
         verify.assert_called_once_with(kernel)
 
     def test_kernel_link_report_requires_distinct_gadget_symbols(self):
-        self.assertEqual(len(BUILDER.SOURCES), 4)
+        self.assertEqual(len(BUILDER.SOURCES), 5)
         self.assertEqual(len(set(BUILDER.REQUIRED_SYMBOLS)), len(BUILDER.REQUIRED_SYMBOLS))
 
 

@@ -14,7 +14,9 @@ OBJECTS = ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837"
 OUT = ROOT / "build/dali-usb-gadget"
 ARCHIVE = OUT / "libDaliUsbGadget.a"
 SOURCES = tuple(ROOT / "drivers/UsbCore" / name for name in (
-    "UsbMtu3Qmu.c", "UsbMtu3Ep0.c", "UsbMtu3Endpoints.c", "UsbMtu3Device.c"))
+    "UsbMtu3Qmu.c", "UsbMtu3Ep0.c", "UsbMtu3Endpoints.c", "UsbMtu3Device.c")) + (
+    ROOT / "drivers/DaliUsbGadgetLog/DaliUsbCdcLog.c",
+)
 REQUIRED_SYMBOLS = (
     "usb_qmu_init", "usb_qmu_submit", "usb_qmu_start", "usb_qmu_reap",
     "usb_qmu_stop", "usb_qmu_cancel", "usb_qmu_destroy",
@@ -24,6 +26,8 @@ REQUIRED_SYMBOLS = (
     "usb_mtu3_endpoints_deconfigure", "usb_mtu3_endpoints_halt",
     "usb_mtu3_device_init", "usb_mtu3_device_start", "usb_mtu3_device_stop",
     "usb_mtu3_device_destroy", "usb_mtu3_device_poll", "usb_mtu3_device_log",
+    "dali_usb_cdc_log_bind", "dali_usb_cdc_log_unbind", "dali_usb_cdc_log_write",
+    "dali_usb_cdc_log_dropped",
 )
 
 
@@ -88,7 +92,7 @@ def build():
     if missing:
         raise ValueError("USB gadget archive lacks production symbols: " + ", ".join(missing))
     report = {
-        "scope": "source-XNU archive compile/link only; no gadget provider or USB runtime qualification",
+        "scope": "source-XNU archive compile/link only; optional log sink is unbound without a provider",
         "compile_record": str(record_path.relative_to(ROOT)),
         "compile_record_sha256": digest(record_path),
         "objects": rows,
