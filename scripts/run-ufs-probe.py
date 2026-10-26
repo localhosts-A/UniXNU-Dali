@@ -219,6 +219,9 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     if cycle.sha256(module) != probe.get('bds_sha256') or (mode == 'registers' and token.encode() + b'\0' not in module):
         raise cycle.CycleError('final candidate BDS/token does not match manifest')
     if xnu_ufs_mode:
+        expected_loader = package.loader_measurement_metadata(build / 'AARCH64', unixnu, fd=fd)
+        if manifest.get('loader_measurement') != expected_loader:
+            raise cycle.CycleError('candidate loader measurement differs from pinned source/build/final FD')
         runtime_fdt = directory / 'runtime-live.dtb'
         payload_image = directory / 'payload.img'
         profile = payload.get('xnu_ufs_read_only', {})

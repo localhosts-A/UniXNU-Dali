@@ -49,14 +49,19 @@ Board pins UniXNU `504d2cccbcdb7c962cb4918e2d8fbed5eb1daf7d`, whose DarwinBoot
 gitlink is `6203a83fda0272cb10e740e93ec7c219808a8915`. The previous CI40267179773
 kernel is evidence for its older device8e8ba36/UniXNUa3dfbe4 inputs only.
 
-An arbitrary ADT property is not evidence of a loader measurement. The write
-candidate verifier must still bind the actual final-FD loader binary and its
-source pins before any write profile is exposed. That end-to-end candidate
-binding is pending; standalone QEMU is not a Dali firmware or runtime
-authentication qualification. The frozen read-only candidate is unchanged;
-UEFI's grant remains zero and no physical scratch write is authorized.
+An arbitrary ADT property is not evidence of a loader measurement. UEFI verifier
+`b649eb64d13c238dabc53ecd2586c0af7ca60855` now requires a unique ARM64 DarwinBoot
+inside the final FD matching the local compiled EFI, its measurement property
+contract, the clean generic/submodule revisions and exact gitlink, and the
+five actual link objects including KernelMeasurement. The record hashes source,
+object and library-list inputs. The combined runner recomputes it before flash;
+manifest-only claims are refused. These are local build consistency checks,
+not an independent compiler attestation or a write grant. Actual new-pin Dali
+firmware/candidate qualification still requires fresh build evidence. The
+frozen read-only candidate is unchanged; UEFI's grant remains zero and no
+physical scratch write is authorized.
 
-Remaining gates include final-FD loader/candidate binding and new-pin build
+Remaining gates include actual new-pin final-FD/candidate and source-only build
 evidence, runtime UFS geometry/GPT/layout authorization, evidence export before
 restoring original boot_b, full firmware/XNU ownership, and separate UEFI/XNU
 write/sync/same-candidate reboot/readback qualification with three fresh tokens.
