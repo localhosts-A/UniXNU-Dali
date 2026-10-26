@@ -14,11 +14,13 @@ on:
       - 'patches/xnu/**'
       - 'references/usb-sources.toml'
       - 'scripts/build-dali-usb-host.py'
+      - 'scripts/build-dali-usb-gadget.py'
       - 'scripts/build-dali-usb-xhci-resources.py'
       - 'scripts/build-dali-usb-storage.py'
       - 'scripts/build-dali-usb-hid.py'
       - 'scripts/fetch-usb-references.py'
       - 'tests/test_dali_usb_storage_builder.py'
+      - 'tests/test_dali_usb_gadget_builder.py'
       - 'tests/test_dali_usb_hid_builder.py'
       - 'tests/test_dali_usb_xhci_resources_builder.py'
       - 'tests/fixtures/usb_xhci_resource_v1_test.c'
@@ -138,6 +140,7 @@ jobs:
           tree="$UNIXNU_OUT/dali/tree"
           kernel="$tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
           python3 "$tree/scripts/build-dali-usb-host.py" --verify-kernel "$kernel"
+          python3 "$tree/scripts/build-dali-usb-gadget.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-dali-usb-xhci-resources.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-dali-usb-storage.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-storage.py" --verify-kernel "$kernel"
@@ -179,6 +182,8 @@ jobs:
             UniXNU/out/dali/logs/source-msdosfs-link.log
             UniXNU/out/dali/tree/build/dali-usb-host/*.json
             UniXNU/out/dali/tree/build/dali-usb-host/*.log
+            UniXNU/out/dali/tree/build/dali-usb-gadget/*.json
+            UniXNU/out/dali/tree/build/dali-usb-gadget/*.log
             UniXNU/out/dali/tree/build/dali-usb-xhci-resources/*.json
             UniXNU/out/dali/tree/build/dali-usb-xhci-resources/*.log
             UniXNU/out/dali/tree/build/dali-usb-storage/*.json
@@ -202,6 +207,7 @@ jobs:
           path: |
             UniXNU/out/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf
             UniXNU/out/dali/tree/build/dali-usb-host/*.a
+            UniXNU/out/dali/tree/build/dali-usb-gadget/*.a
             UniXNU/out/dali/tree/build/dali-usb-xhci-resources/*.a
             UniXNU/out/dali/tree/build/dali-usb-storage/*.a
             UniXNU/out/dali/tree/build/dali-usb-hid/*.a
