@@ -172,7 +172,9 @@ characters to this producer. Console policy can suppress output before the tap,
 and this does not capture all `OSLog` records. The kernel also has no MTU3
 provider, device-role or VBUS/clock/PHY lease, qualified DMA/IRQ worker, or CDC
 runtime. UEFI preserves early `SerialPortWrite()` output in ramoops and has no
-installed USB function provider. The archive sends no CDC bytes over USB.
+installed USB function provider. The isolated EDK2 `DaliUsbCdcLogLib` archive
+compiles the adapter and checks its MTU3 API dependency, but stays outside the FV
+and has no serial-output caller. No CDC bytes are sent over USB.
 
 The UEFI resource-context revision6 also copies the four CPU-endian cells from
 the xHCI FDT `interrupts` property (`0, 600, 4, 0`) with the register window.
