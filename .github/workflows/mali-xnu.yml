@@ -1,6 +1,9 @@
 name: Dali Mali source XNU
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/dali-mali-metal-offline]
+    paths: ['.github/workflows/mali-xnu.yml', 'board.toml', 'drivers/DaliMali/**', 'configs/dali_defconfig', 'patches/xnu/dali-bootlog-personality.patch', 'scripts/build-dali-xnu-platform.py']
 permissions:
   contents: read
 concurrency:
