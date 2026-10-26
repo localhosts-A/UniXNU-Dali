@@ -60,6 +60,7 @@ int main()
     provider.setTestProperty("resources-v1", &wrongType);
     DaliUsbXhciResources wrongTypeService;
     assert(!wrongTypeService.start(&provider));
+    assert(!wrongTypeService.started);
     assert(!wrongTypeService.registered);
     assert(!wrongTypeService.copyResourceDescription(&resources));
 
@@ -67,6 +68,7 @@ int main()
     provider.setTestProperty("resources-v1", &truncated);
     DaliUsbXhciResources truncatedService;
     assert(!truncatedService.start(&provider));
+    assert(!truncatedService.started);
     assert(!truncatedService.registered);
 
     bytes[24] = 0x59; // IRQ number 601, rejected by the exact Dali contract.
@@ -74,6 +76,7 @@ int main()
     provider.setTestProperty("resources-v1", &changed);
     DaliUsbXhciResources changedService;
     assert(!changedService.start(&provider));
+    assert(!changedService.started);
     assert(!changedService.registered);
 
     static constexpr char wrongCompatibleName[] = "mediatek,other-controller";
@@ -82,12 +85,14 @@ int main()
     provider.setTestProperty("compatible", &wrongCompatible);
     DaliUsbXhciResources incompatibleService;
     assert(!incompatibleService.start(&provider));
+    assert(!incompatibleService.started);
     assert(!incompatibleService.registered);
 
     IOService missingCompatibleProvider;
     missingCompatibleProvider.setTestProperty("resources-v1", &property);
     DaliUsbXhciResources missingCompatibleService;
     assert(!missingCompatibleService.start(&missingCompatibleProvider));
+    assert(!missingCompatibleService.started);
     assert(!missingCompatibleService.registered);
 
     assert(!service.copyResourceDescription(nullptr));

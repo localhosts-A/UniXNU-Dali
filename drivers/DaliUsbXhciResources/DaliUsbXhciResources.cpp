@@ -33,6 +33,7 @@ DaliUsbXhciResources::start(IOService *provider)
 
     if (!hasXhciCompatible(provider)) {
         IOLog("DaliUsbXhciResources: rejected incompatible xhci0 provider\n");
+        IOService::stop(provider);
         return false;
     }
 
@@ -42,6 +43,7 @@ DaliUsbXhciResources::start(IOService *provider)
         !dali_usb_xhci_decode_resource_v1(wire->getBytesNoCopy(), wire->getLength(),
                                           &decoded)) {
         IOLog("DaliUsbXhciResources: rejected missing or invalid resources-v1\n");
+        IOService::stop(provider);
         return false;
     }
 
