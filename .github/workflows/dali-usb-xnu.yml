@@ -122,6 +122,7 @@ jobs:
           XNU_NATIVE_USB_HOST: '1'
           XNU_SOURCE_STORAGE_FAMILY: '1'
           XNU_SOURCE_HID_FAMILY: '1'
+          XNU_SOURCE_MSDOSFS: '1'
         run: |
           set -euo pipefail
           cd UniXNU
@@ -132,6 +133,7 @@ jobs:
           python3 "$tree/scripts/build-source-storage.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-hid.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-dali-usb-hid.py" --verify-kernel "$kernel"
+          python3 "$tree/scripts/build-source-msdosfs.py" --verify-kernel "$kernel"
 
       - name: Summarize source build scope
         if: always()
@@ -164,6 +166,7 @@ jobs:
             UniXNU/out/dali/logs/kernel.log
             UniXNU/out/dali/logs/source-storage-link.log
             UniXNU/out/dali/logs/source-hid-link.log
+            UniXNU/out/dali/logs/source-msdosfs-link.log
             UniXNU/out/dali/tree/build/dali-usb-host/*.json
             UniXNU/out/dali/tree/build/dali-usb-host/*.log
             UniXNU/out/dali/tree/build/dali-usb-storage/*.json
@@ -174,6 +177,8 @@ jobs:
             UniXNU/out/dali/tree/build/source-storage/*.log
             UniXNU/out/dali/tree/build/source-hid/*.json
             UniXNU/out/dali/tree/build/source-hid/*.log
+            UniXNU/out/dali/tree/build/source-msdosfs/*.json
+            UniXNU/out/dali/tree/build/source-msdosfs/*.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -189,5 +194,6 @@ jobs:
             UniXNU/out/dali/tree/build/dali-usb-hid/*.a
             UniXNU/out/dali/tree/build/source-storage/*.a
             UniXNU/out/dali/tree/build/source-hid/*.a
+            UniXNU/out/dali/tree/build/source-msdosfs/*.a
           if-no-files-found: error
           retention-days: 7

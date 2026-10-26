@@ -6,6 +6,7 @@ CONFIG_XNU_SOURCE_PTHREAD=y
 CONFIG_XNU_SOURCE_MOCKFS=y
 CONFIG_XNU_SOURCE_STORAGE_FAMILY=y
 CONFIG_XNU_SOURCE_HID_FAMILY=y
+CONFIG_XNU_SOURCE_MSDOSFS=y
 CONFIG_XNU_SOURCE_ENTITLEMENT_FREE=y
 # CONFIG_XNU_TRUST_CACHE_RUNTIME is not set
 CONFIG_XNU_ARM_DT_PLATFORM=y
@@ -14,5 +15,5 @@ CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 CONFIG_XNU_NATIVE_USB_HOST=y
-CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-usb-host/libDaliUsbHost.a -Wl,-force_load,{tree}/build/dali-usb-storage/libDaliUsbStorage.a -Wl,-force_load,{tree}/build/source-hid/libIOHIDFamily.a -Wl,-force_load,{tree}/build/dali-usb-hid/libDaliUsbHid.a"
-CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-usb-host/libDaliUsbHost.a {tree}/build/dali-usb-storage/libDaliUsbStorage.a {tree}/build/source-hid/libIOHIDFamily.a {tree}/build/dali-usb-hid/libDaliUsbHid.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-usb-host/libDaliUsbHost.a -Wl,-force_load,{tree}/build/dali-usb-storage/libDaliUsbStorage.a -Wl,-force_load,{tree}/build/source-hid/libIOHIDFamily.a -Wl,-force_load,{tree}/build/dali-usb-hid/libDaliUsbHid.a -Wl,-force_load,{tree}/build/source-msdosfs/libmsdosfs.a"
+CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-usb-host/libDaliUsbHost.a {tree}/build/dali-usb-storage/libDaliUsbStorage.a {tree}/build/source-hid/libIOHIDFamily.a {tree}/build/dali-usb-hid/libDaliUsbHid.a {tree}/build/source-msdosfs/libmsdosfs.a"

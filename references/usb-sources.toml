@@ -42,3 +42,10 @@ git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
 commit = "e45fbe30a7879e0b16e26dddb78538f1b00e0bff"
 paths = ["/"]
 required = ["IOBlockStorageDevice.cpp", "IOMediaBSDClient.cpp", "IOGUIDPartitionScheme.cpp"]
+
+[[source]]
+name = "IOHIDAppleUsageTables"
+git = "https://github.com/apple-oss-distributions/IOHIDFamily.git"
+commit = "12d918c6280fcd5e8312e4fb47b4e0e9c48a0fac"
+paths = ["IOHIDFamily/AppleHIDUsageTables.h"]
+required = ["IOHIDFamily/AppleHIDUsageTables.h"]

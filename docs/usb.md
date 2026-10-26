@@ -107,8 +107,14 @@ enabled. Candidate first-party devices keep conservative access protection
 when private usage classification is unavailable. The real XNU Reporter header
 and private XNU/flat event include paths are used. Run 40249339788 generated all
 three real IIG bridges and compiled 38 of 48 public units; the current follow-up
-addresses its remaining errors. The complete family archive, child compilation,
-kernel link and runtime have not passed yet.
+addresses its remaining errors. Run 40278738004 compiles the keyboard/consumer
+support sources and real XNU reporter path; IOHIDSystem still failed on the
+unpublished NXEvent usage identifiers. The follow-up imports the real official
+IOHIDFamily-1035.41.2 Apple usage table at commit
+`12d918c6280fcd5e8312e4fb47b4e0e9c48a0fac`, scoped inside a private C++ namespace
+only for the existing NXEvent wrapper. It preserves event construction and
+dispatch, and does not enable general Apple vendor report parsing. The complete
+family archive, child compilation, kernel link and runtime still require a pass.
 
 `DaliUsbHid` is a concrete source `IOHIDDevice` child. It snapshots the USB
 interface identity, supplies descriptors matching the forced Boot protocol,
@@ -122,6 +128,17 @@ IOKit seam. Those models do not prove kernel ABI or real HID descriptor parsing.
 The opt-in builder compiles against the actual source-family headers and checks
 the linked kernel symbols. This new child still awaits its first macOS compile,
 and no production controller/child owner publishes it yet.
+
+The profile also selects `XNU_SOURCE_MSDOSFS` and the fixed
+msdosfs-608.120.4 source target. Its builder compiles all six actual kernel C
+units using XNU's VFS compile record and a built-in registration wrapper. The
+wrapper calls the upstream `msdosfs_module_start` after `vfsinit`; registration
+failure stops boot. The archive is force-loaded and part of the kernel input
+fingerprint. The final verifier requires the real VFS/vnode definitions and a
+compiled `bsd_init.o` call to the wrapper. This is newly wired source build work:
+macOS compilation, runtime registration, USB mounting and FAT32 file operations
+remain unqualified. The registration hook performs no mount or media I/O. The
+separate post-RAM-root, pre-user-exec FAT32 fixture remains pending.
 
 The device tree also contains a production SID14 PMIF-M transport under
 `drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,
