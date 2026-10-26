@@ -4,6 +4,8 @@ import struct
 import tempfile
 import unittest
 import uuid
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("userdata_log_runner", ROOT / "scripts/run-userdata-log.py")
@@ -54,6 +56,44 @@ def userdata_wire(token):
 
 
 class UserdataLogRunnerTests(unittest.TestCase):
+    def test_live_trial_binds_its_run_for_the_final_restore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            run = Path(temp)
+            candidate = run / "candidate" / "UniXNU-dali-uefi-boot.img"
+            candidate.parent.mkdir()
+            candidate.write_bytes(b"candidate-image")
+            original_log = b"original-userdata-log-partition"
+            args = SimpleNamespace(serial="device", fastboot_serial="device",
+                                   wait_seconds=600, backup=run / "backup")
+            state = dict(candidate_sha256=runner.cycle.sha256(candidate.read_bytes()),
+                         original_userdata_logs_sha256=runner.sha256(original_log),
+                         restore_command=["restore-only"])
+
+            class FakeLogs:
+                def __init__(self, *unused): pass
+                def observe(self): pass
+                def read_partition(self): return original_log
+
+            lease = SimpleNamespace(arm=lambda *unused: None)
+            restore_result = dict(userdata_log_owners_verified=True,
+                                  persistence_qualified=True)
+            with (patch.object(runner, "AndroidUserdataLogs", FakeLogs),
+                  patch.object(runner.cycle, "current_android"),
+                  patch.object(runner.cycle, "compare_partition_hashes"),
+                  patch.object(runner.cycle, "request_fastboot_from_android"),
+                  patch.object(runner.cycle, "verify_fastboot"),
+                  patch.object(runner.cycle, "verify_original_boot_b"),
+                  patch.object(runner.cycle, "flash_boot_b"),
+                  patch.object(runner.cycle, "fastboot_command"),
+                  patch.object(runner.cycle, "wait_fastboot_disconnect", return_value=True),
+                  patch.object(runner.cycle, "wait_fastboot", return_value=True),
+                  patch.object(runner, "restore_android", return_value=restore_result) as restore):
+                result = runner.execute_trial(args, lease, run, state, {"boot_b": {}}, {})
+
+            self.assertEqual(result, 0)
+            self.assertEqual(args.restore_run, run)
+            restore.assert_called_once_with(args, lease)
+
     def test_exact_v4_grant_is_bound_into_the_candidate_adt_with_pinned_encoder(self):
         adt = apple_node("device-tree", children=[apple_node("arm-io", children=[
             apple_node("dali-ufs", [("compatible", b"localhosts,dali-ufs\0")])])])

@@ -480,6 +480,10 @@ def restore_android(args, lease):
 
 
 def execute_trial(args, lease, run, state, records, baseline):
+    # The same validated recovery context is used by the success and exception
+    # paths after the boot loop.  The initial CLI invocation has no
+    # --restore-run; bind it here before any write can be armed.
+    args.restore_run = run
     io = AndroidUserdataLogs(cycle, args.serial, records, baseline)
     io.observe(); current = io.read_partition(); io.observe()
     if sha256(current) != state["original_userdata_logs_sha256"]:
