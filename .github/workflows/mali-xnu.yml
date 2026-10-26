@@ -97,4 +97,4 @@ jobs:
             UniXNU/out/dali/tree/build/dali-xnu-platform/DaliMaliAccelerator.kext/**
             UniXNU/out/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 30
