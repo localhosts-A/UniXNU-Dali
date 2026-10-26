@@ -148,15 +148,17 @@ controller, start xHCI, ring doorbells, own an interrupt/DMA provider, implement
 the complete `usb_host_ops`, or publish children. Its archive/link evidence is
 not runtime controller qualification.
 
-The opt-in `DaliUsbXhciResources` service now matches the Dali `xhci0`
-platform device, checks its exact compatible string, and decodes the versioned
-resource property without casting its packed wire bytes to a native structure.
-Its copy API gives a future controller owner the validated description. Clang
-and GCC sanitizer models exercise the production decoder and service through a
-test-only IOKit seam. This service does not map MMIO or touch controller
-registers. Action 40313584406 compiled and linked this service in the final
-source-XNU kernel. A native xHCI owner, provider leases, enumeration, runtime
-and hardware qualification remain pending.
+The opt-in `DaliUsbXhciResources` service matches the Dali `xhci0` platform
+device, checks its exact compatible string, and decodes the versioned resource
+property without casting its packed wire bytes to a native structure. Its copy
+API supplies the validated range to `DaliUsbXhciOwner`, which maps that absolute
+range with an inhibit-cache `IODeviceMemory` mapping and retains it until
+`stop()`. The mapping model checks exact range, options, allocation failures,
+and teardown. The owner performs no register reads/writes; it does not acquire
+power, clocks, an IRQ, or qualified DMA, so it does not start or enumerate the
+controller. Action 40313584406 verified only the earlier resource service. The
+new owner archive/kernel link is pending; runtime enumeration and hardware
+qualification remain separate.
 
 The UEFI resource-context revision6 also copies the four CPU-endian cells from
 the xHCI FDT `interrupts` property (`0, 600, 4, 0`) with the register window.

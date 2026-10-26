@@ -1,5 +1,6 @@
 #include "IOKitModel.h"
 #include "DaliUsbXhciResources.hpp"
+#include "DaliUsbXhciOwner.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -51,6 +52,38 @@ int main()
     assert(resources.length == DALI_USB_XHCI_RESOURCE_V1_LENGTH);
     assert(resources.interrupt[1] == 600 && resources.interrupt[2] == 4);
 
+    gIOKitMemoryModel = {};
+    DaliUsbXhciOwner owner;
+    assert(owner.start(&service));
+    assert(owner.started && owner.registered && owner.hasMappedWindow());
+    assert(gIOKitMemoryModel.range_calls == 1);
+    assert(gIOKitMemoryModel.base == DALI_USB_XHCI_RESOURCE_V1_BASE);
+    assert(gIOKitMemoryModel.length == DALI_USB_XHCI_RESOURCE_V1_LENGTH);
+    assert(gIOKitMemoryModel.map_calls == 1);
+    assert(gIOKitMemoryModel.map_options == (kIOMapAnywhere | kIOMapInhibitCache));
+    owner.stop(&service);
+    assert(!owner.started && !owner.hasMappedWindow());
+    assert(gIOKitMemoryModel.memory_releases == 1 && gIOKitMemoryModel.map_releases == 1);
+
+    gIOKitMemoryModel = {};
+    gIOKitMemoryModel.fail_range = true;
+    DaliUsbXhciOwner rangeFailure;
+    assert(!rangeFailure.start(&service));
+    assert(!rangeFailure.started && !rangeFailure.registered);
+    assert(gIOKitMemoryModel.range_calls == 1 && gIOKitMemoryModel.map_calls == 0);
+
+    gIOKitMemoryModel = {};
+    gIOKitMemoryModel.fail_map = true;
+    DaliUsbXhciOwner mapFailure;
+    assert(!mapFailure.start(&service));
+    assert(!mapFailure.started && !mapFailure.registered);
+    assert(gIOKitMemoryModel.memory_releases == 1 && gIOKitMemoryModel.map_releases == 0);
+
+    IOService wrongOwnerProvider;
+    DaliUsbXhciOwner wrongOwner;
+    assert(!wrongOwner.start(&wrongOwnerProvider));
+    assert(!wrongOwner.started && !wrongOwner.registered);
+
     service.stop(&provider);
     resources.version = 99;
     assert(!service.copyResourceDescription(&resources));
@@ -96,6 +129,6 @@ int main()
     assert(!missingCompatibleService.registered);
 
     assert(!service.copyResourceDescription(nullptr));
-    std::puts("PASS: production Dali xHCI IOKit resource consumer; no MMIO access attempted");
+    std::puts("PASS: production Dali xHCI MMIO mapping owner; controller registers untouched");
     return 0;
 }

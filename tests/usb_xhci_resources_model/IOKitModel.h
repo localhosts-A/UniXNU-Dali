@@ -7,9 +7,58 @@
 #include <unordered_map>
 #include <vector>
 
+using IOOptionBits = uint32_t;
+static constexpr IOOptionBits kIOMapAnywhere = 1u;
+static constexpr IOOptionBits kIOMapInhibitCache = 2u;
+
+struct IOKitMemoryModel {
+    bool fail_range = false;
+    bool fail_map = false;
+    uint64_t base = 0;
+    uint64_t length = 0;
+    IOOptionBits map_options = 0;
+    unsigned range_calls = 0;
+    unsigned memory_releases = 0;
+    unsigned map_calls = 0;
+    unsigned map_releases = 0;
+};
+
+inline IOKitMemoryModel gIOKitMemoryModel;
+
 class OSObject {
 public:
     virtual ~OSObject() = default;
+    virtual void release() { delete this; }
+};
+
+class IOMemoryMap : public OSObject {
+    IOKitMemoryModel *mModel;
+
+public:
+    explicit IOMemoryMap(IOKitMemoryModel *model) : mModel(model) {}
+    uint64_t getVirtualAddress() const { return 0xfeed0000u; }
+    void release() override { ++mModel->map_releases; delete this; }
+};
+
+class IODeviceMemory : public OSObject {
+    IOKitMemoryModel *mModel;
+
+public:
+    explicit IODeviceMemory(IOKitMemoryModel *model) : mModel(model) {}
+    static IODeviceMemory *withRange(uint64_t base, uint64_t length)
+    {
+        ++gIOKitMemoryModel.range_calls;
+        gIOKitMemoryModel.base = base;
+        gIOKitMemoryModel.length = length;
+        return gIOKitMemoryModel.fail_range ? nullptr : new IODeviceMemory(&gIOKitMemoryModel);
+    }
+    IOMemoryMap *map(IOOptionBits options)
+    {
+        ++mModel->map_calls;
+        mModel->map_options = options;
+        return mModel->fail_map ? nullptr : new IOMemoryMap(mModel);
+    }
+    void release() override { ++mModel->memory_releases; delete this; }
 };
 
 class OSData : public OSObject {

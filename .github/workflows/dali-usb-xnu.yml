@@ -10,6 +10,7 @@ on:
       - 'drivers/DaliUsbStorage/**'
       - 'drivers/DaliUsbHid/**'
       - 'drivers/DaliUsbXhciResources/**'
+      - 'drivers/DaliUsbXhciOwner/**'
       - 'patches/xnu/**'
       - 'references/usb-sources.toml'
       - 'scripts/build-dali-usb-host.py'

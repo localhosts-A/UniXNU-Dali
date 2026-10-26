@@ -93,7 +93,11 @@ class XnuPatchFormatTests(unittest.TestCase):
             self.assertIn("'IOClass'         = ArmDTPlatform;", result)
             self.assertIn("'IOClass'         = DaliBootLog;", result)
             self.assertIn("'IOClass'         = DaliUsbXhciResources;", result)
+            self.assertIn("'IOClass'         = DaliUsbXhciOwner;", result)
+            self.assertIn("'IOProviderClass' = DaliUsbXhciResources;", result)
             self.assertIn("'IONameMatch'     = 'xhci0';", result)
+            self.assertLess(result.index("DaliUsbXhciResources;"),
+                            result.index("DaliUsbXhciOwner;"))
 
 
 class BoardArchiveTests(unittest.TestCase):
