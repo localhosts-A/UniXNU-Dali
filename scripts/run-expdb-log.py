@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import shlex
+import struct
 import subprocess
 import sys
 
@@ -19,6 +20,7 @@ from ufs_expdb import MIB, _read
 from ufs_expdb_restore import AndroidExpdb, load_restore_baseline, prepare_restore
 from ufs_identity import validate_captured_identity
 from ufs_scratch_authorization import build_xnu_scratch_grant
+from unattended_layout import boot_image_extent
 
 spec=importlib.util.spec_from_file_location('expdb_trial_recovery',SCRIPTS/'restore-expdb-log.py')
 recovery=importlib.util.module_from_spec(spec);spec.loader.exec_module(recovery)
@@ -32,6 +34,25 @@ def copy_bytes(data,path):
 
 def overlap(a,b):
     return a==b or a in b.parents or b in a.parents
+
+
+def provisional_boot_image(original):
+    """Shape the first proposal without treating signed original data as a candidate.
+
+    Keep its header and declared compressed kernel, append only page padding,
+    and apply the unchanged unsigned-candidate validator. This temporary image
+    is never flashed or sealed. The actual packed firmware must later produce
+    exactly the same kernel-bound grant before candidate verification can pass.
+    """
+    if not isinstance(original,bytes) or len(original)<4096:
+        raise ValueError('original boot image is truncated')
+    length=struct.unpack_from('<I',original,8)[0]
+    if length<4 or length>len(original)-4096:
+        raise ValueError('original boot image declared kernel is outside its backup')
+    image=original[:4096+length]
+    image+=bytes((-len(image))%4096)
+    boot_image_extent(image,len(original))
+    return image
 
 
 def snapshot_baselines(args,run):
@@ -115,9 +136,10 @@ def build_trial(args,lease):
                 source_manifest=source,kernel_bytes=kernel_bytes,original_boot_b=args.backup/'boot_b.img',
                 target_partition='expdb',expdb_baseline=expdb,expdb_dir=run/'expdb-baseline')
     # The wire binds the kernel, not its enclosing boot image. First shape it
-    # using a verified boot-v4 container; after packaging, recompute against
-    # the actual candidate and require byte-identical wire/grant.
-    grant,wire,_=build_xnu_scratch_grant(**inputs,candidate_image=(args.backup/'boot_b.img').read_bytes())
+    # using only an unsigned temporary container; after packaging, recompute
+    # against the actual candidate and require byte-identical wire/grant.
+    provisional=provisional_boot_image((args.backup/'boot_b.img').read_bytes())
+    grant,wire,_=build_xnu_scratch_grant(**inputs,candidate_image=provisional)
     copy_bytes(wire,candidate/'grant.bin')
     packed=run/'candidate-build';packed.mkdir(mode=0o700)
     boot,manifest=cycle.build_candidate(args,args.backup,candidate/'source-kernel.macho',adt,

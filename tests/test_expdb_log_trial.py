@@ -3,15 +3,28 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import struct
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from test_ufs_scratch_authorization import kernel_image
 
 spec=importlib.util.spec_from_file_location('expdb_log_trial',Path(__file__).resolve().parents[1]/'scripts/run-expdb-log.py')
 trial=importlib.util.module_from_spec(spec);spec.loader.exec_module(trial)
 
 
 class TrialTests(unittest.TestCase):
+    def test_first_proposal_uses_unsigned_temporary_image_and_never_changes_original_avb(self):
+        original=bytearray(8*1024*1024);original[:8192]=kernel_image();original[-64:-60]=b'AVBf'
+        original[-4096:-4092]=b'meta';raw=bytes(original);before=hashlib.sha256(raw).digest()
+        with self.assertRaisesRegex(ValueError,'AVB'):trial.boot_image_extent(raw,len(raw))
+        image=trial.provisional_boot_image(raw)
+        self.assertEqual(image,kernel_image());self.assertEqual(trial.boot_image_extent(image,len(raw)),8192)
+        self.assertEqual(hashlib.sha256(raw).digest(),before);self.assertEqual(raw[-64:-60],b'AVBf')
+        for at,value in ((8,len(raw)),(12,4096),(1580,4096),(2000,1),(4096,0)):
+            changed=bytearray(raw);struct.pack_into('<I',changed,at,value)
+            with self.assertRaises(ValueError):trial.provisional_boot_image(bytes(changed))
+
     def fixture(self,root):
         run=root/'run';(run/'candidate').mkdir(parents=True)
         data=b'sealed candidate';(run/'candidate/UniXNU-dali-uefi-boot.img').write_bytes(data)
