@@ -87,6 +87,28 @@ class SnapshotTests(unittest.TestCase):
 
 
 class LeaseTests(unittest.TestCase):
+    def test_userdata_layout_survives_restart_and_legacy_restore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);run=root/'layout'
+            with runner.DeviceLease('device',root) as lease:
+                lease.data.update(pending_run=str(run),pending_userdata_layout=True)
+                runner.durable_json(lease.path,lease.data)
+            with runner.DeviceLease('device',root) as lease:
+                with self.assertRaisesRegex(runner.cycle.CycleError,'userdata layout verification remains pending'):
+                    lease.restored(run,{'token':TOKEN})
+                self.assertTrue(json.loads(lease.path.read_text())['pending_userdata_layout'])
+                with self.assertRaises(runner.cycle.CycleError):lease.require_new(TOKEN)
+
+    def test_orphaned_or_nonboolean_userdata_layout_refused(self):
+        for flag,pending in ((True,None),('true','run')):
+            with tempfile.TemporaryDirectory() as temp:
+                root=Path(temp)
+                with runner.DeviceLease('device',root) as lease:
+                    lease.data.update(pending_run=pending,pending_userdata_layout=flag)
+                    runner.durable_json(lease.path,lease.data)
+                with self.assertRaisesRegex(runner.cycle.CycleError,'invalid userdata layout ledger'):
+                    with runner.DeviceLease('device',root):pass
+
     def test_expdb_pending_survives_restart_and_old_boot_only_restore(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);run=root/'run';state={'token':TOKEN,'expdb_may_be_modified':True,'expdb_restore_verified':True}

@@ -86,6 +86,9 @@ class DeviceLease(AbstractContextManager):
             if (type(self.data.get('pending_expdb', False)) is not bool or
                     self.data.get('pending_expdb', False) and self.data['pending_run'] is None):
                 raise cycle.CycleError('invalid expdb pending-restoration ledger')
+            if (type(self.data.get('pending_userdata_layout', False)) is not bool or
+                    self.data.get('pending_userdata_layout', False) and self.data['pending_run'] is None):
+                raise cycle.CycleError('invalid userdata layout ledger')
         except BaseException:
             self.__exit__(None, None, None)
             raise
@@ -124,6 +127,8 @@ class DeviceLease(AbstractContextManager):
     def restored(self, run, state):
         if self.data['pending_run'] not in (None, str(run)):
             raise cycle.CycleError('a different UFS run owns pending restoration')
+        if self.data.get('pending_userdata_layout', False):
+            raise cycle.CycleError('userdata layout verification remains pending; legacy recovery cannot clear it')
         expdb = state.get('expdb_may_be_modified', False)
         if expdb is not False or (self.data.get('pending_expdb', False) and
                 (state.get('expdb_may_be_modified') is not False or state.get('expdb_restore_verified') is not True)):
