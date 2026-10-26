@@ -147,6 +147,12 @@ registers. Action 40313584406 compiled and linked this service in the final
 source-XNU kernel. A native xHCI owner, provider leases, enumeration, runtime
 and hardware qualification remain pending.
 
+The UEFI resource-context revision6 also copies the four CPU-endian cells from
+the xHCI FDT `interrupts` property (`0, 600, 4, 0`) with the register window.
+The native worker rejects an unexpected tuple before calling provider revision2.
+These cells remain untranslated: they are not a GIC vector or an IRQ ownership
+proof, and the production MT6991 provider remains absent.
+
 The profile also selects `XNU_SOURCE_MSDOSFS` and the fixed
 msdosfs-608.120.4 source target. Its builder compiles all six actual kernel C
 units using XNU's VFS compile record and a built-in registration wrapper. The
