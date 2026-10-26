@@ -99,11 +99,16 @@ not reproduce the unpublished 2031 event ABI. Source compile/link and runtime
 remain unpassed gates. The private FastPath user-client source is
 absent from the fixed public Git tree; an explicit source port leaves unknown
 client types to the superclass rather than supplying a replacement class.
-The source port also replaces two unpublished registration/DriverKit-start
-property keys with project-scoped internal keys; all source readers and writers
-use the same names. This HID build is under CI validation. Run 40247821997
-generated all three real IIG bridges and reached C++ compilation; the complete
-family archive and kernel link have not passed yet.
+The source port replaces unpublished lifecycle, protection and type property
+keys with project-scoped internal keys, including protected-client admission
+and privileged-property filtering. Private property forwarding and unpublished
+Apple vendor usages are disabled; standard USB Boot keyboard/mouse paths remain
+enabled. Candidate first-party devices keep conservative access protection
+when private usage classification is unavailable. The real XNU Reporter header
+and private XNU/flat event include paths are used. Run 40249339788 generated all
+three real IIG bridges and compiled 38 of 48 public units; the current follow-up
+addresses its remaining errors. The complete family archive, child compilation,
+kernel link and runtime have not passed yet.
 
 `DaliUsbHid` is a concrete source `IOHIDDevice` child. It snapshots the USB
 interface identity, supplies descriptors matching the forced Boot protocol,
