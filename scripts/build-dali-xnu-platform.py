@@ -7,10 +7,12 @@ from pathlib import Path
 import subprocess
 import struct
 import sys
+from dali_source_identity import build_source_identity, verify_compiled_record
 
 ROOT = Path(__file__).resolve().parents[1]
 OBJECTS = ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837"
 OUT = ROOT / "build/dali-xnu-platform"
+SOURCE_PINS, XNU_SOURCE_PROOF = build_source_identity(ROOT)
 
 
 def compiler_record():
@@ -46,6 +48,9 @@ def compile_source(source, output):
         raise SystemExit("The Dali checkpoint requires pinned numeric XNU Darwin and build versions")
     command = ["xcrun", "--sdk", "iphoneos", "clang++", *record_args[1:],
                f'-DDALI_XNU_DARWIN="{darwin}"', f'-DDALI_XNU_BUILD="{version}"']
+    if source.name == 'DaliUfs.cpp':
+        command += [f'-DDALI_UFS_{key.removesuffix("_commit").upper()}_COMMIT="{value}"'
+                    for key, value in SOURCE_PINS.items()]
     replaced = False
     index = 4  # xcrun, --sdk, iphoneos, clang++
     while index < len(command):
@@ -107,6 +112,8 @@ def ufs_archive():
         magic, cpu, _, kind = struct.unpack_from("<4I", obj.read_bytes())
         if (magic, cpu, kind) != (0xfeedfacf, 0x100000c, 1):
             raise SystemExit("Dali UFS must contain actual arm64 Mach-O objects")
+        if source.name == 'DaliUfs.cpp':
+            verify_compiled_record(obj.read_bytes(), SOURCE_PINS)
         objects.append(obj)
         entries.append({"source": str(source.relative_to(ROOT)), "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                         "object_sha256": hashlib.sha256(obj.read_bytes()).hexdigest()})
@@ -120,6 +127,8 @@ def ufs_archive():
     headers = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in
                sorted((ROOT / "drivers/DaliUfs").glob("*.h"))}
     return {"sources": entries, "headers": headers, "archive_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            "compiled_source_pins": SOURCE_PINS,
+            "effective_xnu_source": XNU_SOURCE_PROOF,
             "physical_ufs_qualified": False, "write_authorized": False}
 
 

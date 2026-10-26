@@ -54,6 +54,7 @@ struct ScratchGrant {
 
 struct ScratchObservation {
   bool identityVerified = false, gptVerified = false, writeProtected = true, scratchMediaReady = false;
+  bool candidateVerified = false, sourceVerified = false;
   char token[33]{};
   uint8_t deviceBinding[32]{}, candidateSha256[32]{}, sourceSha256[32]{};
   uint8_t lun = 0;
@@ -64,6 +65,19 @@ struct ScratchObservation {
 
 bool scratchGrantValid(const ScratchGrant &);
 bool scratchWriteAllowed(const ScratchGrant &, const ScratchObservation &, uint64_t lba, uint32_t blocks);
+
+// Compiled into the running kernel, independently of the ADT grant. No kernel
+// hash here: including it would create a self-hashing build dependency.
+struct SourceIdentity {
+  char magic[16];
+  char device[41], unixnu[41], uefi[41], xnu[41];
+};
+static_assert(sizeof(SourceIdentity) == 180, "source identity wire layout");
+constexpr char KernelMeasurementProperty[] = "darwinboot-kernel-sha256";
+using Hash = bool (*)(void *, const uint8_t *, size_t, uint8_t digest[32]);
+size_t sourceBindingPreimage(const SourceIdentity &, const uint8_t kernel[32], uint8_t *, size_t capacity);
+bool verifyScratchProvenance(const ScratchGrant &, const void *measurement, size_t bytes,
+                             const SourceIdentity &, Hash, void *, ScratchObservation &);
 
 enum class Result : uint32_t { Off, Rejected, Busy, Timeout, Hardware, Uic, Sip, Ready, Stopped };
 enum class Stage : uint32_t { Validate, Power, ReferenceClock, HostReset, Hce, PreLink, LinkStartup, PostLink, DeviceReset };

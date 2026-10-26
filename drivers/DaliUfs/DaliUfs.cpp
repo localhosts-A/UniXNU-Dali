@@ -20,6 +20,15 @@
 #include "DaliUfsRecovery.h"
 
 using unixnu_ufs::Status;
+#if !defined(DALI_UFS_DEVICE_COMMIT) || !defined(DALI_UFS_UNIXNU_COMMIT) || !defined(DALI_UFS_UEFI_COMMIT) || !defined(DALI_UFS_XNU_COMMIT)
+#error Dali UFS requires source pins from the verified platform archive builder
+#endif
+extern "C" const dali_ufs::SourceIdentity gDaliUfsSourceIdentity = {
+  "DALIUFSSRC1", DALI_UFS_DEVICE_COMMIT, DALI_UFS_UNIXNU_COMMIT, DALI_UFS_UEFI_COMMIT, DALI_UFS_XNU_COMMIT
+};
+static bool provenanceHash(void *, const uint8_t *data, size_t bytes, uint8_t digest[32]) {
+  SHA256_CTX hash; SHA256_Init(&hash); SHA256_Update(&hash, data, bytes); SHA256_Final(digest, &hash); return true;
+}
 class DaliUfsBlock;
 class DaliUfs : public IOService {
   OSDeclareDefaultStructors(DaliUfs)
@@ -263,6 +272,15 @@ bool DaliUfs::initialize() {
   SHA256_CTX hash; uint8_t digest[32]; SHA256_Init(&hash); SHA256_Update(&hash, "abc", 3); SHA256_Final(digest, &hash);
   if (memcmp(digest, expected, 32)) { record("sha-failed"); return false; }
   record("sha-pass");
+  if (scratchWriteMode_) {
+    auto chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+    auto measured = chosen ? OSDynamicCast(OSData, chosen->getProperty(dali_ufs::KernelMeasurementProperty)) : nullptr;
+    bool valid = measured && dali_ufs::verifyScratchProvenance(scratchGrant_, measured->getBytesNoCopy(),
+      measured->getLength(), gDaliUfsSourceIdentity, provenanceHash, nullptr, scratchObservation_);
+    if (chosen) chosen->release();
+    if (!valid) { record("scratch-provenance-refused"); return false; }
+    record("scratch-provenance-pass");
+  }
   uint64_t ctr, hz, mpidr;
   __asm__ volatile("mrs %0, ctr_el0\n\tmrs %1, cntfrq_el0\n\tmrs %2, mpidr_el1" : "=r"(ctr), "=r"(hz), "=r"(mpidr));
   line_ = 4U << ((ctr >> 16) & 15); frequency_ = static_cast<uint32_t>(hz);
@@ -298,8 +316,6 @@ bool DaliUfs::initialize() {
     }
     memcpy(scratchObservation_.token, token_, sizeof scratchObservation_.token);
     memcpy(scratchObservation_.deviceBinding, digest, sizeof digest);
-    memcpy(scratchObservation_.candidateSha256, scratchGrant_.candidateSha256, sizeof scratchObservation_.candidateSha256);
-    memcpy(scratchObservation_.sourceSha256, scratchGrant_.sourceSha256, sizeof scratchObservation_.sourceSha256);
     scratchObservation_.identityVerified = true;
     bzero(digest, sizeof digest);
   }

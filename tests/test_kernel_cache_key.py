@@ -18,13 +18,13 @@ class KernelCacheKeyTests(unittest.TestCase):
             board.write_text(text)
             return module.board_fingerprint(board)
 
-    def test_source_graph_replaces_both_revision_pins(self):
+    def test_compiled_source_identity_includes_both_revision_pins(self):
         text = (ROOT / "board.toml").read_text()
         base = self.fingerprint(text)
         import tomllib
         board = tomllib.loads(text)
-        self.assertEqual(base, self.fingerprint(text.replace(board["firmware"]["uefi_commit"], "f" * 40)))
-        self.assertEqual(base, self.fingerprint(text.replace(board["firmware"]["unixnu_commit"], "e" * 40)))
+        self.assertNotEqual(base, self.fingerprint(text.replace(board["firmware"]["uefi_commit"], "f" * 40)))
+        self.assertNotEqual(base, self.fingerprint(text.replace(board["firmware"]["unixnu_commit"], "e" * 40)))
         for old, new in [
             ('name = "dali"', 'name = "other"'),
             ('kit = "Dali"', 'kit = "Other"'),
@@ -78,13 +78,13 @@ class SourceGraphTests(unittest.TestCase):
         (root / path).write_text((root / path).read_text() + "\nchanged")
         self.commit(root)
 
-    def test_efi_only_changes_reuse_kernel_but_not_edk_cache(self):
+    def test_revision_changes_invalidate_compiled_identity_even_for_efi_only_sources(self):
         before = self.keys()
         self.change(self.unixnu, "scripts/test-darwinboot.py")
-        self.assertEqual(before["kernel"], self.keys()["kernel"])
+        self.assertNotEqual(before["kernel"], self.keys()["kernel"])
         self.assertNotEqual(before["edk"], self.keys()["edk"])
         self.change(self.device, "README.md")
-        self.assertEqual(before["kernel"], self.keys()["kernel"])
+        self.assertNotEqual(before["kernel"], self.keys()["kernel"])
 
     def test_patch_config_unknown_inputs_and_toolchain_invalidate(self):
         for root, path in [(self.unixnu, "patches/xnu/entry.patch"),
@@ -124,7 +124,7 @@ class SourceGraphTests(unittest.TestCase):
             self.change(target, "source.c")
             self.commit(self.unixnu)
             if name == "DarwinBoot":
-                self.assertEqual(before["kernel"], self.keys()["kernel"])
+                self.assertNotEqual(before["kernel"], self.keys()["kernel"])
                 self.assertNotEqual(before["edk"], self.keys()["edk"])
             else:
                 self.assertNotEqual(before["kernel"], self.keys()["kernel"])

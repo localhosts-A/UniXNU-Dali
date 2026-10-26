@@ -101,6 +101,7 @@ extern "C" void scratch_policy_case(unsigned mode,uint64_t *out){
   g.payloadEndBytes=5062656;g.scratchStartLba=434432;g.scratchBlocks=256;g.tailGuardBlocks=256;
   g.sequence=1;
   ScratchObservation o{};o.identityVerified=true;o.gptVerified=true;o.writeProtected=false;o.scratchMediaReady=true;o.lun=2;
+  o.candidateVerified=o.sourceVerified=true;
   strcpy(o.token,g.token);memcpy(o.deviceBinding,g.deviceBinding,sizeof g.deviceBinding);
   memcpy(o.candidateSha256,g.candidateSha256,sizeof g.candidateSha256);
   memcpy(o.sourceSha256,g.sourceSha256,sizeof g.sourceSha256);
@@ -135,6 +136,8 @@ extern "C" void scratch_policy_case(unsigned mode,uint64_t *out){
     case 25:o.sourceSha256[0]^=1;break;
     case 26:lba=g.scratchStartLba+g.scratchBlocks-1;break;
     case 27:o.scratchMediaReady=false;break;
+    case 28:o.candidateVerified=false;break;
+    case 29:o.sourceVerified=false;break;
     default:break;
   }
   out[0]=scratchGrantValid(g);out[1]=scratchWriteAllowed(g,o,lba,blocks);

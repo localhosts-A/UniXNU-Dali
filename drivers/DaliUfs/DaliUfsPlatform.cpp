@@ -132,7 +132,8 @@ bool scratchGrantValid(const ScratchGrant &g) {
   return true;
 }
 bool scratchWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uint64_t lba, uint32_t blocks) {
-  if (!scratchGrantValid(g) || !o.identityVerified || !o.gptVerified || !o.scratchMediaReady || o.writeProtected ||
+  if (!scratchGrantValid(g) || !o.identityVerified || !o.candidateVerified || !o.sourceVerified ||
+      !o.gptVerified || !o.scratchMediaReady || o.writeProtected ||
       !tokenValid(o.token) || strcmp(g.token, o.token) ||
       memcmp(o.deviceBinding, g.deviceBinding, sizeof g.deviceBinding) ||
       memcmp(o.candidateSha256, g.candidateSha256, sizeof g.candidateSha256) ||
@@ -143,6 +144,56 @@ bool scratchWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uin
       lba < g.scratchStartLba) return false;
   const uint64_t offset = lba - g.scratchStartLba;
   return offset < g.scratchBlocks && blocks <= g.scratchBlocks - offset;
+}
+size_t sourceBindingPreimage(const SourceIdentity &id, const uint8_t kernel[32], uint8_t *out, size_t capacity) {
+  static constexpr char magic[16] = "DALIUFSSRC1";
+  if (!out || !kernel || !nonzero(kernel, 32) || memcmp(id.magic, magic, sizeof magic)) return 0;
+  const char *pins[] = {id.device, id.unixnu, id.uefi, id.xnu};
+  for (const char *pin : pins) {
+    for (unsigned i = 0; i < 40; ++i) if (hexDigit(pin[i]) < 0) return 0;
+    if (pin[40]) return 0;
+  }
+  size_t used = 0;
+  auto append = [&](const void *p, size_t bytes) {
+    if (bytes > capacity - used) return false;
+    memcpy(out + used, p, bytes); used += bytes; return true;
+  };
+  char hex[64]; static constexpr char digits[] = "0123456789abcdef";
+  for (unsigned i = 0; i < 32; ++i) { hex[i*2] = digits[kernel[i] >> 4]; hex[i*2+1] = digits[kernel[i] & 15]; }
+  // Exact canonical JSON used by the host source_binding_sha256(), including
+  // the domain's terminating NUL and lexicographically sorted field names.
+  static constexpr char domain[] = "DALI-UFS-SOURCE-V1";
+  static constexpr char device[] = "{\"device_commit\":\"";
+  static constexpr char kernelKey[] = "\",\"kernel_sha256\":\"";
+  static constexpr char uefi[] = "\",\"uefi_commit\":\"";
+  static constexpr char unixnu[] = "\",\"unixnu_commit\":\"";
+  static constexpr char xnu[] = "\",\"xnu_commit\":\"";
+  static constexpr char end[] = "\"}";
+  if (!append(domain, sizeof domain) || !append(device, sizeof device - 1) || !append(id.device, 40) ||
+      !append(kernelKey, sizeof kernelKey - 1) || !append(hex, sizeof hex) ||
+      !append(uefi, sizeof uefi - 1) || !append(id.uefi, 40) ||
+      !append(unixnu, sizeof unixnu - 1) || !append(id.unixnu, 40) ||
+      !append(xnu, sizeof xnu - 1) || !append(id.xnu, 40) || !append(end, sizeof end - 1)) return 0;
+  return used;
+}
+bool verifyScratchProvenance(const ScratchGrant &g, const void *measurement, size_t bytes,
+                             const SourceIdentity &id, Hash hash, void *context, ScratchObservation &o) {
+  o.candidateVerified = o.sourceVerified = false;
+  memset(o.candidateSha256, 0, sizeof o.candidateSha256);
+  memset(o.sourceSha256, 0, sizeof o.sourceSha256);
+  if (!scratchGrantValid(g) || !measurement || bytes != 32 || !hash) return false;
+  const auto kernel = static_cast<const uint8_t *>(measurement);
+  if (memcmp(kernel, g.candidateSha256, 32)) return false;
+  uint8_t input[512]{}, source[32]{};
+  size_t length = sourceBindingPreimage(id, kernel, input, sizeof input);
+  bool valid = length && hash(context, input, length, source) && !memcmp(source, g.sourceSha256, 32);
+  memset(input, 0, sizeof input);
+  if (valid) {
+    memcpy(o.candidateSha256, kernel, 32); memcpy(o.sourceSha256, source, 32);
+    o.candidateVerified = o.sourceVerified = true;
+  }
+  memset(source, 0, sizeof source);
+  return valid;
 }
 bool resourceValid(const void *p, size_t bytes) {
   if (!p || bytes != ResourceBytes || memcmp(p, ResourceWords, sizeof(ResourceWords))) return false;

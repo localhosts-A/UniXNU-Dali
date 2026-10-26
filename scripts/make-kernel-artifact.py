@@ -8,6 +8,10 @@ import shutil
 import struct
 import subprocess
 import tomllib
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dali_source_identity import verify_compiled_record
+from dali_xnu_source import verify_xnu_source
 
 
 def git_head(path):
@@ -82,11 +86,15 @@ def main():
         raise SystemExit("feeds.toml must pin the source XNU commit")
     if git_head(xnu_work) != xnu_source["commit"]:
         raise SystemExit("built XNU source revision differs from feeds.toml")
+    source_proof = verify_xnu_source(tree, args.device_repo, args.unixnu, xnu_source)
     config = tomllib.loads((args.device_repo / "package/unixnu.toml").read_text())
     xnu_entry = next((entry for entry in config.get("entry", []) if entry.get("id") == "xnu"), None)
     if not xnu_entry or "dali-earlyboot=1" not in xnu_entry.get("args", ""):
         raise SystemExit("Dali XNU entry must pass the boot-argument checkpoint marker")
     data = validate_kernel(args.kernel)
+    pins = dict(device_commit=git_head(args.device_repo), unixnu_commit=git_head(args.unixnu),
+                uefi_commit=expected_uefi, xnu_commit=git_head(xnu_work))
+    verify_compiled_record(data, pins)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / "kernel.macho"
     shutil.copyfile(args.kernel, output)
@@ -103,6 +111,7 @@ def main():
         "unixnu_commit": git_head(args.unixnu),
         "uefi_commit": expected_uefi,
         "xnu_commit": git_head(xnu_work),
+        "effective_xnu_source": source_proof,
         "xnu_darwin": xnu_source.get("darwin"),
         "xnu_build": xnu_source.get("version"),
         "boot_args": xnu_entry.get("args", ""),

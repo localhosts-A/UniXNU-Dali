@@ -128,6 +128,8 @@ class PlatformTests(unittest.TestCase):
         for mode in range(11, 26):
             with self.subTest(rejected_request=mode): self.assertEqual(check(mode), (1, 0))
         self.assertEqual(check(27), (1, 0))  # Not armed until the published scratch media is verified.
+        self.assertEqual(check(28), (1, 0))  # Copied hashes alone are not verified provenance.
+        self.assertEqual(check(29), (1, 0))
 
     def test_scratch_grant_adt_wire_is_strict_and_maps_relative_lbas(self):
         def check(mode):

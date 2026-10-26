@@ -11,6 +11,7 @@ import subprocess
 spec = importlib.util.spec_from_file_location("artifact", Path(__file__).with_name("make-kernel-artifact.py"))
 artifact = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(artifact)
+from dali_source_identity import build_source_identity, verify_compiled_record
 KERNEL = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
 
 
@@ -18,7 +19,10 @@ def snapshot(tree, key):
     data = artifact.validate_kernel(tree / KERNEL)
     revision = subprocess.check_output(["git", "-C", str(tree / ".cache/xnu-work"),
                                         "rev-parse", "HEAD"], text=True).strip()
-    return {"schema": 1, "input_key": key, "xnu_commit": revision,
+    pins, source = build_source_identity(tree)
+    verify_compiled_record(data, pins)
+    return {"schema": 2, "input_key": key, "xnu_commit": revision,
+            "compiled_source_pins": pins, "effective_xnu_source": source,
             "kernel_sha256": hashlib.sha256(data).hexdigest(), "kernel_bytes": len(data)}
 
 

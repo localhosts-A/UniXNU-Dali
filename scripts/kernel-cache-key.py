@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fingerprint checked-out kernel inputs, independently of EFI-only revisions."""
+"""Fingerprint kernel inputs and the exact source pins compiled into Dali UFS."""
 import argparse
 import hashlib
 import json
@@ -21,10 +21,7 @@ def digest(value):
 def board_fingerprint(path: Path) -> str:
     with path.open("rb") as source:
         board = tomllib.load(source)
-    # The source graph below replaces the generic repository commit as a build
-    # input. Both exact pins remain mandatory in the public artifact manifest.
-    for pin in ("uefi_commit", "unixnu_commit"):
-        board.get("firmware", {}).pop(pin, None)
+    # These revisions are now actual compiled source-identity inputs.
     return digest(board)
 
 
@@ -74,7 +71,8 @@ def fingerprints(unixnu, device, toolchain):
                    (unixnu / "feeds.toml", unixnu / "scripts/unixnu/feeds.py")]
     if (device / "feeds.toml").exists():
         feed_inputs.append(("device/feeds.toml", (device / "feeds.toml").read_bytes().hex()))
-    return {"kernel": digest([generic, target, toolchain]),
+    revisions = [git(root, "rev-parse", "HEAD").decode().strip() for root in (unixnu, device)]
+    return {"kernel": digest([generic, target, revisions, toolchain]),
             "feeds": digest([feed_inputs, toolchain]),
             "edk": digest([git(unixnu, "rev-parse", "HEAD").decode().strip(), target, toolchain])}
 
