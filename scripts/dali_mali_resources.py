@@ -73,6 +73,11 @@ def resource_contract(tree, raw_fdt, firmware):
             tree.cells(GPUEB, 'gpueb-support') == (1,) and tree.cells(GPUEB, 'ghpm-support') == (1,), 'GPUEB route')
     for name, expected in (('mbox-count', (1,)), ('mbox-size', (160,)), ('slot-size', (4,))):
         require(tree.cells(GPUEB, name) == expected, 'GPUEB ' + name)
+    for name, expected in (('gpueb_mem_size', (0, 0x180000)), ('gpueb_mem_addr', (0, 0xfc810000)),
+                           ('gpueb-mem-table', (0, 0x4000, 1, 0x180000))):
+        require(tree.cells(GPUEB, name) == expected, 'GPUEB ' + name)
+    require(tree.string_list(GPUEB, 'gpueb-mem-name-table') == [b'MEM_ID_GPUFREQ', b'MEM_ID_LOG'],
+            'GPUEB partition names')
     for name in ('send-name-table', 'recv-name-table'):
         require(tree.string_list(GPUEB, name) == [s.encode() for s in IPI_NAMES], 'GPUEB ' + name)
     require(tree.cells(GPUEB, 'send-table') == tuple(x for i, n in enumerate(IPI_SEND_WORDS) for x in (i, 0, n)),

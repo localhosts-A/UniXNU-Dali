@@ -30,6 +30,9 @@ def fixture():
                   'interrupt-names': b''.join(s.encode() + b'\0' for s in IRQ_NAMES)}
     nodes[FREQUENCY] = {'compatible': b'mediatek,gpufreq\0'}
     nodes[GPUEB] = {'compatible': b'mediatek,gpueb\0', 'gpueb-support': cells(1), 'ghpm-support': cells(1),
+                    'gpueb_mem_size': cells(0,0x180000), 'gpueb_mem_addr': cells(0,0xfc810000),
+                    'gpueb-mem-table': cells(0,0x4000,1,0x180000),
+                    'gpueb-mem-name-table': b'MEM_ID_GPUFREQ\0MEM_ID_LOG\0',
                     'mbox-count': cells(1), 'mbox-size': cells(160), 'slot-size': cells(4),
                     'send-name-table': b''.join(s.encode() + b'\0' for s in IPI_NAMES),
                     'recv-name-table': b''.join(s.encode() + b'\0' for s in IPI_NAMES),
@@ -84,6 +87,8 @@ class MaliResourceTests(unittest.TestCase):
                            ('send-name-table', b'GPUFREQ\0'), ('ghpm-support', cells(0))):
             nodes = fixture(); nodes[GPUEB][key] = value
             with self.subTest(key=key), self.assertRaises(ValueError): self.contract(nodes)
+        nodes = fixture(); nodes[GPUEB]['gpueb-mem-table'] = cells(0,0x8000,1,0x180000)
+        with self.assertRaises(ValueError): self.contract(nodes)
 
     def test_firmware_header_and_duplicate_names_fail(self):
         for image in (b'', bytes(128), firmware()[:19]):
