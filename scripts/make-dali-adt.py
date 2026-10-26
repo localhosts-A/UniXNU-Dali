@@ -229,6 +229,8 @@ def main():
         ("osenvironment", b"main\0"),
         ("dram-base", struct.pack("<Q", dram_base)),
         ("dram-size", struct.pack("<Q", args.dram_size)),
+        # Only DarwinBoot may fill the measurement of the actual loaded file.
+        *([("darwinboot-kernel-sha256", bytes(32))] if scratch_grant is not None else []),
         *empty_nvram_proxy(),
     ], [apple_node("memory-map", [
         *([("RAMDisk", bytes(16))] if args.ramdisk else []),

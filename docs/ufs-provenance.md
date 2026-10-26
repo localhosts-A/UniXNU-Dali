@@ -38,16 +38,25 @@ inputs refuse scratch initialization before controller MMIO. Every write gate
 additionally requires explicit candidate/source verification flags. Failed
 verification clears both flags and both observation digests.
 
-The loader producer is still missing. An arbitrary ADT property is not evidence
-of a loader measurement, and this consumer alone does not authenticate runtime
-provenance. Before any write profile can be exposed, DarwinBoot must validate a
-unique zero placeholder in `/chosen`, overwrite it with its own whole-file
-measurement, reject forged/malformed placeholders, and bind the actual loader
-binary/pins in the candidate verifier. The host must never synthesize this
-measurement. The existing read-only candidate remains unchanged; UEFI's grant
-is still zero and no physical scratch write is authorized.
+The isolated DarwinBoot producer now validates a unique 32-byte zero slot in
+`/chosen` and fills it from the whole original kernel file before allocation or
+relocation. Its directly linked SHA avoids platform Null-library selection.
+The Dali generator emits only a zero slot for the explicit scratch profile;
+the host never fills a measurement. Native production-C/parser tests and actual
+ARM64/QEMU exercise malformed slots and a kernel trailer outside all loaded
+segments, including the post-EBS value and an EBS retry.
+Board pins UniXNU `504d2cccbcdb7c962cb4918e2d8fbed5eb1daf7d`, whose DarwinBoot
+gitlink is `6203a83fda0272cb10e740e93ec7c219808a8915`. The previous CI40267179773
+kernel is evidence for its older device8e8ba36/UniXNUa3dfbe4 inputs only.
 
-Remaining gates include that producer and real source-only compilation/link
+An arbitrary ADT property is not evidence of a loader measurement. The write
+candidate verifier must still bind the actual final-FD loader binary and its
+source pins before any write profile is exposed. That end-to-end candidate
+binding is pending; standalone QEMU is not a Dali firmware or runtime
+authentication qualification. The frozen read-only candidate is unchanged;
+UEFI's grant remains zero and no physical scratch write is authorized.
+
+Remaining gates include final-FD loader/candidate binding and new-pin build
 evidence, runtime UFS geometry/GPT/layout authorization, evidence export before
 restoring original boot_b, full firmware/XNU ownership, and separate UEFI/XNU
 write/sync/same-candidate reboot/readback qualification with three fresh tokens.

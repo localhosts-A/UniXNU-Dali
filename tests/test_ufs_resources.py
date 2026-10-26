@@ -117,6 +117,7 @@ class ResourceTests(unittest.TestCase):
             env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='false')
             subprocess.run(command,env=env,check=True,capture_output=True)
             self.assertNotIn(b'dali-ufs\0',output.read_bytes())
+            self.assertNotIn(b'darwinboot-kernel-sha256',output.read_bytes())
             result=subprocess.run(command+['--ufs-readonly'],env=env,capture_output=True)
             self.assertNotEqual(result.returncode,0)
 
@@ -127,6 +128,7 @@ class ResourceTests(unittest.TestCase):
             subprocess.run(command,env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='false'),check=True,capture_output=True)
             self.assertIn(b'dali-ufs\0',output.read_bytes())
             self.assertIn(resource_contract(adt.Fdt(raw),raw),output.read_bytes())
+            self.assertNotIn(b'darwinboot-kernel-sha256',output.read_bytes())
 
     def test_explicit_scratch_grant_wire_and_profile_validation(self):
         value=scratch_grant();wire=encode_scratch_grant(value)
@@ -155,6 +157,9 @@ class ResourceTests(unittest.TestCase):
             env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='true',DALI_XNU_UFS_SCRATCH_WRITE='true')
             subprocess.run(command,env=env,check=True,capture_output=True)
             self.assertIn(encode_scratch_grant(value),output.read_bytes())
+            # The host supplies only a unique zero slot, never a computed hash.
+            slot=struct.pack('<32sI',b'darwinboot-kernel-sha256',32)+bytes(32)
+            self.assertEqual(output.read_bytes().count(slot),1)
             for bad_env in (dict(env,DALI_XNU_UFS_SCRATCH_WRITE='false'),dict(env,DALI_XNU_UFS_READ_ONLY='false')):
                 self.assertNotEqual(subprocess.run(command,env=bad_env,capture_output=True).returncode,0)
             wrong=command.copy();wrong[-1]='ffffffffffffffffffffffffffffffff'
