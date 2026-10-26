@@ -7,6 +7,7 @@ import secrets
 import struct
 import zlib
 from dali_ufs_resources import resource_contract
+from dali_mali_resources import resource_contract as mali_resource_contract
 
 
 class Fdt:
@@ -129,6 +130,7 @@ def main():
     parser.add_argument("--ramdisk", action="store_true", help="zero RAMDisk slot for DarwinBoot to fill")
     parser.add_argument("--trust-cache", action="store_true", help="zero TrustCache slot for the explicit own test input")
     parser.add_argument("--ufs-readonly", action="store_true", help="validate and include the optional physical UFS nub")
+    parser.add_argument("--mali-firmware", type=Path, help="private CSF image: validate and include the explicit Mali resource/firmware nub")
     args = parser.parse_args()
     if args.fdt is None:
         parser.error("a private live Dali FDT is required (--fdt or DALI_RUNTIME_FDT)")
@@ -139,6 +141,8 @@ def main():
         if ufs_mode not in ("true", "false"):
             raise ValueError("DALI_XNU_UFS_READ_ONLY must be true or false")
         ufs_resources = resource_contract(tree, raw_fdt) if args.ufs_readonly or ufs_mode == "true" else None
+        mali_firmware = args.mali_firmware.read_bytes() if args.mali_firmware else None
+        mali_resources = mali_resource_contract(tree, raw_fdt, mali_firmware) if mali_firmware is not None else None
         root = tree.nodes.get("/", {})
         if b"mediatek,MT6991" not in tree.string_list("/", "compatible"):
             raise ValueError("FDT is not MT6991")
@@ -227,7 +231,11 @@ def main():
             ("#address-cells", struct.pack("<I", 2)),
             ("#size-cells", struct.pack("<I", 2)),
             ("ranges", struct.pack("<QQQ", 0, 0x0C000000, 0x01000000)),
-        ], [intc, boot_log, *([apple_node("dali-ufs", [
+        ], [intc, boot_log, *([apple_node("dali-mali", [
+            ("compatible", b"localhosts,dali-mali\0"),
+            ("resources-v1", mali_resources),
+            ("csf-firmware", mali_firmware),
+        ])] if mali_resources is not None else []), *([apple_node("dali-ufs", [
             ("compatible", b"localhosts,dali-ufs\0"),
             ("resources-v1", ufs_resources),
         ])] if ufs_resources is not None else [])]),
