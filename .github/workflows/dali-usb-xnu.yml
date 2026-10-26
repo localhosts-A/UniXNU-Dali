@@ -45,6 +45,8 @@ jobs:
 
       - name: Resolve the pinned generic source commit
         id: pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
