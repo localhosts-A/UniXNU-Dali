@@ -83,6 +83,9 @@ class DeviceLease(AbstractContextManager):
                     any(not isinstance(t, str) or not TOKEN.fullmatch(t) for t in self.data['used_tokens']) or
                     self.data.get('pending_run') is not None and not isinstance(self.data['pending_run'], str)):
                 raise cycle.CycleError('invalid UFS pending-run/token ledger')
+            if (type(self.data.get('pending_expdb', False)) is not bool or
+                    self.data.get('pending_expdb', False) and self.data['pending_run'] is None):
+                raise cycle.CycleError('invalid expdb pending-restoration ledger')
         except BaseException:
             self.__exit__(None, None, None)
             raise
@@ -104,18 +107,31 @@ class DeviceLease(AbstractContextManager):
 
     def arm(self, run, state):
         self.require_new(state['token'])
+        expdb = state.get('expdb_may_be_modified', False)
+        if type(expdb) is not bool:
+            raise cycle.CycleError('expdb modification state must be an explicit boolean')
+        if expdb:
+            state['expdb_restore_verified'] = False
         state['boot_b_may_be_modified'] = True
         durable_json(run / 'restore-state.json', state)
         self.data['used_tokens'].append(state['token'])
         self.data['pending_run'] = str(run)
+        # Retain this independently of the caller's restore-state fields. An
+        # older boot_b-only recovery must not silently clear a media-write run.
+        self.data['pending_expdb'] = expdb
         durable_json(self.path, self.data)
 
     def restored(self, run, state):
         if self.data['pending_run'] not in (None, str(run)):
             raise cycle.CycleError('a different UFS run owns pending restoration')
+        expdb = state.get('expdb_may_be_modified', False)
+        if expdb is not False or (self.data.get('pending_expdb', False) and
+                (state.get('expdb_may_be_modified') is not False or state.get('expdb_restore_verified') is not True)):
+            raise cycle.CycleError('expdb restoration remains pending; boot_b-only recovery cannot clear it')
         state['boot_b_may_be_modified'] = False
         durable_json(run / 'restore-state.json', state)
         self.data['pending_run'] = None
+        self.data['pending_expdb'] = False
         durable_json(self.path, self.data)
 
 

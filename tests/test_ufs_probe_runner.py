@@ -87,6 +87,33 @@ class SnapshotTests(unittest.TestCase):
 
 
 class LeaseTests(unittest.TestCase):
+    def test_expdb_pending_survives_restart_and_old_boot_only_restore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);run=root/'run';state={'token':TOKEN,'expdb_may_be_modified':True,'expdb_restore_verified':True}
+            with runner.DeviceLease('device',root) as lease:
+                lease.arm(run,state)
+                self.assertFalse(state['expdb_restore_verified'],'a new trial cannot inherit old restoration proof')
+            with runner.DeviceLease('device',root) as lease:
+                for old_state in ({'token':TOKEN},dict(state),dict(state,expdb_may_be_modified=False),
+                                  dict(state,expdb_may_be_modified=False,expdb_restore_verified='true')):
+                    with self.assertRaisesRegex(runner.cycle.CycleError,'expdb restoration remains pending'):
+                        lease.restored(run,old_state)
+                    self.assertEqual(lease.data['pending_run'],str(run))
+                    self.assertTrue(json.loads(lease.path.read_text())['pending_expdb'])
+                state.update(expdb_may_be_modified=False,expdb_restore_verified=True)
+                lease.restored(run,state)
+            with runner.DeviceLease('device',root) as lease:
+                self.assertIsNone(lease.data['pending_run']);self.assertFalse(lease.data['pending_expdb'])
+
+    def test_invalid_expdb_flag_cannot_arm_a_trial(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);run=root/'run'
+            with runner.DeviceLease('device',root) as lease:
+                with self.assertRaisesRegex(runner.cycle.CycleError,'explicit boolean'):
+                    lease.arm(run,{'token':TOKEN,'expdb_may_be_modified':'true'})
+                self.assertIsNone(lease.data['pending_run'])
+                self.assertFalse((run/'restore-state.json').exists())
+
     def test_device_ledger_root_is_anchored_to_shared_backup_parent(self):
         with tempfile.TemporaryDirectory() as temp:
             backup = Path(temp) / 'device-backups' / 'dali-backup'
@@ -127,7 +154,9 @@ class LeaseTests(unittest.TestCase):
                 lease.require_new('a' * 32)
 
     def test_corrupt_ledger_fails_closed_and_releases_live_lock(self):
-        for value in ('{', '[]', '{"used_tokens": [123]}'):
+        for value in ('{', '[]', '{"used_tokens": [123]}',
+                      '{"used_tokens": [], "pending_run": null, "pending_expdb": true}',
+                      '{"used_tokens": [], "pending_run": "run", "pending_expdb": "true"}'):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 lease = runner.DeviceLease('device', root)
