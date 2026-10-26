@@ -18,10 +18,26 @@ import ufs_geometry as geometry
 import ufs_identity
 from ufs_expdb import MIB, _read, validate_expdb_backup
 from ufs_expdb_log import decode_log
+from ufs_readonly_evidence import load_baseline
 
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def load_restore_baseline(directory, *, serial, original_boot_b):
+    """Keep the validated full capture report, not the scorer's reduced view."""
+    directory = Path(directory)
+    size = (directory/'baseline.json').stat().st_size
+    if not 0 < size <= 4*MIB:
+        raise ValueError('invalid full UFS baseline record length')
+    raw = _read(directory,'baseline.json',size)
+    checked = load_baseline(directory,serial=serial,original_boot_b=original_boot_b)
+    if sha(raw) != checked['baseline_sha256']:
+        raise ValueError('full UFS baseline changed during read-only validation')
+    report = json.loads(raw)
+    ufs_identity.validate_captured_identity(report,directory)
+    return dict(report,baseline_sha256=checked['baseline_sha256'])
 
 
 def durable_json(path, value):

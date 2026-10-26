@@ -11,7 +11,7 @@ import sys
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 from dali_ufs_resources import encode_scratch_grant
-from ufs_expdb_restore import AndroidExpdb, prepare_restore, recover_window
+from ufs_expdb_restore import AndroidExpdb, load_restore_baseline, prepare_restore, recover_window
 from ufs_scratch_authorization import source_binding_sha256
 
 spec = importlib.util.spec_from_file_location('expdb_recovery_probe', SCRIPTS/'run-ufs-probe.py')
@@ -39,8 +39,8 @@ def validate_run(args, lease):
     _, records = cycle.verify_backup(args.backup, args.serial)
     if records['boot_b']['sha256'] != state.get('original_boot_b_sha256'):
         raise cycle.CycleError('expdb recovery original boot_b backup differs')
-    baseline = probe.readonly.load_baseline(run/'ufs-baseline', serial=args.serial,
-                                           original_boot_b=args.backup/'boot_b.img')
+    baseline = load_restore_baseline(run/'ufs-baseline', serial=args.serial,
+                                     original_boot_b=args.backup/'boot_b.img')
     expdb_raw = (run/'expdb-baseline/baseline.json').read_bytes()
     if (baseline['baseline_sha256'] != state.get('baseline_sha256') or
             digest(expdb_raw) != state.get('expdb_baseline_sha256')):

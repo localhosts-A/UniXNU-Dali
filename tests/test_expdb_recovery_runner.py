@@ -18,6 +18,7 @@ runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
 
 class RecoveryRunnerTests(unittest.TestCase):
     def fixture(self, root):
+        root=root.resolve()
         backup=root/'backup';backup.mkdir();inputs=fixtures.ExpdbTests().fixture(backup)
         run=root/'run';run.mkdir();base=run/'ufs-baseline';base.mkdir();expdb=run/'expdb-baseline';expdb.mkdir()
         for path in backup.iterdir():
@@ -51,7 +52,7 @@ class RecoveryRunnerTests(unittest.TestCase):
     def test_sealed_baselines_kernel_source_wire_and_canonical_pending_must_match(self):
         with tempfile.TemporaryDirectory() as temp:
             args,lease,records,baseline,state=self.fixture(Path(temp))
-            with patch.object(runner.cycle,'verify_backup',return_value=({},records)),patch.object(runner.probe.readonly,'load_baseline',return_value=baseline):
+            with patch.object(runner.cycle,'verify_backup',return_value=({},records)),patch.object(runner,'load_restore_baseline',return_value=baseline):
                 _,_,_,image,expected=runner.validate_run(args,lease)
                 self.assertEqual(image['device_binding'],expected['device_binding'])
                 for key,value in [('schema',True),('kind','dali-source-xnu-ufs-read-only'),('token','b'*32),

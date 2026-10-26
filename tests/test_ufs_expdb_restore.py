@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import test_ufs_expdb as expdb_fixtures
 import test_ufs_expdb_log as log_fixtures
-from ufs_expdb_restore import AndroidExpdb, MIB, prepare_restore, recover_window
+from ufs_expdb_restore import AndroidExpdb, MIB, load_restore_baseline, prepare_restore, recover_window
 
 
 class MemoryIo:
@@ -98,6 +98,24 @@ class ExpdbRestoreTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     prepare_restore(serial=args['serial'],baseline=args['baseline'],baseline_dir=root,
                                     expdb_baseline=args['expdb_baseline'],expdb_dir=root)
+
+    def test_real_readonly_loader_projection_cannot_erase_full_identity_gpt_and_geometry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);_,_,_,_,args=self.fixture(root);baseline=args['baseline']
+            baseline['schema']=1
+            for label,filename in (('primary_header','primary-header.bin'),('primary_entries','primary-entries.bin'),
+                                   ('backup_header','backup-header.bin'),('backup_entries','backup-entries.bin')):
+                baseline['captures'][label]=dict(file=filename,**args['expdb_baseline']['captures'][filename])
+            for label,filename,data in (('boot_b_first_block','first.bin',bytes(4096)),('live_fdt','runtime.dtb',b'fixture-fdt')):
+                (root/filename).write_bytes(data)
+                baseline['captures'][label]=dict(file=filename,bytes=len(data),sha256=hashlib.sha256(data).hexdigest())
+            raw=json.dumps(baseline).encode();(root/'baseline.json').write_bytes(raw)
+            loaded=load_restore_baseline(root,serial=args['serial'],original_boot_b=args['original_boot_b'])
+            self.assertEqual(loaded['geometry'],baseline['geometry']);self.assertEqual(loaded['gpt'],baseline['gpt'])
+            self.assertEqual(loaded['ufs_device_identity'],baseline['ufs_device_identity'])
+            self.assertEqual(loaded['baseline_sha256'],hashlib.sha256(raw).hexdigest())
+            with patch('ufs_expdb_restore.load_baseline',return_value={'baseline_sha256':'0'*64}):
+                with self.assertRaisesRegex(ValueError,'changed'):load_restore_baseline(root,serial=args['serial'],original_boot_b=args['original_boot_b'])
 
     def test_actual_android_write_uses_regular_staging_file_and_one_fixed_window(self):
         class FakeCycle:

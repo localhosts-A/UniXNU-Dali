@@ -16,7 +16,7 @@ SCRIPTS=Path(__file__).resolve().parent
 DEVICE=SCRIPTS.parent
 sys.path.insert(0,str(SCRIPTS))
 from ufs_expdb import MIB, _read
-from ufs_expdb_restore import AndroidExpdb, prepare_restore
+from ufs_expdb_restore import AndroidExpdb, load_restore_baseline, prepare_restore
 from ufs_identity import validate_captured_identity
 from ufs_scratch_authorization import build_xnu_scratch_grant
 
@@ -35,8 +35,8 @@ def overlap(a,b):
 
 
 def snapshot_baselines(args,run):
-    baseline=probe.readonly.load_baseline(args.baseline_dir,serial=args.serial,
-                                         original_boot_b=args.backup/'boot_b.img')
+    baseline=load_restore_baseline(args.baseline_dir,serial=args.serial,
+                                   original_boot_b=args.backup/'boot_b.img')
     validate_captured_identity(baseline,args.baseline_dir)
     raw=(args.baseline_dir/'baseline.json').read_bytes()
     if cycle.sha256(raw)!=baseline['baseline_sha256']:
@@ -66,7 +66,7 @@ def snapshot_baselines(args,run):
     copy_bytes(image['original'],expdb_folder/'expdb.img')
     copy_bytes(expdb_raw,expdb_folder/'baseline.json')
     # Verify the copies, not just the source paths used to create them.
-    baseline=probe.readonly.load_baseline(folder,serial=args.serial,original_boot_b=args.backup/'boot_b.img')
+    baseline=load_restore_baseline(folder,serial=args.serial,original_boot_b=args.backup/'boot_b.img')
     image=prepare_restore(serial=args.serial,baseline=baseline,baseline_dir=folder,
                           expdb_baseline=json.loads((expdb_folder/'baseline.json').read_bytes()),expdb_dir=expdb_folder)
     return baseline,expdb,image

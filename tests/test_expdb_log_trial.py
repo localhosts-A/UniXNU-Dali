@@ -88,7 +88,7 @@ class TrialTests(unittest.TestCase):
                 with self.assertRaises(StopBuild):
                     trial.cycle.build_candidate(args,root,root/'kernel',root/'adt',recovery,'a'*32,root,xnu_ufs_readonly=True,live_fdt=fdt,expdb_log_wire=wire)
                 actual=build.call_args.kwargs['env'];self.assertEqual(actual['DALI_UFS_PROFILE'],'expdb-log-diagnostic')
-                self.assertEqual(actual['DALI_UFS_LOG_WIRE'],str(wire));self.assertEqual(actual['DALI_AUTO_FASTBOOT'],'false')
+                self.assertEqual(actual['DALI_UFS_LOG_WIRE'],str(wire.resolve()));self.assertEqual(actual['DALI_AUTO_FASTBOOT'],'false')
                 with self.assertRaises(trial.cycle.CycleError):
                     trial.cycle.build_candidate(args,root,root/'kernel',root/'adt',recovery,'a'*32,root,expdb_log_wire=wire)
 
