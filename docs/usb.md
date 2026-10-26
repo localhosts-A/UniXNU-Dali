@@ -133,7 +133,9 @@ Clang/GCC sanitizer tests execute this production child through a test-only
 IOKit seam. Those models do not prove kernel ABI or real HID descriptor parsing.
 The opt-in builder compiles against the actual source-family headers and checks
 the linked kernel symbols. Action 40299886122 verifies this child and its report
-API in the final kernel. No production controller/child owner publishes it yet.
+API in the final kernel. Action 40313584406 also verifies the corrected
+`xhci0` resource service in the final kernel. No production controller/child
+owner publishes the HID child yet.
 
 The opt-in `DaliUsbXhciResources` service now matches the Dali `xhci0`
 platform device, checks its exact compatible string, and decodes the versioned
@@ -141,9 +143,9 @@ resource property without casting its packed wire bytes to a native structure.
 Its copy API gives a future controller owner the validated description. Clang
 and GCC sanitizer models exercise the production decoder and service through a
 test-only IOKit seam. This service does not map MMIO or touch controller
-registers. The source-XNU archive and final-kernel link still require the
-macOS/Xcode build gate; a native xHCI owner, provider leases, enumeration,
-runtime and hardware qualification remain pending.
+registers. Action 40313584406 compiled and linked this service in the final
+source-XNU kernel. A native xHCI owner, provider leases, enumeration, runtime
+and hardware qualification remain pending.
 
 The profile also selects `XNU_SOURCE_MSDOSFS` and the fixed
 msdosfs-608.120.4 source target. Its builder compiles all six actual kernel C
@@ -151,10 +153,18 @@ units using XNU's VFS compile record and a built-in registration wrapper. The
 wrapper calls the upstream `msdosfs_module_start` after `vfsinit`; registration
 failure stops boot. The archive is force-loaded and part of the kernel input
 fingerprint. The final verifier requires the real VFS/vnode definitions and a
-compiled `bsd_init.o` call to the wrapper. This is newly wired source build work:
-macOS compilation, runtime registration, USB mounting and FAT32 file operations
-remain unqualified. The registration hook performs no mount or media I/O. The
-separate post-RAM-root, pre-user-exec FAT32 fixture remains pending.
+compiled `bsd_init.o` call to the wrapper. XNU now has a private local-args
+mount API that only accepts a filesystem which explicitly registers kernel
+local-args support; the generated msdosfs build copy uses `bcopy` only when the
+mount carries that per-mount marker and preserves `copyin` for ordinary user
+mounts. The fixed upstream source checkout stays unmodified. The generic tests
+cover the exact source transform, drift refusal and copyin preservation, and
+the VFS patch applies to the pinned XNU d8 source files. This local-args change
+still needs its own macOS compile/link run. No runtime registration, USB mount
+or FAT32 file operation is qualified. The registration hook performs no mount
+or media I/O. The pre-user FAT32 fixture remains pending because the current
+source-XNU QEMU runner has no USB mass-storage device path; its input disk is
+read-only virtio, not a USB fixture. No physical media test is claimed.
 
 The device tree also contains a production SID14 PMIF-M transport under
 `drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,
