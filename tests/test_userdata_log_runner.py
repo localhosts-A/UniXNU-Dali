@@ -75,6 +75,26 @@ class UserdataLogRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.cycle.CycleError, "authorized userdata grant"):
             runner.bind_userdata_grant_to_adt(uefi, adt, wire, "f" * 32)
 
+    def test_final_candidate_verifier_supplies_userdata_wire_to_payload_validator(self):
+        wire = userdata_wire(TOKEN)
+
+        class PayloadTools:
+            def validate_xnu_ufs_bundle(self, *args):
+                self.args = args
+
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / "grant.bin").write_bytes(wire)
+            tools = PayloadTools()
+            probe.validate_candidate_xnu_bundle(
+                tools, directory, "userdata-log", "payload", TOKEN,
+                b"adt", b"live-fdt", b"config", b"recovery", b"kernel")
+            self.assertEqual(tools.args[-1], wire)
+            probe.validate_candidate_xnu_bundle(
+                tools, directory, "xnu-ufs-read-only", "payload", TOKEN,
+                b"adt", b"live-fdt", b"config", b"recovery", b"kernel")
+            self.assertIsNone(tools.args[-1])
+
     def test_transcript_requires_write_sync_and_same_candidate_readback_for_both_owners(self):
         complete = runner.score_userdata_transcript(transcript(), TOKEN, 1)
         self.assertTrue(complete["uefi_write_sync_pass"])

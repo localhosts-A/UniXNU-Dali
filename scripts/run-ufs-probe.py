@@ -164,6 +164,15 @@ class DeviceLease(AbstractContextManager):
         durable_json(self.path, self.data)
 
 
+def validate_candidate_xnu_bundle(payload_tools, directory, mode, payload, token, adt,
+                                  live_fdt, config, recovery, kernel):
+    userdata_log_wire = None
+    if mode == 'userdata-log':
+        userdata_log_wire = (directory / 'grant.bin').read_bytes()
+    return payload_tools.validate_xnu_ufs_bundle(
+        payload, token, adt, live_fdt, config, recovery, kernel, userdata_log_wire)
+
+
 def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     manifest = json.loads((directory / 'manifest.json').read_text())
     if not isinstance(manifest, dict):
@@ -305,8 +314,8 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
             recovery = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/dali-boot.conf'])
             adt = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/Payloads/kernel.macho.adt'])
             kernel = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/Payloads/kernel.macho'])
-            payload_tools.validate_xnu_ufs_bundle(payload, token, adt, runtime_fdt.read_bytes(),
-                                                  config, recovery, kernel)
+            validate_candidate_xnu_bundle(payload_tools, directory, mode, payload, token, adt,
+                                          runtime_fdt.read_bytes(), config, recovery, kernel)
             if log_mode:
                 package.validate_expdb_log_kernel(kernel,(directory/'grant.bin').read_bytes(),record)
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
