@@ -10,6 +10,7 @@ from pathlib import Path
 import uuid
 
 import ufs_geometry as ufs
+from ufs_identity import validate_captured_identity
 from dali_ufs_resources import encode_scratch_grant
 from unattended_layout import plan_scratch, verify_original_avb_and_scratch
 
@@ -38,13 +39,15 @@ def source_binding_sha256(manifest):
     return hashlib.sha256(b"DALI-UFS-SOURCE-V1\0" + canonical).hexdigest()
 
 
-def build_xnu_scratch_grant(*, serial, token, sequence, baseline, source_manifest, kernel_bytes,
+def build_xnu_scratch_grant(*, serial, token, sequence, baseline, baseline_dir, source_manifest, kernel_bytes,
                             candidate_image, original_boot_b):
     """Validate offline inputs, then return grant/wire/proposal bound to one XNU token.
 
     ``candidate_sha256`` intentionally names the exact source-XNU kernel payload:
     the final boot image contains this grant and therefore cannot hash itself.
     The scratch runner separately seals the final image hash in its durable lease.
+    ``baseline_dir`` retains the exact identity sysfs captures; a JSON digest
+    alone cannot supply the UFS device identity for a write-grant input.
     """
     if not isinstance(serial, str) or not serial or len(serial) > 128:
         raise ValueError("invalid device serial")
@@ -70,9 +73,7 @@ def build_xnu_scratch_grant(*, serial, token, sequence, baseline, source_manifes
             geometry.get("sysfs_read_only") is not False or geometry.get("gpt_read_only") is not False or
             geometry.get("unit_write_protected") is not False):
         raise ValueError("Android baseline geometry or write-protection observation is incomplete")
-    device_binding = baseline.get("ufs_device_binding_sha256")
-    if not isinstance(device_binding, str) or not SHA256.fullmatch(device_binding) or not any(bytes.fromhex(device_binding)):
-        raise ValueError("baseline lacks a valid UFS device identity binding")
+    device_binding = validate_captured_identity(baseline, baseline_dir)
 
     block_bytes = ufs.block_size(geometry["logical_block_bytes"])
     capacity_bytes = ufs.natural(geometry.get("capacity_bytes"), "baseline LU capacity", positive=True)

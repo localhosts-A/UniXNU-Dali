@@ -16,6 +16,7 @@ import re
 import shlex
 
 import ufs_geometry as ufs
+import ufs_identity
 
 DEVICE = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("ufs_cycles", DEVICE / "scripts/run-bootb-cycles.py")
@@ -125,7 +126,10 @@ def collect(serial, backup, output):
         else:
             command = "cat " + shlex.quote(path)
         metadata[name] = {"path": path, "value": text(command) or None}
-    identity_binding = read_ufs_device_identity_binding(controller, text)
+    identity, identity_binding, identity_raw = ufs_identity.read_identity(
+        controller, lambda command: cycle.adb_output(serial, command))
+    for field, (_, filename, _) in ufs_identity.ATTRIBUTES.items():
+        captures["ufs_" + field] = save(filename, identity_raw[field])
     after_android = cycle.current_android(serial)
     after_hashes = cycle.compare_partition_hashes(serial, records)
     if before_hashes != after_hashes or before_android != after_android:
@@ -137,6 +141,7 @@ def collect(serial, backup, output):
               "device_node": node, "parent_node": "/dev/block/" + disk,
               "scsi_path": scsi, "geometry": geo, "gpt": gpt,
               "ufs_device_binding_sha256": identity_binding,
+              "ufs_device_identity": identity,
               "ufs_device_identity_source": "fixed Linux UFS sysfs device/manufacturer and serial descriptors",
               "captures": captures, "metadata": metadata, "unit_descriptor_raw": descriptors,
               "partition_hashes": after_hashes, "all_partition_hashes_match": True,
@@ -144,12 +149,6 @@ def collect(serial, backup, output):
               "device_reboot_performed": False, "ufs_controller_qualified": False}
     cycle.write_json(output / "baseline.json", report)
     return report
-
-
-def read_ufs_device_identity_binding(controller, read_text):
-    manufacturer_id = read_text("cat " + shlex.quote(controller + "/device_descriptor/manufacturer_id"))
-    serial_number = read_text("cat " + shlex.quote(controller + "/string_descriptors/serial_number"))
-    return ufs.device_identity_binding(manufacturer_id, serial_number)
 
 
 def main():

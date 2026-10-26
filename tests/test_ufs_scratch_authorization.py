@@ -9,6 +9,7 @@ import unittest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import ufs_scratch_authorization as auth
+import ufs_identity
 
 
 def kernel_image():
@@ -49,8 +50,16 @@ class ScratchAuthorizationTests(unittest.TestCase):
                     "original_boot_b_sha256": hashlib.sha256(original).hexdigest(),
                     "all_partition_hashes_match": True, "known_block_matches_backup": True,
                     "device_writes_performed": False, "device_reboot_performed": False,
-                    "ufs_device_binding_sha256": "ab" * 32,
                     "gpt": {"partitions": [dict(geo["boot_b"])]}, "geometry": geo}
+        controller = "/sys/devices/platform/soc/16810000.ufshci"
+        identity, digest, raw = ufs_identity.read_identity(
+            controller, lambda command: b"0x1234\n" if "manufacturer_id" in command else b"ABC123\n")
+        baseline.update(ufs_device_binding_sha256=digest, ufs_device_identity=identity,
+                        scsi_path=controller+"/host0/target0:0:0/0:0:0:2", captures={})
+        for field, (_, filename, _) in ufs_identity.ATTRIBUTES.items():
+            (Path(directory)/filename).write_bytes(raw[field])
+            baseline["captures"]["ufs_"+field] = dict(file=filename, bytes=len(raw[field]),
+                                                      sha256=hashlib.sha256(raw[field]).hexdigest())
         return path, bytes(original), baseline, kernel
 
     def test_grant_is_bound_to_actual_kernel_source_device_and_absolute_scratch(self):
@@ -58,7 +67,7 @@ class ScratchAuthorizationTests(unittest.TestCase):
             original_path, _, baseline, candidate = self.fixture(temp)
             kernel = b"verified source-only XNU kernel artifact"
             grant, wire, proposal = auth.build_xnu_scratch_grant(
-                serial="DALI123", token="0123456789abcdef0123456789abcdef", sequence=1, baseline=baseline,
+                serial="DALI123", token="0123456789abcdef0123456789abcdef", sequence=1, baseline=baseline, baseline_dir=temp,
                 source_manifest=source_manifest(kernel), kernel_bytes=kernel,
                 candidate_image=candidate, original_boot_b=original_path)
         self.assertEqual(len(wire), 232)
@@ -74,9 +83,11 @@ class ScratchAuthorizationTests(unittest.TestCase):
             candidate = kernel_image()
             kernel = b"verified source-only XNU kernel artifact"
             args = dict(serial="DALI123", token="0123456789abcdef0123456789abcdef", baseline=baseline,
-                        sequence=1, source_manifest=source_manifest(kernel), kernel_bytes=kernel,
+                        sequence=1, baseline_dir=temp, source_manifest=source_manifest(kernel), kernel_bytes=kernel,
                         candidate_image=candidate, original_boot_b=original_path)
             bad = [dict(args, serial="OTHER"), dict(args, token="bad"),
+                   dict(args, baseline=dict(baseline, ufs_device_identity=None)),
+                   dict(args, baseline_dir=None),
                    dict(args, baseline=dict(baseline, ufs_device_binding_sha256="00" * 32)),
                    dict(args, baseline=dict(baseline, geometry=dict(baseline["geometry"], capacity_blocks=1))),
                    dict(args, baseline=dict(baseline, geometry=dict(baseline["geometry"], unit_write_protected=True))),

@@ -11,6 +11,7 @@ import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import ufs_geometry as ufs
+import ufs_identity
 import unattended_layout as layout
 collector_spec = importlib.util.spec_from_file_location(
     "ufs_baseline_collector", Path(__file__).resolve().parents[1] / "scripts/collect-ufs-baseline.py")
@@ -85,11 +86,13 @@ class UfsGeometryTests(unittest.TestCase):
 
         def read(command):
             commands.append(command)
-            return "0x1234" if "manufacturer_id" in command else "ABC123"
+            return b"0x1234\n" if "manufacturer_id" in command else b"ABC123\n"
 
-        digest = collector.read_ufs_device_identity_binding("/sys/ufs", read)
+        record, digest, captured = ufs_identity.read_identity("/sys/ufs", read)
         raw = bytes.fromhex("1234") + bytes((14, 5)) + "ABC123".encode("utf-16-be")
         self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+        self.assertEqual(record["serial_number"], "ABC123")
+        self.assertEqual(captured["serial_number"], b"ABC123\n")
         self.assertEqual(commands, [
             "cat /sys/ufs/device_descriptor/manufacturer_id",
             "cat /sys/ufs/string_descriptors/serial_number",

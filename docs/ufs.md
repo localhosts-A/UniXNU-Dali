@@ -64,6 +64,20 @@ Output must be a new directory outside Git repositories and the immutable backup
 Partial captures have no successful `baseline.json`; they cannot qualify a run.
 The report is private and includes device identity and GPT metadata.
 
+New baselines retain `ufs-manufacturer-id.txt` and `ufs-serial-number.txt` as
+the exact bytes returned by the two existing read-only sysfs attributes, with
+their lengths and SHA-256 values. Only one final sysfs newline is removed for
+decoding; printable serial spaces are preserved. The record reconstructs the
+existing manufacturer-ID/UTF-16BE serial-descriptor binding for ASCII serials.
+It is a sysfs observation, not a capture of the device's raw descriptor bytes.
+
+The offline `build_xnu_scratch_grant` helper now requires `baseline_dir` and
+independently rereads those bounded regular files, rejecting symlinks, malformed
+metadata and field/digest mismatches. An older digest-only baseline remains
+usable for read-only diagnostics but cannot supply these write-grant inputs.
+File consistency does not authenticate provenance or enable runtime writes;
+device-side matching, ownership and the pre-restore export gate still apply.
+
 The inspected Dali reports `boot_b` on LUN 2 with 4096-byte logical blocks.
 These are observations, not defaults for another device or a changed layout.
 Linux sysfs partition start/size use 512-byte sectors even on a 4096-byte device.
