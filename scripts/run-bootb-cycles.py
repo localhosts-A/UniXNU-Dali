@@ -492,7 +492,7 @@ def collect_cycle(args, cycle_dir, *, require_xnu, run_token=None, watchdog_time
 
 
 def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *, pid1_inputs=None,
-                    reset_method=None, xnu_ufs_readonly=False, live_fdt=None):
+                    reset_method=None, xnu_ufs_readonly=False, live_fdt=None, expdb_log_wire=None):
     env = dict(os.environ)
     env["DALI_AUTO_FASTBOOT"] = "true" if recovery["auto_fastboot"] else "false"
     env["DALI_WATCHDOG_TIMEOUT_SECONDS"] = str(recovery["device_watchdog_timeout_seconds"])
@@ -500,7 +500,8 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *,
     # A source-XNU UFS trial deliberately enables both serial read-only owners:
     # the firmware provider must drain/sync/stop before XNU creates private DMA.
     for key in ("DALI_UFS_READ_ONLY", "DALI_UFS_PROFILE", "DALI_UFS_PROBE",
-                "DALI_XNU_UFS_READ_ONLY", "DALI_XNU_UFS_LIVE_FDT"):
+                "DALI_XNU_UFS_READ_ONLY", "DALI_XNU_UFS_LIVE_FDT", "DALI_UFS_LOG_ENABLED",
+                "DALI_UFS_LOG_WIRE", "DALI_UFS_MEASURE_PAYLOAD", "DALI_UFS_SOURCE_DEVICE"):
         env.pop(key, None)
     if xnu_ufs_readonly:
         if recovery["auto_fastboot"] or reset_method is not None or pid1_inputs is not None or live_fdt is None or not Path(live_fdt).is_file():
@@ -508,6 +509,12 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *,
         env.update(DALI_UFS_READ_ONLY="true", DALI_UFS_PROFILE="read-only-blockio",
                    DALI_UFS_PROBE="false", DALI_XNU_UFS_READ_ONLY="true",
                    DALI_XNU_UFS_LIVE_FDT=str(Path(live_fdt).resolve()))
+    if expdb_log_wire is not None:
+        if not xnu_ufs_readonly or not Path(expdb_log_wire).is_file():
+            raise CycleError('expdb log requires a measured source-XNU read-only payload and wire')
+        env.update(DALI_UFS_LOG_ENABLED='true',DALI_UFS_LOG_WIRE=str(Path(expdb_log_wire).resolve()),
+                   DALI_UFS_PROFILE='expdb-log-diagnostic',DALI_UFS_MEASURE_PAYLOAD='true',
+                   DALI_UFS_SOURCE_DEVICE=str(DEVICE_ROOT))
     env.pop('DALI_RESET_METHOD', None)
     if reset_method is not None:
         if reset_method not in ('off', 'psci-cold', 'psci-warm', 'aee') or recovery['auto_fastboot'] or pid1_inputs is not None:
@@ -559,6 +566,7 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *,
             payload_recovery.get('firmware_reset_deadline_enabled') is not False):
         raise CycleError('candidate reset qualification settings differ from the selected method')
     if xnu_ufs_readonly:
+        log_mode = expdb_log_wire is not None
         profile = image_manifest.get('ufs_xnu', {})
         host = image_manifest.get('ufs_host', {})
         payload_profile = payload.get('xnu_ufs_read_only', {})
@@ -566,14 +574,25 @@ def build_candidate(args, backup, kernel, adt_path, recovery, token, run_dir, *,
                 profile.get('run_token') != token or profile.get('write_authorized') is not False or
                 profile.get('physical_ufs_qualified') is not False or
                 not isinstance(host, dict) or host.get('enabled') is not True or
-                host.get('mode') != 'read-only-blockio' or host.get('run_token') != token or
-                host.get('media_writes') is not False or host.get('write_authorized') is not False or
+                host.get('mode') != ('expdb-log-diagnostic' if log_mode else 'read-only-blockio') or host.get('run_token') != token or
+                host.get('media_writes') is not log_mode or host.get('write_authorized') is not False or
                 not isinstance(payload_profile, dict) or payload_profile.get('enabled') is not True or
                 payload_profile.get('run_token') != token or payload_profile.get('write_authorized') is not False or
                 profile.get('live_fdt_sha256') != payload_profile.get('live_fdt_sha256') or
                 live_fdt is None or profile.get('live_fdt_sha256') != sha256(Path(live_fdt).read_bytes()) or
                 recovery.get('auto_fastboot') is not False or payload_recovery.get('reset_method') is not None):
             raise CycleError('candidate package does not bind firmware/XNU UFS, live FDT, token and manual read-only policy')
+        log_profile = image_manifest.get('ufs_log', {})
+        if log_mode:
+            if (not isinstance(log_profile,dict) or log_profile.get('enabled') is not True or
+                    log_profile.get('profile') != 'expdb-log-diagnostic' or log_profile.get('run_token') != token or
+                    log_profile.get('target_partition') != 'expdb' or
+                    log_profile.get('wire_sha256') != sha256(Path(expdb_log_wire).read_bytes()) or
+                    log_profile.get('ramoops_retained') is not True or log_profile.get('automatic_fastboot_enabled') is not False or
+                    host.get('runtime_authorization_required') is not True):
+                raise CycleError('candidate expdb log profile differs from its explicit wire/manual dual-log policy')
+        elif not isinstance(log_profile,dict) or log_profile.get('enabled',False) is not False:
+            raise CycleError('ordinary source-XNU read-only candidate must not enable expdb logs')
     return image, image_manifest
 
 

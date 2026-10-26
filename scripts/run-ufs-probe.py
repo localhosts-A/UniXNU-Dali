@@ -144,15 +144,16 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     probe = manifest.get('ufs_probe', {})
     if not isinstance(probe, dict):
         raise cycle.CycleError('invalid probe metadata')
-    xnu_ufs_mode = mode == 'xnu-ufs-read-only'
-    if mode in ('read-only-blockio', 'xnu-ufs-read-only'):
+    log_mode = mode == 'expdb-log'
+    xnu_ufs_mode = mode in ('xnu-ufs-read-only','expdb-log')
+    if mode in ('read-only-blockio', 'xnu-ufs-read-only','expdb-log'):
         host = manifest.get('ufs_host', {})
         if not isinstance(host, dict):
             raise cycle.CycleError('invalid physical UFS host metadata')
         token = host.get('run_token', '')
-        if (host.get('enabled') is not True or host.get('mode') != 'read-only-blockio' or host.get('log_version') != 1 or
+        if (host.get('enabled') is not True or host.get('mode') != ('expdb-log-diagnostic' if log_mode else 'read-only-blockio') or host.get('log_version') != 1 or
                 host.get('controller_commands') is not True or host.get('mmio_writes') is not True or
-                host.get('media_writes') is not False or host.get('write_authorized') is not False or
+                host.get('media_writes') is not log_mode or host.get('write_authorized') is not False or
                 host.get('physical_storage_qualified') is not False or host.get('host_verified_in_final_fd') is not True or
                 probe.get('enabled') is not False or probe.get('mode') != 'off' or probe.get('run_token') is not None):
             raise cycle.CycleError('candidate is not an explicit physical read-only diagnostic')
@@ -224,7 +225,13 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     package_spec = importlib.util.spec_from_file_location('ufs_probe_package', uefi / 'tools/dali/package.py')
     package = importlib.util.module_from_spec(package_spec)
     package_spec.loader.exec_module(package)
-    if mode in ('read-only-blockio', 'xnu-ufs-read-only'):
+    if log_mode:
+        record = package.source_record(uefi,unixnu,DEVICE)
+        expected_probe,expected_host,expected_log = package.ufs_expdb_log_metadata(build/'AARCH64',token,
+            directory/'grant.bin',fd=fd,expected_source_record=record)
+        if manifest.get('ufs_log') != expected_log:
+            raise cycle.CycleError('expdb log differs from compiled wire/source/protocol inputs')
+    elif mode in ('read-only-blockio', 'xnu-ufs-read-only'):
         expected_probe, expected_host = package.ufs_read_only_metadata(build / 'AARCH64', token, fd=fd)
     else:
         expected_probe = package.ufs_probe_metadata(build / 'AARCH64', token, fd=fd)
@@ -264,6 +271,8 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
             kernel = subprocess.check_output(['mtype', '-i', str(payload_image), '::/EFI/UniXNU/Payloads/kernel.macho'])
             payload_tools.validate_xnu_ufs_bundle(payload, token, adt, runtime_fdt.read_bytes(),
                                                   config, recovery, kernel)
+            if log_mode:
+                package.validate_expdb_log_kernel(kernel,(directory/'grant.bin').read_bytes(),record)
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
             raise cycle.CycleError('source-XNU UFS payload validation failed: ' + str(error)) from None
     # Rebuild the small entry shim from the clean pinned source, independently

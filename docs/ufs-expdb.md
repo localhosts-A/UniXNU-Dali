@@ -108,3 +108,35 @@ original hashes pass may the separate pending_expdb ledger flag be cleared.
 Vendor modifications outside the window are exported and reported; they cannot
 be hidden by overwriting the guard or labelled an exact restoration. Pending or
 failed restoration prohibits the next round.
+
+## Paired UEFI log trial
+
+`scripts/run-expdb-log.py` takes `--serial`, `--backup`, `--baseline-dir`,
+`--expdb-dir`, `--uefi`, `--unixnu`, `--artifact-dir` and `--evidence-root`.
+Use `--dry-run` first: it validates/copies private baselines, constructs the v3
+proposal, builds the actual source-bound candidate, extracts its final-FD
+payload and independently checks the kernel, shim, modules, wire and pins. It
+does not contact the phone. The kernel artifact must match the final device
+commit; an older successful source build is refused.
+
+A real run additionally checks original Android/18 hashes and the complete live
+expdb before building and immediately before requesting fastboot. It preserves
+the original expdb image, both raw baseline bundles, source kernel/manifest,
+grant/wire/proposal, FD, RAM payload, candidate image and durable original-only
+recovery command. `pending_expdb` is armed before the only candidate flash.
+
+On the first firmware log menu, Volume Up selects WRITE and Power confirms.
+Reboot the same candidate without reflashing. On the second firmware log menu,
+keep READBACK (or select it with Volume Down), then confirm with Power. In the
+normal menu choose Return to firmware diagnostics, confirm with Power, and hold
+only Volume Down in its recovery window. The runner waits for manual fastboot,
+then invokes the separate original boot_b/expdb recovery. Missing/torn logs,
+timeouts and unverified restoration never count as a pass.
+
+The trial currently returns status 2 after successful recovery because byte
+integrity and original-media restoration alone do not prove distinct boot
+boundaries or the runtime write/sync completion sequence. Preserve and review
+both raw ramoops and the independently decoded expdb record before qualifying a
+hardware round. This launcher tests the UEFI journal; XNU remains a read-only
+owner and needs its own journal consumer/rounds. No automatic-fastboot or
+ramoops-off transition is enabled by this launcher.
