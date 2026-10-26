@@ -1,8 +1,11 @@
 import importlib.util
 import io
+import os
 from contextlib import redirect_stdout
 from pathlib import Path
+import shutil
 import struct
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -100,6 +103,44 @@ class DaliUsbStorageBuilderTests(unittest.TestCase):
         self.assertTrue({"dali_usb_storage_publish", "dali_usb_storage_quiesce",
                          "dali_usb_storage_detach", "dali_usb_storage_terminate"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))
+
+    def test_actual_storage_child_lifecycle_with_test_only_iokit_seam(self):
+        generic = ROOT.parent / "UniXNU"
+        self.assertTrue((generic / "drivers/UsbCore/UsbHost.c").is_file())
+        compiler = shutil.which(os.environ.get("CC", "clang"))
+        self.assertIsNotNone(compiler, "C compiler is required")
+        cpp = shutil.which("g++" if Path(compiler).name.startswith("gcc") else "clang++")
+        self.assertIsNotNone(cpp, "C++ compiler is required")
+        model = ROOT / "tests/usb_storage_model"
+        with tempfile.TemporaryDirectory(prefix="dali-usb-storage-model-") as temporary:
+            out = Path(temporary)
+            for header in ("IOKit/IOLib.h", "IOBlockStorageDevice.h", "IOStorage.h"):
+                path = out / header
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('#include "IOKitModel.h"\n')
+            flags = ["-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                     "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-pthread",
+                     "-I", str(generic / "drivers/UsbCore/include")]
+            objects = []
+            for name in ("UsbCore", "UsbHost", "UsbStorage"):
+                obj = out / (name + ".o")
+                result = subprocess.run(
+                    [compiler, "-std=c11", *flags, "-c",
+                     str(generic / "drivers/UsbCore" / (name + ".c")), "-o", str(obj)],
+                    text=True, capture_output=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                objects.append(str(obj))
+            binary = out / "lifecycle"
+            result = subprocess.run(
+                [cpp, "-std=c++17", *flags, "-I", str(model), "-I", str(out),
+                 "-I", str(ROOT / "drivers/DaliUsbStorage"),
+                 str(ROOT / "drivers/DaliUsbStorage/DaliUsbStorage.cpp"),
+                 str(model / "lifecycle.cpp"), *objects, "-o", str(binary)],
+                text=True, capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run([str(binary)], text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("PASS: production USB storage child lifecycle", result.stdout)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,11 @@ before stopping the controller, prove endpoint/slot DMA has stopped before
 The service owns its 64 KiB bounce buffer and refuses to free it without the
 controller-stop proof. No production XNU host owner calls this API yet, so this
 archive does not claim USB enumeration, filesystem access, or runtime binding.
+An offline IOKit/BOT model compiles the actual storage child and generic host
+code together, exercises read/write completions, failed/retried synchronization
+and stop, stop-proven detach, and service calls after host state is cleared.
+The model uses an in-memory disk and test-only IOKit types; it does not prove
+the Apple kernel ABI, service-plane lifetime or hardware behavior.
 
 `build-dali-usb-storage.py` compiles against the fixed public IOStorageFamily
 header using XNU's C++ compile record; after the kernel link,
@@ -148,6 +153,22 @@ controller, start xHCI, ring doorbells, own an interrupt/DMA provider, implement
 the complete `usb_host_ops`, or publish children. Its archive/link evidence is
 not runtime controller qualification.
 
+The portable host teardown has a two-step API for a serialized OS owner. First,
+quiesce child services: the raw-report XNU HID child sends its own neutral report
+and the storage child closes requests and syncs. Then `usb_host_stop_device()`
+closes host admission and obtains a backend stop proof. After stop-proven child
+detach, `usb_host_release_stopped_device()` emits any legacy translated-input
+releases and clears host/BOT state. A failed stop retains the faulted host for
+retry; a second stop after success does not repeat the backend operation.
+Reentrant lifecycle calls from stop or release callbacks return BUSY; callers
+must still serialize host operations and callbacks. `usb_host_disconnect()`
+remains a convenience stop-and-release path for devices without retained OS
+children. The legacy `usb_host_poll_input()` also clears host state on a
+disconnect; an XNU owner with children must use the copied raw-report API and
+the split teardown instead. Production sanitizer models cover stop failure,
+reentry, storage detach after proof and final state release. These models do not
+supply a qualified source-XNU MMIO/IRQ/DMA/power/role backend.
+
 The opt-in `DaliUsbXhciResources` service matches the Dali `xhci0` platform
 device, checks its exact compatible string, and decodes the versioned resource
 property without casting its packed wire bytes to a native structure. Its copy
@@ -156,9 +177,9 @@ range with an inhibit-cache `IODeviceMemory` mapping and retains it until
 `stop()`. The mapping model checks exact range, options, allocation failures,
 and teardown. The owner performs no register reads/writes; it does not acquire
 power, clocks, an IRQ, or qualified DMA, so it does not start or enumerate the
-controller. Action 40313584406 verified only the earlier resource service. The
-new owner archive/kernel link is pending; runtime enumeration and hardware
-qualification remain separate.
+controller. Source-XNU Action 40386387528 verified both the resource service and
+mapping-owner archive/kernel link; runtime enumeration and hardware qualification
+remain separate.
 
 The opt-in XNU profile also compiles the portable MTU3 gadget units for QMU,
 EP0, endpoint setup and the CDC device/log-ring lifecycle into
@@ -171,10 +192,11 @@ at `_cnputc` and the direct serial `kprintf` path, which forwards emitted
 characters to this producer. Console policy can suppress output before the tap,
 and this does not capture all `OSLog` records. The kernel also has no MTU3
 provider, device-role or VBUS/clock/PHY lease, qualified DMA/IRQ worker, or CDC
-runtime. UEFI preserves early `SerialPortWrite()` output in ramoops and has no
-installed USB function provider. The isolated EDK2 `DaliUsbCdcLogLib` archive
-compiles the adapter and checks its MTU3 API dependency, but stays outside the FV
-and has no serial-output caller. No CDC bytes are sent over USB.
+runtime. UEFI's default-off `DALI_USB_CDC_LOG` option adds a shared CDC log
+protocol service and a DXE SerialPort tee that writes ramoops first. Early and
+runtime-only serial paths keep the original ramoops implementation, and earlier
+bytes are not replayed. There is no installed USB function provider, so no CDC
+bytes are sent over USB.
 
 The UEFI resource-context revision6 also copies the four CPU-endian cells from
 the xHCI FDT `interrupts` property (`0, 600, 4, 0`) with the register window.

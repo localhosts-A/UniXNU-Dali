@@ -27,6 +27,7 @@ on:
       - 'tests/fixtures/usb_xhci_resource_v1_test.c'
       - 'tests/usb_xhci_resources_model/**'
       - 'tests/usb_hid_model/**'
+      - 'tests/usb_storage_model/**'
       - 'tests/usb_cdc_log_model/**'
   workflow_dispatch:
 
