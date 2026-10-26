@@ -27,7 +27,7 @@ private:
     OSData *resourceData_=nullptr,*firmwareData_=nullptr;
     native_mali::Resources resources_{};native_mali::XnuMemory memory_{};
     native_mali::XnuMemoryOwner firmwareOwner_{};
-    native_mali::Boot boot_{};native_mali::Scheduler scheduler_{};
+    native_mali::Boot *boot_=nullptr;native_mali::Scheduler *scheduler_=nullptr;
     DaliMaliContext *contexts_[16]{};
     IOWorkLoop *loop_=nullptr;IOTimerEventSource *timer_=nullptr;
     Window *window(native_mali::WindowId);

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "DaliMali.h"
 #include <IOKit/IODeviceTreeSupport.h>
+#include <IOKit/IOSubMemoryDescriptor.h>
 #include <libkern/OSByteOrder.h>
 #include <pexpert/pexpert.h>
 #include <vm/vm_map.h>
 #include <mach/vm_param.h>
 extern "C" uint64_t gPhysBase;
-extern "C" vm_size_t mem_size;
 using namespace native_mali;
 DaliMali::Window *DaliMali::window(WindowId id){for(size_t i=0;i<windowCount_;++i)if(windows_[i].id==id)return windows_+i;return nullptr;}
 bool DaliMali::mapResources(){
@@ -18,7 +18,7 @@ bool DaliMali::mapResources(){
     for(auto id:ids){const auto *r=resources_.window(id);if(!r)continue;
         auto *descriptor=IOMemoryDescriptor::withPhysicalAddress(r->base,r->bytes,kIODirectionInOut|kIOMemoryMapperNone);
         if(!descriptor)return false;
-        auto *map=descriptor->map(kIOMapAnywhere|(r->kind==WindowKind::ReservedMemory?kIOMapWriteCombine:kIOMapInhibitCache));
+        auto *map=descriptor->map(kIOMapAnywhere|(r->kind==WindowKind::ReservedMemory?kIOMapWriteCombineCache:kIOMapInhibitCache));
         descriptor->release();if(!map||map->getLength()<r->bytes){if(map)map->release();return false;}
         windows_[windowCount_++]={id,r->bytes,map};
     }return true;
@@ -48,7 +48,7 @@ bool DaliMali::oom(void *c,uint8_t as,uint64_t heap,uint32_t start,uint32_t end,
 void DaliMali::tick(OSObject *owner,IOTimerEventSource *){
     auto *self=OSDynamicCast(DaliMali,owner);if(!self||!self->lock_)return;
     IOLockLock(self->lock_);
-    if(self->online_){if(self->scheduler_.poll()!=QueueResult::Ok){self->online_=false;self->setProperty("device-lost",true);}
+    if(self->online_){if(self->scheduler_->poll()!=QueueResult::Ok){self->online_=false;self->setProperty("device-lost",true);}
         else self->timer_->setTimeoutMS(2);}
     IOLockUnlock(self->lock_);
 }
@@ -68,31 +68,32 @@ bool DaliMali::start(IOService *provider){
     if(!shared||gPhysBase!=0x80000000ull||!mem_size||gPhysBase>shared->base||mem_size>shared->base-gPhysBase){
         IOLog("DaliMali: GPUEB reservation overlaps XNU managed RAM; require maxmem=1992\n");return false;}
     if(!IOService::start(provider))return false;
-    lock_=IOLockAlloc();if(!lock_||!mapResources())return false;
+    lock_=IOLockAlloc();boot_=new Boot;scheduler_=new Scheduler;
+    if(!lock_||!boot_||!scheduler_||!mapResources())return false;
     firmwareOwner_={&memory_,kernel_task};BootConfig config{};
     config.resources=resourceData_->getBytesNoCopy();config.resourceBytes=resourceData_->getLength();
     config.firmware=static_cast<const uint8_t *>(firmwareData_->getBytesNoCopy());config.firmwareBytes=firmwareData_->getLength();
     config.platform={this,read,write,barrier,XnuMemory::delay,zeroShared};config.registers={this,gpuRead,gpuWrite,XnuMemory::delay};
     config.tables=memory_.tableOps();config.memory=memory_.memoryOps(&firmwareOwner_);config.sharedReservationOwned=true;
-    retain();held_=true;const auto result=boot_.start(config);
-    setProperty("boot-stage",uint64_t(boot_.stage()),32);setProperty("boot-detail",uint64_t(boot_.detail()),32);
-    if(result!=BootResult::Ok){IOLog("DaliMali: boot failed stage=%u detail=%u retained=%u\n",unsigned(boot_.failedStage()),boot_.detail(),boot_.stage()==BootStage::Retained);
-        if(boot_.stage()!=BootStage::Retained&&memory_.empty()){held_=false;release();}return false;}
-    if(scheduler_.initialize(boot_,{this,XnuMemory::delay,oom},100000)!=QueueResult::Ok){
-        boot_.stop();if(boot_.hardware().quiesced()&&memory_.empty()){held_=false;release();}return false;}
+    retain();held_=true;const auto result=boot_->start(config);
+    setProperty("boot-stage",uint64_t(boot_->stage()),32);setProperty("boot-detail",uint64_t(boot_->detail()),32);
+    if(result!=BootResult::Ok){IOLog("DaliMali: boot failed stage=%u detail=%u retained=%u\n",unsigned(boot_->failedStage()),boot_->detail(),boot_->stage()==BootStage::Retained);
+        if(boot_->stage()!=BootStage::Retained&&memory_.empty()){held_=false;release();}return false;}
+    if(scheduler_->initialize(*boot_,{this,XnuMemory::delay,oom},100000)!=QueueResult::Ok){
+        boot_->stop();if(boot_->hardware().quiesced()&&memory_.empty()){held_=false;release();}return false;}
     loop_=IOWorkLoop::workLoop();timer_=IOTimerEventSource::timerEventSource(this,tick);
-    if(!loop_||!timer_||loop_->addEventSource(timer_)!=kIOReturnSuccess){boot_.stop();
-        if(boot_.hardware().quiesced()&&memory_.empty()){held_=false;release();}return false;}
+    if(!loop_||!timer_||loop_->addEventSource(timer_)!=kIOReturnSuccess){boot_->stop();
+        if(boot_->hardware().quiesced()&&memory_.empty()){held_=false;release();}return false;}
     setName(NML_SERVICE_NAME);setProperty("NativeMaliABI",uint64_t(NML_ABI_VERSION),32);
-    setProperty("GPU-ID",uint64_t(boot_.properties()->gpuId),32);setProperty("hardware-qualified",false);
+    setProperty("GPU-ID",uint64_t(boot_->properties()->gpuId),32);setProperty("hardware-qualified",false);
     online_=true;timer_->setTimeoutMS(2);registerService();return true;
 }
 DaliMaliContext *DaliMali::connect(task_t task){
     if(!lock_||!task)return nullptr;IOLockLock(lock_);DaliMaliContext *context=nullptr;
-    if(online_)for(uint8_t as=1;as<16;++as)if(!contexts_[as]&&(boot_.properties()->addressSpaces&(1u<<as))){
+    if(online_)for(uint8_t as=1;as<16;++as)if(!contexts_[as]&&(boot_->properties()->addressSpaces&(1u<<as))){
         context=new DaliMaliContext;if(!context)break;context->owner={&memory_,task};task_reference(task);
         SessionOps ops{memory_.memoryOps(&context->owner),memory_.tableOps(),XnuMemory::importHost,XnuMemory::delay,XnuMemory::now};
-        const auto result=context->session.initialize(boot_,scheduler_,as,ops,256*1024*1024);
+        const auto result=context->session.initialize(*boot_,*scheduler_,as,ops,256*1024*1024);
         if(result==NML_OK){context->connected=true;contexts_[as]=context;}
         else if(context->session.close()!=NML_OK){contexts_[as]=context;context=nullptr;}
         else {task_deallocate(task);delete context;context=nullptr;}break;
@@ -101,7 +102,7 @@ DaliMaliContext *DaliMali::connect(task_t task){
 void DaliMali::disconnect(DaliMaliContext *context){
     if(!context||!lock_)return;IOLockLock(lock_);context->connected=false;
     const auto as=context->session.addressSpace();
-    if(context->session.close(boot_.hardware().quiesced())==NML_OK){if(as<16&&contexts_[as]==context)contexts_[as]=nullptr;
+    if(context->session.close(boot_->hardware().quiesced())==NML_OK){if(as<16&&contexts_[as]==context)contexts_[as]=nullptr;
         task_deallocate(context->owner.task);delete context;}
     else IOLog("DaliMali: retaining AS%u after unconfirmed stop\n",as);
     IOLockUnlock(lock_);
@@ -117,26 +118,27 @@ IOReturn DaliMali::memory(DaliMaliContext *context,uint32_t kind,uint32_t object
     if(online_&&context->connected){
         if(kind==1)valid=context->session.bufferBacking(object,&allocation,&bytes);
         else if(kind==2){QueueView view{};valid=context->session.queueBacking(object,stream,&view)&&
-            boot_.firmwareMemory().backing(view.output,4096,&allocation,&offset);bytes=4096;}
+            boot_->firmwareMemory().backing(view.output,4096,&allocation,&offset);bytes=4096;}
     }
     if(valid){auto *base=memory_.descriptor(allocation);if(base){
         if(kind==1)*out=base;
-        else {*out=IOMemoryDescriptor::withSubRange(base,offset,bytes,kIODirectionOut);base->release();}
+        else {*out=IOSubMemoryDescriptor::withSubRange(base,offset,bytes,kIODirectionOut);base->release();}
     }}IOLockUnlock(lock_);return *out?kIOReturnSuccess:kIOReturnNotFound;
 }
 void DaliMali::stop(IOService *provider){
     if(timer_){timer_->cancelTimeout();timer_->disable();}
-    if(lock_){IOLockLock(lock_);online_=false;
-        if(boot_.stop()==BootResult::Ok){scheduler_.resetAfterQuiescence();
+    if(lock_&&boot_&&scheduler_){IOLockLock(lock_);online_=false;
+        if(boot_->stop()==BootResult::Ok){scheduler_->resetAfterQuiescence();
             for(auto &context:contexts_)if(context){const auto result=context->session.close(true);
                 if(result==NML_OK&&!context->connected){task_deallocate(context->owner.task);delete context;context=nullptr;}}}
         IOLockUnlock(lock_);}
-    if(held_&&boot_.hardware().quiesced()&&memory_.empty()){held_=false;release();}
+    if(held_&&boot_&&boot_->hardware().quiesced()&&memory_.empty()){held_=false;release();}
     IOService::stop(provider);
 }
 void DaliMali::free(){
     if(timer_){if(loop_)loop_->removeEventSource(timer_);timer_->release();timer_=nullptr;}
     if(loop_){loop_->release();loop_=nullptr;}unmapResources();
+    delete scheduler_;scheduler_=nullptr;delete boot_;boot_=nullptr;
     if(resourceData_)resourceData_->release();if(firmwareData_)firmwareData_->release();if(lock_)IOLockFree(lock_);
     IOService::free();
 }
@@ -196,7 +198,7 @@ IOReturn DaliMaliUserClient::clientMemoryForType(UInt32 type,IOOptionBits *optio
     if(!options||!out||!type||!lock_)return kIOReturnBadArgument;*out=nullptr;IOLockLock(lock_);IOReturn result=kIOReturnNotFound;
     if(controller_&&context_)for(const auto &entry:tokens_)if(entry.token==type){
         result=controller_->memory(context_,entry.kind,entry.object,entry.stream,out);
-        if(result==kIOReturnSuccess){*options|=kIOMapWriteCombine;if(entry.kind==2)*options|=kIOMapReadOnly;}break;}
+        if(result==kIOReturnSuccess){*options|=kIOMapWriteCombineCache;if(entry.kind==2)*options|=kIOMapReadOnly;}break;}
     IOLockUnlock(lock_);return result;
 }
 OSDefineMetaClassAndStructors(DaliMali,IOService)
