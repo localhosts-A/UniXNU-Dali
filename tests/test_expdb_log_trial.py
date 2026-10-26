@@ -104,6 +104,16 @@ class TrialTests(unittest.TestCase):
                 self.assertEqual(actual['DALI_UFS_LOG_WIRE'],str(wire.resolve()));self.assertEqual(actual['DALI_AUTO_FASTBOOT'],'false')
                 with self.assertRaises(trial.cycle.CycleError):
                     trial.cycle.build_candidate(args,root,root/'kernel',root/'adt',recovery,'a'*32,root,expdb_log_wire=wire)
+                userdata= root/'userdata-grant.bin';userdata.write_bytes(b'v4-wire')
+                with self.assertRaises(StopBuild):
+                    trial.cycle.build_candidate(args,root,root/'kernel',root/'adt',recovery,'a'*32,root,
+                        xnu_ufs_readonly=True,live_fdt=fdt,userdata_log_wire=userdata)
+                actual=build.call_args.kwargs['env']
+                self.assertEqual(actual['DALI_UFS_PROFILE'],'userdata-logs-diagnostic')
+                self.assertEqual(actual['DALI_UFS_LOG_WIRE'],str(userdata.resolve()))
+                with self.assertRaises(trial.cycle.CycleError):
+                    trial.cycle.build_candidate(args,root,root/'kernel',root/'adt',recovery,'a'*32,root,
+                        xnu_ufs_readonly=True,live_fdt=fdt,expdb_log_wire=wire,userdata_log_wire=userdata)
 
     def test_complete_shared_builder_accepts_only_matching_log_mode_and_wire(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -132,6 +142,19 @@ class TrialTests(unittest.TestCase):
                 for change in ({'wire_sha256':'b'*64},{'enabled':False},{'ramoops_retained':False},{'automatic_fastboot_enabled':True}):
                     bad=dict(manifest,ufs_log=dict(manifest['ufs_log'],**change))
                     with self.assertRaises(trial.cycle.CycleError):build(bad)
+                user_profile=dict(manifest['ufs_host'],mode='userdata-logs-diagnostic')
+                user_log=dict(enabled=True,profile='userdata-logs-diagnostic',run_token=token,
+                    target_partition='unixnu_logs',wire_sha256=digest(b'wire'),ramoops_retained=True,
+                    automatic_fastboot_enabled=False)
+                user_manifest=dict(manifest,ufs_host=user_profile,ufs_log=user_log)
+                (out/'manifest.json').write_text(json.dumps(user_manifest))
+                self.assertEqual(trial.cycle.build_candidate(args,root,kernel,adt,recovery,token,root,
+                    xnu_ufs_readonly=True,live_fdt=fdt,userdata_log_wire=wire)[1],user_manifest)
+                bad=dict(user_manifest,ufs_log=dict(user_log,target_partition='expdb'))
+                (out/'manifest.json').write_text(json.dumps(bad))
+                with self.assertRaises(trial.cycle.CycleError):
+                    trial.cycle.build_candidate(args,root,kernel,adt,recovery,token,root,
+                        xnu_ufs_readonly=True,live_fdt=fdt,userdata_log_wire=wire)
 
 
 if __name__=='__main__':unittest.main()

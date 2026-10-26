@@ -21,6 +21,7 @@ RESOURCE_WORDS = (0x31534655494c4144, 1, 0x16810000, 0x2a00, 0x168a0000, 0x1000,
 SCRATCH_GRANT_MAGIC = b'DALIUFSW'
 SCRATCH_GRANT_BYTES = 232
 EXPDB_GRANT_BYTES = 236
+USERDATA_LOG_GRANT_BYTES = 240
 
 
 def resource_contract(tree, raw_fdt):
@@ -121,11 +122,15 @@ def encode_scratch_grant(document):
         raise ValueError('scratch grant must be a JSON object')
     profile = document.get('profile')
     expdb = profile == 'expdb-scratch-write-test-v1'
-    if profile not in ('boot-b-scratch-write-test-v1', 'expdb-scratch-write-test-v1') or document.get('write_authorized') is not True:
+    userdata_logs = profile == 'userdata-logs-diagnostic-v1'
+    if profile not in ('boot-b-scratch-write-test-v1', 'expdb-scratch-write-test-v1',
+                       'userdata-logs-diagnostic-v1') or document.get('write_authorized') is not True:
         raise ValueError('scratch grant is not explicitly authorized for a supported test profile')
     if expdb and document.get('target_partition') != 'expdb':
         raise ValueError('expdb grant requires an explicit expdb target')
-    if not expdb and document.get('target_partition', 'boot_b') != 'boot_b':
+    if userdata_logs and document.get('target_partition') != 'unixnu_logs':
+        raise ValueError('userdata log grant requires the exact unixnu_logs target')
+    if not expdb and not userdata_logs and document.get('target_partition', 'boot_b') != 'boot_b':
         raise ValueError('legacy boot_b grant cannot select another partition')
     if document.get('media_writes') is not True:
         raise ValueError('scratch grant must explicitly enable media writes')
@@ -176,22 +181,24 @@ def encode_scratch_grant(document):
     capacity = integer('capacity_blocks', positive=True)
     boot_start = integer('boot_start_lba')
     boot_blocks = integer('boot_blocks', positive=True)
-    payload_end = integer('payload_end_bytes', positive=not expdb)
+    payload_end = integer('payload_end_bytes', positive=not (expdb or userdata_logs))
     scratch_start = integer('scratch_start_lba')
     scratch_blocks = integer('scratch_blocks', positive=True)
     tail_blocks = integer('tail_guard_blocks', positive=True)
     sequence = integer('sequence', positive=True)
     if lun >= 8 or block_bytes < 512 or block_bytes > 65536 or block_bytes & (block_bytes - 1):
         raise ValueError('unsupported scratch grant LUN or block size')
-    if (1024 * 1024) % block_bytes or scratch_blocks != (1024 * 1024) // block_bytes:
-        raise ValueError('scratch must be exactly 1 MiB')
-    if not expdb and tail_blocks != scratch_blocks:
+    window_bytes = 4 * 1024 * 1024 if userdata_logs else 1024 * 1024
+    if window_bytes % block_bytes or scratch_blocks != window_bytes // block_bytes:
+        raise ValueError('scratch window has the wrong exact target size')
+    if not expdb and not userdata_logs and tail_blocks != scratch_blocks:
         raise ValueError('boot_b tail guard must be exactly 1 MiB')
     if boot_start >= capacity or boot_blocks > capacity - boot_start or boot_blocks > ((1 << 64) - 1) // block_bytes:
         raise ValueError('scratch grant partition range exceeds the LU')
     boot_end = boot_start + boot_blocks
-    if (scratch_start < boot_start or scratch_start > boot_end or scratch_blocks > boot_end - scratch_start or
-            sequence > scratch_blocks // 2):
+    if scratch_start < boot_start or scratch_start > boot_end or scratch_blocks > boot_end - scratch_start:
+        raise ValueError('scratch grant exceeds the selected partition')
+    if not userdata_logs and sequence > scratch_blocks // 2:
         raise ValueError('scratch grant exceeds the two-block-per-sequence scratch window')
     if tail_blocks != boot_end - scratch_start - scratch_blocks:
         raise ValueError('scratch grant tail guard does not end at the partition boundary')
@@ -200,13 +207,25 @@ def encode_scratch_grant(document):
         raise ValueError('scratch grant overlaps payload or overflows')
     if expdb and (payload_end != 0 or relative != scratch_blocks or tail_blocks < 4 * scratch_blocks):
         raise ValueError('expdb requires a 1 MiB head guard, a 1 MiB window and at least 4 MiB remaining guard')
+    if userdata_logs:
+        slot_blocks=(4*1024*1024)//4096
+        expected_start=boot_start+(sequence-1)*2*slot_blocks
+        if (str(guid)!='cde9ab32-18d8-4777-8ced-691e7cd5c636' or lun!=2 or block_bytes!=4096 or
+                capacity!=64577536 or boot_start!=64565240 or boot_blocks!=8192 or payload_end or
+                scratch_start!=expected_start or scratch_blocks!=slot_blocks or
+                tail_blocks!=boot_blocks-(sequence-1)*2*slot_blocks-slot_blocks or not 0<sequence<=4):
+            raise ValueError('userdata log grant must select one of four exact UEFI/XNU slot pairs')
 
-    wire = struct.pack('<8sII32s32s32s32s16sIIQQQQQQQQ', SCRATCH_GRANT_MAGIC, 3 if expdb else 2, 2 if expdb else 1,
+    wire = struct.pack('<8sII32s32s32s32s16sIIQQQQQQQQ', SCRATCH_GRANT_MAGIC,
+                       4 if userdata_logs else 3 if expdb else 2,
+                       4 if userdata_logs else 2 if expdb else 1,
                        token.encode('ascii'), device, candidate, source, guid.bytes,
                        lun, block_bytes, capacity, boot_start, boot_blocks, payload_end,
                        scratch_start, scratch_blocks, tail_blocks, sequence)
     if expdb:
         wire += struct.pack('<I', 1)
-    if len(wire) != (EXPDB_GRANT_BYTES if expdb else SCRATCH_GRANT_BYTES):
+    if userdata_logs:
+        wire += struct.pack('<II', 2, 4 * 1024 * 1024)
+    if len(wire) != (USERDATA_LOG_GRANT_BYTES if userdata_logs else EXPDB_GRANT_BYTES if expdb else SCRATCH_GRANT_BYTES):
         raise AssertionError('scratch-grant wire size changed')
     return wire

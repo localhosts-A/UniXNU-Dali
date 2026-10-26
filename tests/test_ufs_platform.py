@@ -35,6 +35,7 @@ class PlatformTests(unittest.TestCase):
         cls.lib.scratch_wire_decode_case.argtypes = [C.POINTER(C.c_uint8), C.c_size_t, C.POINTER(C.c_uint64)]
         cls.lib.scratch_wire_decode_case.restype = C.c_bool
         cls.lib.scratch_sequence_case.argtypes = [C.c_uint, C.POINTER(C.c_uint64)]
+        cls.lib.userdata_logs_xnu_case.argtypes = [C.c_uint, C.POINTER(C.c_uint64)]
         cls.lib.guid_case.argtypes = [C.c_char_p, C.POINTER(C.c_uint8)]
         cls.lib.guid_case.restype = C.c_bool
 
@@ -159,9 +160,9 @@ class PlatformTests(unittest.TestCase):
         }
         wire = encode_scratch_grant(grant)
         raw = (C.c_uint8 * len(wire)).from_buffer_copy(wire)
-        out = (C.c_uint64 * 10)()
+        out = (C.c_uint64 * 11)()
         self.assertTrue(self.lib.scratch_wire_decode_case(raw, len(wire), out))
-        self.assertEqual(list(out), [1,1,2,434432,256,64577536,4096,1,434687,1])
+        self.assertEqual(list(out), [1,1,2,434432,256,64577536,4096,1,434687,1,0])
 
     def test_partition_guid_parser_uses_canonical_text_byte_order(self):
         out=(C.c_uint8*16)()
@@ -187,12 +188,61 @@ class PlatformTests(unittest.TestCase):
                      scratch_start_lba=2440, scratch_blocks=256, tail_guard_blocks=32256, sequence=1)
         wire = encode_scratch_grant(grant)
         def decode(data):
-            raw = (C.c_uint8*len(data)).from_buffer_copy(data); out = (C.c_uint64*10)()
+            raw = (C.c_uint8*len(data)).from_buffer_copy(data); out = (C.c_uint64*11)()
             return self.lib.scratch_wire_decode_case(raw, len(data), out), list(out)
-        self.assertEqual(decode(wire), (True, [1,1,2,2440,256,64577536,4096,1,2695,1]))
+        self.assertEqual(decode(wire), (True, [1,1,2,2440,256,64577536,4096,1,2695,1,1]))
         for offset, fmt, value in ((8,'I',2),(12,'I',1),(232,'I',0),(232,'I',2),(192,'Q',1),
                                    (200,'Q',2441),(216,'Q',256),(184,'Q',1024)):
             bad = bytearray(wire); struct.pack_into('<'+fmt, bad, offset, value)
             self.assertFalse(decode(bad)[0], (offset, value))
         self.assertFalse(decode(wire[:-4])[0])
         self.assertFalse(decode(wire+b'\0')[0])
+
+    def test_userdata_logs_grant_has_four_exact_uefi_slots_and_no_expdb_alias(self):
+        def policy(mode):
+            out=(C.c_uint64*2)();self.lib.scratch_policy_case(mode,out);return tuple(out)
+        self.assertEqual(policy(60),(1,1));self.assertEqual(policy(61),(1,1))
+        for mode in (62,63,66):self.assertEqual(policy(mode),(1,0),mode)
+        for mode in (64,65,67):self.assertEqual(policy(mode),(0,0),mode)
+        grant=dict(profile='userdata-logs-diagnostic-v1',target_partition='unixnu_logs',
+            write_authorized=True,media_writes=True,token='0123456789abcdef0123456789abcdef',
+            device_binding_sha256='11'*32,candidate_sha256='22'*32,source_sha256='33'*32,
+            partition_guid='cde9ab32-18d8-4777-8ced-691e7cd5c636',lun=2,block_bytes=4096,
+            capacity_blocks=64577536,boot_start_lba=64565240,boot_blocks=8192,payload_end_bytes=0,
+            scratch_start_lba=64565240,scratch_blocks=1024,tail_guard_blocks=7168,sequence=1)
+        wire=encode_scratch_grant(grant);out=(C.c_uint64*11)()
+        self.assertTrue(self.lib.scratch_wire_decode_case((C.c_uint8*len(wire)).from_buffer_copy(wire),len(wire),out))
+        self.assertEqual(list(out),[1,1,2,64565240,1024,64577536,4096,1,64565240+255,1,2])
+
+    def test_userdata_logs_xnu_writer_is_exactly_the_adjacent_sibling_slot(self):
+        def case(mode):
+            out=(C.c_uint64*5)();self.lib.userdata_logs_xnu_case(mode,out);return list(out)
+        self.assertEqual(case(0),[1,1,64566264,1024,1])
+        self.assertEqual(case(1),[1,1,64566264,1024,1])
+        for mode in (2,3,4,5,6,7):self.assertEqual(case(mode)[4],0,mode)
+
+    def test_userdata_logs_wire_v4_binds_the_uefi_slot_and_four_mib_size(self):
+        grant=dict(profile='userdata-logs-diagnostic-v1',target_partition='unixnu_logs',
+            write_authorized=True,media_writes=True,token='0123456789abcdef0123456789abcdef',
+            device_binding_sha256='11'*32,candidate_sha256='22'*32,source_sha256='33'*32,
+            partition_guid='cde9ab32-18d8-4777-8ced-691e7cd5c636',lun=2,block_bytes=4096,
+            capacity_blocks=64577536,boot_start_lba=64565240,boot_blocks=8192,payload_end_bytes=0,
+            scratch_start_lba=64565240,scratch_blocks=1024,tail_guard_blocks=7168,sequence=1)
+        wire=encode_scratch_grant(grant)
+        self.assertEqual(len(wire),240)
+        raw=(C.c_uint8*len(wire)).from_buffer_copy(wire);out=(C.c_uint64*11)()
+        self.assertTrue(self.lib.scratch_wire_decode_case(raw,len(wire),out))
+        self.assertEqual(list(out),[1,1,2,64565240,1024,64577536,4096,1,64565240+255,1,2])
+        for offset,fmt,value in ((8,'I',3),(12,'I',2),(200,'Q',64565241),(208,'Q',1023),
+                                 (216,'Q',7167),(224,'Q',2),(232,'I',1),(236,'I',1024)):
+            bad=bytearray(wire);struct.pack_into('<'+fmt,bad,offset,value)
+            self.assertFalse(self.lib.scratch_wire_decode_case((C.c_uint8*len(bad)).from_buffer_copy(bad),len(bad),out))
+        short=wire[:-1]
+        self.assertFalse(self.lib.scratch_wire_decode_case((C.c_uint8*len(short)).from_buffer_copy(short),len(short),out))
+
+    def test_userdata_logs_xnu_writer_is_confined_to_its_sibling_slot(self):
+        def case(mode):
+            out=(C.c_uint64*5)();self.lib.userdata_logs_xnu_case(mode,out);return list(out)
+        self.assertEqual(case(0),[1,1,64566264,1024,1])
+        self.assertEqual(case(1),[1,1,64566264,1024,1])
+        for mode in (2,3,4,5,6,7):self.assertEqual(case(mode)[4],0,mode)

@@ -40,7 +40,24 @@ metadata cannot recover intentionally discarded Android files.
 The data filesystem contains `IPSW`, `Logs`, `Payloads`, and `Manifests`.
 `Manifests/layout.json` records its actual partition identities. The log partition
 is a separate block device; do not mount it or extend exFAT into it. Existing
-boot_b/expdb grants do not authorize this region. A separate UEFI/XNU target and
-journal consumer must be validated before firmware/kernel logging is enabled.
-Android/Recovery filesystem provisioning does not qualify UEFI/XNU persistence.
-Ramoops remains enabled.
+boot_b/expdb grants do not authorize this region. The explicit
+`userdata-logs-diagnostic-v1` profile binds a fresh token to one adjacent 4 MiB
+UEFI/XNU owner-slot pair. UEFI and XNU write snapshots with real device syncs and
+readbacks. The XNU body includes the kernel msgbuf ring and indices, a controller
+diagnostic structure, and the Dali console ring.
+
+After a trial returns to rooted Android and original `boot_b` is restored, the
+host runner reads the whole raw partition twice, validates each slot, and copies
+`unixnu_logs.img`, decoded owner files, and captured ramoops into
+`/sdcard/UniXNU/Logs/<token>`. It mounts exFAT at `/data/media/0/UniXNU` during
+export so Android applications can read the files. Manual raw inspection is also
+possible from rooted Android:
+
+```sh
+su -c 'dd if=/dev/block/by-name/unixnu_logs bs=4096 count=8192 status=none'
+```
+
+The raw partition is currently verified empty. Software wiring and host tests do
+not qualify physical writes or persistence. Ramoops remains enabled, and the
+automatic-fastboot/ramoops transition stays disabled until same-candidate write,
+sync, and restart readback succeed.

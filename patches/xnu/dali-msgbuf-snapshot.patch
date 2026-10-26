@@ -1,0 +1,62 @@
+diff --git a/bsd/kern/subr_log.c b/bsd/kern/subr_log.c
+--- a/bsd/kern/subr_log.c
++++ b/bsd/kern/subr_log.c
+@@ -140,9 +140,47 @@
+ /* defined in osfmk/kern/printf.c  */
+ extern bool bsd_log_lock(bool);
+ extern void bsd_log_lock_safe(void);
+ extern void bsd_log_unlock(void);
+ 
+ extern void logwakeup(void);
+ extern void oslogwakeup(void);
+ extern bool os_log_disabled(void);
++
++/*
++ * Dali's bounded early-storage logger needs a point-in-time raw ring snapshot.
++ * Allocate the destination before calling; never allocate or perform I/O while
++ * holding the interrupt-safe log spin lock. Return the ring metadata so the
++ * consumer can preserve its circular-buffer semantics without retaining a
++ * pointer that log_setsize() could later replace.
++ */
++int
++dali_msgbuf_snapshot(char *destination, unsigned int capacity,
++    unsigned int *copied, unsigned int *ring_size,
++    unsigned int *write_index, unsigned int *read_index)
++{
++	if (destination == NULL || copied == NULL || ring_size == NULL ||
++	    write_index == NULL || read_index == NULL) {
++		return EINVAL;
++	}
++	bsd_log_lock_safe();
++	struct msgbuf *mbp = msgbufp;
++	if (mbp == NULL || mbp->msg_magic != MSG_MAGIC || mbp->msg_size <= 0 ||
++	    mbp->msg_size > MAX_MSG_BSIZE || mbp->msg_bufc == NULL ||
++	    mbp->msg_bufx < 0 || mbp->msg_bufx >= mbp->msg_size ||
++	    mbp->msg_bufr < 0 || mbp->msg_bufr >= mbp->msg_size) {
++		bsd_log_unlock();
++		return EINVAL;
++	}
++	if (capacity < (unsigned int)mbp->msg_size) {
++		bsd_log_unlock();
++		return ENOSPC;
++	}
++	memcpy(destination, mbp->msg_bufc, (size_t)mbp->msg_size);
++	*copied = (unsigned int)mbp->msg_size;
++	*ring_size = (unsigned int)mbp->msg_size;
++	*write_index = (unsigned int)mbp->msg_bufx;
++	*read_index = (unsigned int)mbp->msg_bufr;
++	bsd_log_unlock();
++	return 0;
++}
+ 
+diff --git a/bsd/sys/msgbuf.h b/bsd/sys/msgbuf.h
+--- a/bsd/sys/msgbuf.h
++++ b/bsd/sys/msgbuf.h
+@@ -80,6 +80,7 @@
+ extern struct   msgbuf *aslbufp;
+ extern void log_putc(char);
+ extern void log_putc_locked(struct msgbuf *, char);
+ extern int log_dmesg(user_addr_t, uint32_t, int32_t *);
++extern int dali_msgbuf_snapshot(char *, unsigned int, unsigned int *, unsigned int *, unsigned int *, unsigned int *);
+ __END_DECLS
+ #endif /* XNU_KERNEL_PRIVATE */

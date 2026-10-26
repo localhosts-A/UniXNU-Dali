@@ -19,7 +19,7 @@ class ScratchIoTests(unittest.TestCase):
         cls.temp=tempfile.TemporaryDirectory();root=Path(cls.temp.name)
         driver=Path(__file__).resolve().parents[1]/'drivers/DaliUfs'
         source=(driver/'DaliUfs.cpp').read_text()
-        body=source[source.index('bool DaliUfs::testScratchRecord('):source.index('\nbool DaliUfs::diagnose(')]
+        body=source[source.index('bool DaliUfs::testScratchRecord('):source.index('\nbool DaliUfs::inspectUserdataLogPartition(')]
         (root/'io.cpp').write_text('''#include "DaliUfsPlatform.h"
 #include <stdint.h>
 #include <stdlib.h>

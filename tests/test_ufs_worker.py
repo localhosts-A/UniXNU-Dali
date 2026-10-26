@@ -38,9 +38,11 @@ struct Child {bool attach(DaliUfs*){return true;} bool start(DaliUfs*){return tr
 class DaliUfs {
 public:
   bool closed_=false,scratchWriteMode_=false,stopAfterDiagnostics_=false;
+  bool userdataLogMode_=false,userdataLogAttempted_=false;uint64_t syncs_=0;
   void *gate_=nullptr; char token_[33]{}; Child *children_[8]{}; Transport transport_;
   bool initialize() {++initialized_calls;return initialize_result;}
   bool diagnose() {++diagnosed_calls;return diagnose_result;}
+  bool persistUserdataLog() {userdataLogAttempted_=true;return true;}
   void record(const char *stage,uint64_t a=0,uint64_t=0,uint64_t=0) {
     if(stage[0]=='f')++failed_records;
     if(stage[0]=='d')diagnostic_result=(unsigned)a;

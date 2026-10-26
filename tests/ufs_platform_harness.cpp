@@ -113,6 +113,28 @@ extern "C" void scratch_policy_case(unsigned mode,uint64_t *out){
     g.bootStartLba=o.bootStartLba=2184;g.bootBlocks=o.bootBlocks=32768;
     g.payloadEndBytes=0;g.scratchStartLba=2440;g.tailGuardBlocks=32256;lba=2440;
   }
+  if(mode>=60){
+    g.target=o.target=ScratchTarget::UserdataLogs;g.bootStartLba=o.bootStartLba=64565240;
+    g.bootBlocks=o.bootBlocks=8192;g.payloadEndBytes=0;g.sequence=1;
+    g.scratchStartLba=64565240;g.scratchBlocks=1024;g.tailGuardBlocks=7168;lba=64565240;
+    const uint8_t guid[16]={0xcd,0xe9,0xab,0x32,0x18,0xd8,0x47,0x77,0x8c,0xed,0x69,0x1e,0x7c,0xd5,0xc6,0x36};
+    memcpy(g.partitionGuid,guid,16);memcpy(o.partitionGuid,guid,16);
+    if(mode==61)lba=64565240+1023;if(mode==62)lba=64565240+1024;
+    if(mode==63){lba=64565240+1023;blocks=2;}
+    if(mode==64)g.sequence=2;if(mode==65)g.scratchStartLba++;
+    if(mode==66)o.target=ScratchTarget::BootB;if(mode==67)g.tailGuardBlocks--;
+  }
+  if(mode>=60){
+    g.target=o.target=ScratchTarget::UserdataLogs;g.bootStartLba=o.bootStartLba=64565240;
+    g.bootBlocks=o.bootBlocks=8192;g.payloadEndBytes=0;g.sequence=1;
+    g.scratchStartLba=64565240;g.scratchBlocks=1024;g.tailGuardBlocks=7168;lba=64565240;
+    const uint8_t guid[16]={0xcd,0xe9,0xab,0x32,0x18,0xd8,0x47,0x77,0x8c,0xed,0x69,0x1e,0x7c,0xd5,0xc6,0x36};
+    memcpy(g.partitionGuid,guid,16);memcpy(o.partitionGuid,guid,16);
+    if(mode==61)lba=64565240+1023;if(mode==62)lba=64565240+1024;
+    if(mode==63){lba=64565240+1023;blocks=2;}
+    if(mode==64)g.sequence=2;if(mode==65)g.scratchStartLba++;
+    if(mode==66)o.target=ScratchTarget::BootB;if(mode==67)g.tailGuardBlocks--;
+  }
   switch(mode){
     case 1:g.enabled=false;break;
     case 2:g.token[0]='z';break;
@@ -179,7 +201,27 @@ extern "C" void scratch_wire_case(unsigned mode,uint64_t *out){
 extern "C" bool scratch_wire_decode_case(const uint8_t *wire,size_t length,uint64_t *out){
   ScratchGrant g{};bool ok=decodeScratchGrant(wire,length,g);out[0]=ok;out[1]=g.enabled;out[2]=g.lun;
   out[3]=g.scratchStartLba;out[4]=g.scratchBlocks;out[5]=g.capacityBlocks;out[6]=g.blockBytes;
-  uint64_t absolute=0;out[7]=ok&&scratchAbsoluteLba(g,255,1,absolute);out[8]=absolute;out[9]=g.sequence;return ok;
+  uint64_t absolute=0;out[7]=ok&&scratchAbsoluteLba(g,255,1,absolute);out[8]=absolute;out[9]=g.sequence;
+  out[10]=static_cast<uint32_t>(g.target);return ok;
+}
+extern "C" void userdata_logs_xnu_case(unsigned mode,uint64_t *out){
+  ScratchGrant g{};g.enabled=true;strcpy(g.token,"0123456789abcdef0123456789abcdef");
+  memset(g.deviceBinding,1,32);memset(g.candidateSha256,2,32);memset(g.sourceSha256,3,32);
+  const uint8_t guid[16]={0xcd,0xe9,0xab,0x32,0x18,0xd8,0x47,0x77,0x8c,0xed,0x69,0x1e,0x7c,0xd5,0xc6,0x36};
+  memcpy(g.partitionGuid,guid,16);g.target=ScratchTarget::UserdataLogs;g.lun=2;g.blockBytes=4096;
+  g.capacityBlocks=64577536;g.bootStartLba=64565240;g.bootBlocks=8192;g.sequence=1;
+  g.scratchStartLba=64565240;g.scratchBlocks=1024;g.tailGuardBlocks=7168;
+  ScratchObservation o{};o.identityVerified=o.candidateVerified=o.sourceVerified=o.gptVerified=o.scratchMediaReady=true;
+  strcpy(o.token,g.token);memcpy(o.deviceBinding,g.deviceBinding,32);memcpy(o.candidateSha256,g.candidateSha256,32);
+  memcpy(o.sourceSha256,g.sourceSha256,32);memcpy(o.partitionGuid,g.partitionGuid,16);o.target=g.target;o.lun=2;
+  o.blockBytes=4096;o.capacityBlocks=64577536;o.bootStartLba=64565240;o.bootBlocks=8192;o.writeProtected=false;
+  uint64_t start=0,blocks=0;bool range=userdataLogsXnuRange(g,start,blocks);
+  uint64_t lba=start;uint32_t count=1;
+  if(mode==1)lba=start+blocks-1;if(mode==2)lba=start+blocks;if(mode==3){lba=start+blocks-1;count=2;}
+  if(mode==4)o.writeProtected=true;if(mode==5)o.sourceVerified=false;
+  if(mode==6)g.sequence=2;if(mode==7)o.partitionGuid[0]^=1;
+  out[0]=scratchGrantValid(g);out[1]=range;out[2]=start;out[3]=blocks;
+  out[4]=userdataLogsXnuWriteAllowed(g,o,lba,count);
 }
 extern "C" void scratch_sequence_case(unsigned mode,uint64_t *out){
   ScratchGrant g{};g.enabled=true;strcpy(g.token,"0123456789abcdef0123456789abcdef");

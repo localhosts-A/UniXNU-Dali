@@ -30,11 +30,12 @@ static void store64(uint8_t *p, uint64_t value) {
 bool decodeScratchGrant(const void *data, size_t bytes, ScratchGrant &g) {
   static const uint8_t magic[8] = {'D','A','L','I','U','F','S','W'};
   const auto p = static_cast<const uint8_t *>(data);
-  if (!p || (bytes != ScratchGrantWireBytes && bytes != ExpdbGrantWireBytes) ||
+  if (!p || (bytes != ScratchGrantWireBytes && bytes != ExpdbGrantWireBytes && bytes != UserdataLogsGrantWireBytes) ||
       memcmp(p, magic, sizeof magic)) return false;
   const uint32_t version = little32(p + 8), flags = little32(p + 12);
   if ((bytes == ScratchGrantWireBytes && (version != 2 || flags != 1)) ||
-      (bytes == ExpdbGrantWireBytes && (version != 3 || flags != 2))) return false;
+      (bytes == ExpdbGrantWireBytes && (version != 3 || flags != 2)) ||
+      (bytes == UserdataLogsGrantWireBytes && (version != 4 || flags != 4))) return false;
   ScratchGrant candidate{};
   candidate.enabled = true;
   memcpy(candidate.token, p + 16, 32); candidate.token[32] = 0;
@@ -57,6 +58,10 @@ bool decodeScratchGrant(const void *data, size_t bytes, ScratchGrant &g) {
   if (bytes == ExpdbGrantWireBytes) {
     if (little32(p + 232) != static_cast<uint32_t>(ScratchTarget::Expdb)) return false;
     candidate.target = ScratchTarget::Expdb;
+  } else if (bytes == UserdataLogsGrantWireBytes) {
+    if (little32(p + 232) != static_cast<uint32_t>(ScratchTarget::UserdataLogs) ||
+        little32(p + 236) != 4 * 1024 * 1024) return false;
+    candidate.target = ScratchTarget::UserdataLogs;
   }
   if (!scratchGrantValid(candidate)) return false;
   g = candidate;
@@ -69,9 +74,17 @@ bool scratchAbsoluteLba(const ScratchGrant &g, uint64_t relativeLba, uint32_t bl
   absoluteLba = g.scratchStartLba + relativeLba;
   return true;
 }
+bool userdataLogsXnuRange(const ScratchGrant &g, uint64_t &startLba, uint64_t &blocks) {
+  startLba=blocks=0;
+  if (!scratchGrantValid(g) || g.target!=ScratchTarget::UserdataLogs ||
+      g.scratchStartLba>UINT64_MAX-g.scratchBlocks) return false;
+  startLba=g.scratchStartLba+g.scratchBlocks;blocks=g.scratchBlocks;
+  const uint64_t partitionEnd=g.bootStartLba+g.bootBlocks;
+  return startLba<=partitionEnd && blocks<=partitionEnd-startLba;
+}
 bool scratchSequenceLbas(const ScratchGrant &g, uint64_t &markerRelativeLba, uint64_t &payloadRelativeLba) {
   markerRelativeLba = payloadRelativeLba = 0;
-  if (!scratchGrantValid(g) || g.sequence - 1 > UINT64_MAX / 2) return false;
+  if (!scratchGrantValid(g) || g.target==ScratchTarget::UserdataLogs || g.sequence - 1 > UINT64_MAX / 2) return false;
   const uint64_t marker = (g.sequence - 1) * 2;
   if (marker >= g.scratchBlocks || g.scratchBlocks - marker < 2) return false;
   markerRelativeLba = marker; payloadRelativeLba = marker + 1; return true;
@@ -114,7 +127,9 @@ bool parsePartitionGuid(const char *text, uint8_t output[16]) {
   return byte == 16;
 }
 bool scratchGrantValid(const ScratchGrant &g) {
-  constexpr uint64_t ScratchBytes = 1024 * 1024;
+  static constexpr uint8_t UserdataLogsGuid[16]={0xcd,0xe9,0xab,0x32,0x18,0xd8,0x47,0x77,
+    0x8c,0xed,0x69,0x1e,0x7c,0xd5,0xc6,0x36};
+  const uint64_t ScratchBytes=g.target==ScratchTarget::UserdataLogs?4*1024*1024:1024*1024;
   if (!g.enabled || !tokenValid(g.token) || g.lun >= 8 ||
       !nonzero(g.deviceBinding, sizeof g.deviceBinding) ||
       !nonzero(g.candidateSha256, sizeof g.candidateSha256) ||
@@ -145,6 +160,15 @@ bool scratchGrantValid(const ScratchGrant &g) {
     if (g.payloadEndBytes != 0 || scratchOffsetBlocks != expectedWindowBlocks ||
         g.tailGuardBlocks != bootEndLba - g.scratchStartLba - g.scratchBlocks ||
         g.tailGuardBlocks < minimumGuard) return false;
+  } else if (g.target == ScratchTarget::UserdataLogs) {
+    constexpr uint64_t SlotBlocks=(4*1024*1024)/4096;
+    if (g.payloadEndBytes!=0 || g.lun!=2 || g.blockBytes!=4096 ||
+        g.capacityBlocks!=64577536 || g.bootStartLba!=64565240 || g.bootBlocks!=8192 ||
+        g.scratchBlocks!=SlotBlocks || g.sequence>4 ||
+        memcmp(g.partitionGuid,UserdataLogsGuid,sizeof UserdataLogsGuid)) return false;
+    const uint64_t offset=(g.sequence-1)*2*SlotBlocks;
+    if (g.scratchStartLba!=g.bootStartLba+offset ||
+        g.tailGuardBlocks!=g.bootBlocks-offset-SlotBlocks) return false;
   } else return false;
   return true;
 }
@@ -161,6 +185,20 @@ bool scratchWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uin
       lba < g.scratchStartLba) return false;
   const uint64_t offset = lba - g.scratchStartLba;
   return offset < g.scratchBlocks && blocks <= g.scratchBlocks - offset;
+}
+bool userdataLogsXnuWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uint64_t lba, uint32_t blocks) {
+  uint64_t start=0,slotBlocks=0;
+  if (!userdataLogsXnuRange(g,start,slotBlocks) || !o.identityVerified || !o.candidateVerified ||
+      !o.sourceVerified || !o.gptVerified || !o.scratchMediaReady || o.writeProtected ||
+      !tokenValid(o.token) || strcmp(g.token,o.token) ||
+      memcmp(o.deviceBinding,g.deviceBinding,sizeof g.deviceBinding) ||
+      memcmp(o.candidateSha256,g.candidateSha256,sizeof g.candidateSha256) ||
+      memcmp(o.sourceSha256,g.sourceSha256,sizeof g.sourceSha256) || o.target!=g.target ||
+      o.lun!=g.lun || o.blockBytes!=g.blockBytes || o.capacityBlocks!=g.capacityBlocks ||
+      o.bootStartLba!=g.bootStartLba || o.bootBlocks!=g.bootBlocks ||
+      memcmp(o.partitionGuid,g.partitionGuid,sizeof g.partitionGuid) || !blocks || lba<start) return false;
+  const uint64_t offset=lba-start;
+  return offset<slotBlocks && blocks<=slotBlocks-offset;
 }
 size_t sourceBindingPreimage(const SourceIdentity &id, const uint8_t kernel[32], uint8_t *out, size_t capacity) {
   static constexpr char magic[16] = "DALIUFSSRC1";

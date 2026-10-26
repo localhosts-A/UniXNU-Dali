@@ -30,6 +30,28 @@ class XnuPatchFormatTests(unittest.TestCase):
         declared_new = int(header.group(2) or 1)
         self.assertEqual((old_count, new_count), (declared_old, declared_new))
 
+    def test_msgbuf_snapshot_patch_is_lock_bounded_and_hunk_counts_match(self):
+        lines=(ROOT/'patches/xnu/dali-msgbuf-snapshot.patch').read_text().splitlines()
+        headers=[(index,HUNK.match(line)) for index,line in enumerate(lines) if HUNK.match(line)]
+        self.assertEqual(len(headers),2)
+        for start,header in headers:
+            old_count=new_count=0
+            for line in lines[start+1:]:
+                if line.startswith('@@ ') or line.startswith('diff --git '):break
+                if line.startswith(' '):old_count+=1;new_count+=1
+                elif line.startswith('-') and not line.startswith('---'):old_count+=1
+                elif line.startswith('+') and not line.startswith('+++'):new_count+=1
+            self.assertEqual((old_count,new_count),(int(header.group(1) or 1),int(header.group(2) or 1)))
+        start,header=headers[0];body=[]
+        for line in lines[start+1:]:
+            if line.startswith('@@ ') or line.startswith('diff --git '):break
+            if line.startswith('+') and not line.startswith('+++'):body.append(line[1:])
+        snapshot='\n'.join(body)
+        self.assertIn('dali_msgbuf_snapshot',snapshot)
+        self.assertLess(snapshot.index('bsd_log_lock_safe();'),snapshot.index('memcpy(destination'))
+        self.assertLess(snapshot.index('memcpy(destination'),snapshot.rindex('bsd_log_unlock();'))
+        self.assertNotIn('kalloc',snapshot)
+
 
 class BoardArchiveTests(unittest.TestCase):
     def test_kernel_archive_scripts_are_tree_script_basenames(self):

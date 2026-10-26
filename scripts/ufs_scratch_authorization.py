@@ -14,6 +14,7 @@ from ufs_identity import validate_captured_identity
 from dali_ufs_resources import encode_scratch_grant
 from unattended_layout import boot_image_extent, plan_scratch, verify_original_avb_and_scratch
 from ufs_expdb import validate_expdb_backup
+import ufs_userdata_logs as userdata_logs
 
 
 TOKEN = re.compile(r"[0-9a-f]{32}\Z")
@@ -38,6 +39,75 @@ def source_binding_sha256(manifest):
     identity["kernel_sha256"] = kernel_sha
     canonical = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
     return hashlib.sha256(b"DALI-UFS-SOURCE-V1\0" + canonical).hexdigest()
+
+
+def build_userdata_logs_grant(*, serial, token, sequence, baseline, baseline_dir,
+                              source_manifest, kernel_bytes, candidate_image,
+                              original_boot_b, log_partition_bytes):
+    """Bind one exact 4 MiB owner-slot pair to a fresh measured source-XNU run.
+
+    This validates host evidence and emits an explicit wire schema. Runtime UEFI
+    identity/GPT/provenance checks still have to create the live grant.
+    """
+    if not isinstance(serial, str) or not serial or len(serial) > 128:
+        raise ValueError("invalid device serial")
+    if not isinstance(token, str) or not TOKEN.fullmatch(token):
+        raise ValueError("invalid fresh userdata log token")
+    if type(sequence) is not int or not 0 < sequence <= 4:
+        raise ValueError("userdata log sequence must be in 1..4")
+    if not isinstance(baseline, dict) or baseline.get("serial") != serial:
+        raise ValueError("userdata log baseline belongs to another device")
+    original = Path(original_boot_b).read_bytes()
+    if baseline.get("original_boot_b_sha256") != hashlib.sha256(original).hexdigest():
+        raise ValueError("userdata log baseline does not bind the supplied original boot_b")
+    checked = userdata_logs.validate_baseline_captures(baseline, baseline_dir, original_boot_b)
+    part = userdata_logs.userdata_partition(baseline)
+    snapshot = userdata_logs.validate_partition_snapshot(log_partition_bytes, baseline, sequence)
+    geometry = baseline["geometry"]
+    source_sha = source_binding_sha256(source_manifest)
+    kernel_sha = hashlib.sha256(kernel_bytes).hexdigest()
+    if source_manifest.get("kernel_sha256") != kernel_sha:
+        raise ValueError("source-XNU bytes differ from the exact pinned kernel manifest")
+    if (not isinstance(candidate_image, bytes) or not candidate_image or
+            len(candidate_image) > len(original) or len(candidate_image) < 4096):
+        raise ValueError("userdata log candidate image is outside the original boot_b bound")
+    block = ufs.block_size(geometry["logical_block_bytes"])
+    if block != 4096 or geometry.get("lun") != 2 or geometry.get("capacity_blocks") != 64577536:
+        raise ValueError("Dali userdata log profile requires the verified LUN2 geometry")
+    slot_blocks = userdata_logs.SLOT_BLOCKS
+    relative_pair = (sequence - 1) * 2 * slot_blocks
+    scratch_start = part["first_lba"] + relative_pair
+    scratch_blocks = slot_blocks
+    tail_guard = part["blocks"] - relative_pair - slot_blocks
+    if (tail_guard < 0 or relative_pair + 2 * slot_blocks > part["blocks"] or
+            scratch_start + 2 * slot_blocks > part["first_lba"] + part["blocks"]):
+        raise ValueError("userdata log owner pair exceeds the exact GPT partition")
+    grant = {
+        "profile": "userdata-logs-diagnostic-v1", "target_partition": userdata_logs.PARTITION_NAME,
+        "write_authorized": True, "media_writes": True, "token": token,
+        "device_binding_sha256": checked["device_binding_sha256"],
+        "candidate_sha256": kernel_sha, "source_sha256": source_sha,
+        "partition_guid": userdata_logs.PARTITION_GUID, "lun": 2, "block_bytes": block,
+        "capacity_blocks": geometry["capacity_blocks"], "boot_start_lba": part["first_lba"],
+        "boot_blocks": part["blocks"], "payload_end_bytes": 0,
+        "scratch_start_lba": scratch_start, "scratch_blocks": scratch_blocks,
+        "tail_guard_blocks": tail_guard, "sequence": sequence,
+    }
+    wire = encode_scratch_grant(grant)
+    proposal = {
+        "schema": 1, "kind": "offline-userdata-logs-grant-proposal",
+        "serial": serial, "sequence": sequence, "partition": part,
+        "partition_sha256_before_candidate": snapshot["partition_sha256"],
+        "sequence_pair_sha256_before_candidate": snapshot["sequence_pair_sha256"],
+        "sequence_pair_is_zero": True, "candidate_bytes": len(candidate_image),
+        "candidate_image_sha256": hashlib.sha256(candidate_image).hexdigest(),
+        "kernel_sha256": kernel_sha, "source_sha256": source_sha,
+        "device_binding_sha256": checked["device_binding_sha256"],
+        "wire_sha256": hashlib.sha256(wire).hexdigest(),
+        "device_access_performed": False, "media_writes_qualified": False,
+        "persistence_qualified": False,
+    }
+    return grant, wire, proposal
 
 
 def build_xnu_scratch_grant(*, serial, token, sequence, baseline, baseline_dir, source_manifest, kernel_bytes,

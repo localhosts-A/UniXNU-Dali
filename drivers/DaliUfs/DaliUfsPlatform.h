@@ -17,14 +17,16 @@ constexpr size_t ResourceBytes = sizeof(ResourceWords) + 32;
 // explicit target word appended; never reinterpret a v2 wire by changing LBAs.
 constexpr size_t ScratchGrantWireBytes = 232;
 constexpr size_t ExpdbGrantWireBytes = 236;
+constexpr size_t UserdataLogsGrantWireBytes = 240;
 struct ScratchGrant;
-enum class ScratchTarget : uint32_t { BootB = 0, Expdb = 1 };
+enum class ScratchTarget : uint32_t { BootB = 0, Expdb = 1, UserdataLogs = 2 };
 enum class ScratchMarkerAction : uint8_t { Refuse, WriteMarker, ReadbackOnly };
 enum class ScratchPayloadAction : uint8_t { Refuse, WritePayload, ReadbackOnly };
 bool resourceValid(const void *, size_t);
 bool tokenValid(const char *);
 bool decodeScratchGrant(const void *, size_t, ScratchGrant &);
 bool scratchAbsoluteLba(const ScratchGrant &, uint64_t relativeLba, uint32_t blocks, uint64_t &absoluteLba);
+bool userdataLogsXnuRange(const ScratchGrant &, uint64_t &startLba, uint64_t &blocks);
 bool scratchSequenceLbas(const ScratchGrant &, uint64_t &markerRelativeLba, uint64_t &payloadRelativeLba);
 bool makeScratchAttemptMarker(const char *token, uint64_t sequence, uint32_t blockBytes,
                               const uint8_t payloadDigest[32], uint8_t *bytes);
@@ -73,6 +75,7 @@ struct ScratchObservation {
 
 bool scratchGrantValid(const ScratchGrant &);
 bool scratchWriteAllowed(const ScratchGrant &, const ScratchObservation &, uint64_t lba, uint32_t blocks);
+bool userdataLogsXnuWriteAllowed(const ScratchGrant &, const ScratchObservation &, uint64_t lba, uint32_t blocks);
 
 // Compiled into the running kernel, independently of the ADT grant. No kernel
 // hash here: including it would create a self-hashing build dependency.

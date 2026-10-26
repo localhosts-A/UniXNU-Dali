@@ -89,6 +89,9 @@ class DeviceLease(AbstractContextManager):
             if (type(self.data.get('pending_userdata_layout', False)) is not bool or
                     self.data.get('pending_userdata_layout', False) and self.data['pending_run'] is None):
                 raise cycle.CycleError('invalid userdata layout ledger')
+            if (type(self.data.get('pending_userdata_logs', False)) is not bool or
+                    self.data.get('pending_userdata_logs', False) and self.data['pending_run'] is None):
+                raise cycle.CycleError('invalid userdata logs pending-restoration ledger')
         except BaseException:
             self.__exit__(None, None, None)
             raise
@@ -115,6 +118,14 @@ class DeviceLease(AbstractContextManager):
             raise cycle.CycleError('expdb modification state must be an explicit boolean')
         if expdb:
             state['expdb_restore_verified'] = False
+        userdata_logs = state.get('userdata_logs_may_be_modified', False)
+        if type(userdata_logs) is not bool:
+            raise cycle.CycleError('userdata log modification state must be an explicit boolean')
+        if state.get('kind') == 'dali-userdata-logs-trial' and not userdata_logs:
+            raise cycle.CycleError('userdata log trial must arm its media-restoration ledger before flash')
+        if userdata_logs:
+            state['userdata_logs_capture_verified'] = False
+            state['userdata_logs_android_export_verified'] = False
         state['boot_b_may_be_modified'] = True
         durable_json(run / 'restore-state.json', state)
         self.data['used_tokens'].append(state['token'])
@@ -122,6 +133,7 @@ class DeviceLease(AbstractContextManager):
         # Retain this independently of the caller's restore-state fields. An
         # older boot_b-only recovery must not silently clear a media-write run.
         self.data['pending_expdb'] = expdb
+        self.data['pending_userdata_logs'] = userdata_logs
         durable_json(self.path, self.data)
 
     def restored(self, run, state):
@@ -133,10 +145,22 @@ class DeviceLease(AbstractContextManager):
         if expdb is not False or (self.data.get('pending_expdb', False) and
                 (state.get('expdb_may_be_modified') is not False or state.get('expdb_restore_verified') is not True)):
             raise cycle.CycleError('expdb restoration remains pending; boot_b-only recovery cannot clear it')
+        userdata_logs = state.get('userdata_logs_may_be_modified', False)
+        if state.get('kind') == 'dali-userdata-logs-trial' and self.data.get('pending_userdata_logs') is not True:
+            raise cycle.CycleError('userdata log trial lost its canonical pending-restoration marker')
+        if type(userdata_logs) is not bool or (self.data.get('pending_userdata_logs', False) and
+                (userdata_logs is not False or state.get('userdata_logs_capture_verified') is not True or
+                 state.get('userdata_logs_android_export_verified') is not True)):
+            raise cycle.CycleError('userdata log capture/export remains pending; trial state cannot be cleared')
+        if state.get('kind') == 'dali-userdata-logs-trial' and (
+                userdata_logs is not False or state.get('userdata_logs_capture_verified') is not True or
+                state.get('userdata_logs_android_export_verified') is not True):
+            raise cycle.CycleError('userdata log trial cannot clear before raw capture and Android export verification')
         state['boot_b_may_be_modified'] = False
         durable_json(run / 'restore-state.json', state)
         self.data['pending_run'] = None
         self.data['pending_expdb'] = False
+        self.data['pending_userdata_logs'] = False
         durable_json(self.path, self.data)
 
 
@@ -149,14 +173,17 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     probe = manifest.get('ufs_probe', {})
     if not isinstance(probe, dict):
         raise cycle.CycleError('invalid probe metadata')
-    log_mode = mode == 'expdb-log'
-    xnu_ufs_mode = mode in ('xnu-ufs-read-only','expdb-log')
-    if mode in ('read-only-blockio', 'xnu-ufs-read-only','expdb-log'):
+    userdata_log_mode = mode == 'userdata-log'
+    log_mode = mode in ('expdb-log', 'userdata-log')
+    xnu_ufs_mode = mode in ('xnu-ufs-read-only','expdb-log','userdata-log')
+    if mode in ('read-only-blockio', 'xnu-ufs-read-only','expdb-log','userdata-log'):
         host = manifest.get('ufs_host', {})
         if not isinstance(host, dict):
             raise cycle.CycleError('invalid physical UFS host metadata')
         token = host.get('run_token', '')
-        if (host.get('enabled') is not True or host.get('mode') != ('expdb-log-diagnostic' if log_mode else 'read-only-blockio') or host.get('log_version') != 1 or
+        expected_host_mode = ('userdata-logs-diagnostic' if userdata_log_mode else
+                              'expdb-log-diagnostic' if log_mode else 'read-only-blockio')
+        if (host.get('enabled') is not True or host.get('mode') != expected_host_mode or host.get('log_version') != 1 or
                 host.get('controller_commands') is not True or host.get('mmio_writes') is not True or
                 host.get('media_writes') is not log_mode or host.get('write_authorized') is not False or
                 host.get('physical_storage_qualified') is not False or host.get('host_verified_in_final_fd') is not True or
@@ -232,10 +259,14 @@ def verify_candidate(directory, uefi, unixnu, backup, mode='registers'):
     package_spec.loader.exec_module(package)
     if log_mode:
         record = package.source_record(uefi,unixnu,DEVICE)
-        expected_probe,expected_host,expected_log = package.ufs_expdb_log_metadata(build/'AARCH64',token,
-            directory/'grant.bin',fd=fd,expected_source_record=record)
+        if userdata_log_mode:
+            expected_probe,expected_host,expected_log = package.ufs_userdata_log_metadata(build/'AARCH64',token,
+                directory/'grant.bin',fd=fd,expected_source_record=record)
+        else:
+            expected_probe,expected_host,expected_log = package.ufs_expdb_log_metadata(build/'AARCH64',token,
+                directory/'grant.bin',fd=fd,expected_source_record=record)
         if manifest.get('ufs_log') != expected_log:
-            raise cycle.CycleError('expdb log differs from compiled wire/source/protocol inputs')
+            raise cycle.CycleError('UFS log differs from compiled wire/source/protocol inputs')
     elif mode in ('read-only-blockio', 'xnu-ufs-read-only'):
         expected_probe, expected_host = package.ufs_read_only_metadata(build / 'AARCH64', token, fd=fd)
     else:
