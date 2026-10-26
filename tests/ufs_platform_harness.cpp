@@ -108,6 +108,11 @@ extern "C" void scratch_policy_case(unsigned mode,uint64_t *out){
   memset(o.partitionGuid,4,sizeof o.partitionGuid);o.blockBytes=4096;o.capacityBlocks=64577536;
   o.bootStartLba=418560;o.bootBlocks=16384;
   uint64_t lba=g.scratchStartLba;uint32_t blocks=1;
+  if(mode>=40){
+    g.target=o.target=ScratchTarget::Expdb;
+    g.bootStartLba=o.bootStartLba=2184;g.bootBlocks=o.bootBlocks=32768;
+    g.payloadEndBytes=0;g.scratchStartLba=2440;g.tailGuardBlocks=32256;lba=2440;
+  }
   switch(mode){
     case 1:g.enabled=false;break;
     case 2:g.token[0]='z';break;
@@ -138,6 +143,17 @@ extern "C" void scratch_policy_case(unsigned mode,uint64_t *out){
     case 27:o.scratchMediaReady=false;break;
     case 28:o.candidateVerified=false;break;
     case 29:o.sourceVerified=false;break;
+    case 40:break;
+    case 41:lba=2695;break;
+    case 42:lba=2439;break;
+    case 43:lba=2696;break;
+    case 44:lba=34951;break;
+    case 45:blocks=257;break;
+    case 46:o.target=ScratchTarget::BootB;break;
+    case 47:g.target=ScratchTarget::BootB;break;
+    case 48:g.payloadEndBytes=1;break;
+    case 49:++g.scratchStartLba;--g.tailGuardBlocks;break;
+    case 50:g.target=static_cast<ScratchTarget>(2);break;
     default:break;
   }
   out[0]=scratchGrantValid(g);out[1]=scratchWriteAllowed(g,o,lba,blocks);

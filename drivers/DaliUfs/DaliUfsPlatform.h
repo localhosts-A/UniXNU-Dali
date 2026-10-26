@@ -13,8 +13,12 @@ constexpr uint64_t ResourceWords[] = {
   1, 7, 14, 7
 };
 constexpr size_t ResourceBytes = sizeof(ResourceWords) + 32;
+// v2 is the legacy boot_b schema.  Expdb uses a separate v3 schema with an
+// explicit target word appended; never reinterpret a v2 wire by changing LBAs.
 constexpr size_t ScratchGrantWireBytes = 232;
+constexpr size_t ExpdbGrantWireBytes = 236;
 struct ScratchGrant;
+enum class ScratchTarget : uint32_t { BootB = 0, Expdb = 1 };
 enum class ScratchMarkerAction : uint8_t { Refuse, WriteMarker, ReadbackOnly };
 enum class ScratchPayloadAction : uint8_t { Refuse, WritePayload, ReadbackOnly };
 bool resourceValid(const void *, size_t);
@@ -38,16 +42,19 @@ struct Ops {
 };
 
 // An opt-in, token-bound window for one synthetic scratch BlockIo. The grant is
-// copied from the explicit scratch-grant-v2 ADT property; missing means deny.
+// copied from scratch-grant-v2 (boot_b) or scratch-grant-v3 (expdb); missing
+// means deny. bootStartLba/bootBlocks name the selected partition in both modes.
 struct ScratchGrant {
   bool enabled = false;
   char token[33]{};
   // candidateSha256 names the exact source-XNU kernel payload; the final boot
   // image digest is sealed separately by the host lease to avoid self-hashing.
   uint8_t deviceBinding[32]{}, candidateSha256[32]{}, sourceSha256[32]{};
+  ScratchTarget target = ScratchTarget::BootB;
   uint8_t partitionGuid[16]{};
   uint8_t lun = 0;
   uint32_t blockBytes = 0;
+  // payloadEndBytes is the boot image extent only for boot_b, zero for expdb.
   uint64_t capacityBlocks = 0, bootStartLba = 0, bootBlocks = 0, payloadEndBytes = 0, sequence = 0;
   uint64_t scratchStartLba = 0, scratchBlocks = 0, tailGuardBlocks = 0;
 };
@@ -57,6 +64,7 @@ struct ScratchObservation {
   bool candidateVerified = false, sourceVerified = false;
   char token[33]{};
   uint8_t deviceBinding[32]{}, candidateSha256[32]{}, sourceSha256[32]{};
+  ScratchTarget target = ScratchTarget::BootB;
   uint8_t lun = 0;
   uint8_t partitionGuid[16]{};
   uint32_t blockBytes = 0;

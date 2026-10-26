@@ -130,7 +130,7 @@ def main():
     parser.add_argument("--ramdisk", action="store_true", help="zero RAMDisk slot for DarwinBoot to fill")
     parser.add_argument("--trust-cache", action="store_true", help="zero TrustCache slot for the explicit own test input")
     parser.add_argument("--ufs-readonly", action="store_true", help="validate and include the optional physical UFS nub")
-    parser.add_argument("--ufs-scratch-grant", type=Path, help="explicit private grant JSON for a boot_b scratch-write test")
+    parser.add_argument("--ufs-scratch-grant", type=Path, help="explicit private grant JSON for a bounded scratch-write test")
     parser.add_argument("--run-token", help="fresh run token; must match the explicit scratch grant")
     args = parser.parse_args()
     if args.fdt is None:
@@ -147,6 +147,7 @@ def main():
         if bool(args.ufs_scratch_grant) != (scratch_mode == "true"):
             raise ValueError("scratch-write mode requires exactly one explicit grant JSON")
         scratch_grant = None
+        scratch_property = None
         if args.ufs_scratch_grant:
             if not (args.ufs_readonly or ufs_mode == "true") or not args.run_token:
                 raise ValueError("scratch grant requires the physical UFS node and the matching run token")
@@ -156,6 +157,7 @@ def main():
             if not isinstance(document, dict) or document.get("token") != args.run_token:
                 raise ValueError("scratch grant token differs from the candidate run token")
             scratch_grant = encode_scratch_grant(document)
+            scratch_property = 'scratch-grant-v3' if document['profile'] == 'expdb-scratch-write-test-v1' else 'scratch-grant-v2'
         ufs_resources = resource_contract(tree, raw_fdt) if args.ufs_readonly or ufs_mode == "true" else None
         root = tree.nodes.get("/", {})
         if b"mediatek,MT6991" not in tree.string_list("/", "compatible"):
@@ -250,7 +252,7 @@ def main():
         ], [intc, boot_log, *([apple_node("dali-ufs", [
             ("compatible", b"localhosts,dali-ufs\0"),
             ("resources-v1", ufs_resources),
-            *([("scratch-grant-v2", scratch_grant)] if scratch_grant is not None else []),
+            *([(scratch_property, scratch_grant)] if scratch_grant is not None else []),
         ])] if ufs_resources is not None else [])]),
         apple_node("defaults", [("sleep-disabled", struct.pack("<I", 1))]),
         apple_node("options"),

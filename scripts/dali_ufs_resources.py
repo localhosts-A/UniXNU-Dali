@@ -20,6 +20,7 @@ RESOURCE_WORDS = (0x31534655494c4144, 1, 0x16810000, 0x2a00, 0x168a0000, 0x1000,
                   0x16800000, 0x10000, 0x10000000, 0x800, 0, 0x1000000000, 1, 7, 14, 7)
 SCRATCH_GRANT_MAGIC = b'DALIUFSW'
 SCRATCH_GRANT_BYTES = 232
+EXPDB_GRANT_BYTES = 236
 
 
 def resource_contract(tree, raw_fdt):
@@ -118,8 +119,14 @@ def encode_scratch_grant(document):
             raise ValueError('scratch grant is not valid JSON') from None
     if not isinstance(document, dict):
         raise ValueError('scratch grant must be a JSON object')
-    if document.get('profile') != 'boot-b-scratch-write-test-v1' or document.get('write_authorized') is not True:
-        raise ValueError('scratch grant is not explicitly authorized for the boot_b test profile')
+    profile = document.get('profile')
+    expdb = profile == 'expdb-scratch-write-test-v1'
+    if profile not in ('boot-b-scratch-write-test-v1', 'expdb-scratch-write-test-v1') or document.get('write_authorized') is not True:
+        raise ValueError('scratch grant is not explicitly authorized for a supported test profile')
+    if expdb and document.get('target_partition') != 'expdb':
+        raise ValueError('expdb grant requires an explicit expdb target')
+    if not expdb and document.get('target_partition', 'boot_b') != 'boot_b':
+        raise ValueError('legacy boot_b grant cannot select another partition')
     if document.get('media_writes') is not True:
         raise ValueError('scratch grant must explicitly enable media writes')
 
@@ -169,31 +176,37 @@ def encode_scratch_grant(document):
     capacity = integer('capacity_blocks', positive=True)
     boot_start = integer('boot_start_lba')
     boot_blocks = integer('boot_blocks', positive=True)
-    payload_end = integer('payload_end_bytes', positive=True)
+    payload_end = integer('payload_end_bytes', positive=not expdb)
     scratch_start = integer('scratch_start_lba')
     scratch_blocks = integer('scratch_blocks', positive=True)
     tail_blocks = integer('tail_guard_blocks', positive=True)
     sequence = integer('sequence', positive=True)
     if lun >= 8 or block_bytes < 512 or block_bytes > 65536 or block_bytes & (block_bytes - 1):
         raise ValueError('unsupported scratch grant LUN or block size')
-    if (1024 * 1024) % block_bytes or scratch_blocks != (1024 * 1024) // block_bytes or tail_blocks != scratch_blocks:
-        raise ValueError('scratch and tail guard must each be exactly 1 MiB')
+    if (1024 * 1024) % block_bytes or scratch_blocks != (1024 * 1024) // block_bytes:
+        raise ValueError('scratch must be exactly 1 MiB')
+    if not expdb and tail_blocks != scratch_blocks:
+        raise ValueError('boot_b tail guard must be exactly 1 MiB')
     if boot_start >= capacity or boot_blocks > capacity - boot_start or boot_blocks > ((1 << 64) - 1) // block_bytes:
-        raise ValueError('scratch grant boot_b range exceeds the LU')
+        raise ValueError('scratch grant partition range exceeds the LU')
     boot_end = boot_start + boot_blocks
     if (scratch_start < boot_start or scratch_start > boot_end or scratch_blocks > boot_end - scratch_start or
             sequence > scratch_blocks // 2):
         raise ValueError('scratch grant exceeds the two-block-per-sequence scratch window')
     if tail_blocks != boot_end - scratch_start - scratch_blocks:
-        raise ValueError('scratch grant tail guard does not end at boot_b boundary')
+        raise ValueError('scratch grant tail guard does not end at the partition boundary')
     relative = scratch_start - boot_start
-    if relative > ((1 << 64) - 1) // block_bytes or relative * block_bytes < payload_end:
+    if relative > ((1 << 64) - 1) // block_bytes or payload_end > boot_blocks * block_bytes or relative * block_bytes < payload_end:
         raise ValueError('scratch grant overlaps payload or overflows')
+    if expdb and (payload_end != 0 or relative != scratch_blocks or tail_blocks < 4 * scratch_blocks):
+        raise ValueError('expdb requires a 1 MiB head guard, a 1 MiB window and at least 4 MiB remaining guard')
 
-    wire = struct.pack('<8sII32s32s32s32s16sIIQQQQQQQQ', SCRATCH_GRANT_MAGIC, 2, 1,
+    wire = struct.pack('<8sII32s32s32s32s16sIIQQQQQQQQ', SCRATCH_GRANT_MAGIC, 3 if expdb else 2, 2 if expdb else 1,
                        token.encode('ascii'), device, candidate, source, guid.bytes,
                        lun, block_bytes, capacity, boot_start, boot_blocks, payload_end,
                        scratch_start, scratch_blocks, tail_blocks, sequence)
-    if len(wire) != SCRATCH_GRANT_BYTES:
+    if expdb:
+        wire += struct.pack('<I', 1)
+    if len(wire) != (EXPDB_GRANT_BYTES if expdb else SCRATCH_GRANT_BYTES):
         raise AssertionError('scratch-grant wire size changed')
     return wire

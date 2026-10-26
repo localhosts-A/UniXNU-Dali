@@ -30,8 +30,11 @@ static void store64(uint8_t *p, uint64_t value) {
 bool decodeScratchGrant(const void *data, size_t bytes, ScratchGrant &g) {
   static const uint8_t magic[8] = {'D','A','L','I','U','F','S','W'};
   const auto p = static_cast<const uint8_t *>(data);
-  if (!p || bytes != ScratchGrantWireBytes || memcmp(p, magic, sizeof magic) ||
-      little32(p + 8) != 2 || little32(p + 12) != 1) return false;
+  if (!p || (bytes != ScratchGrantWireBytes && bytes != ExpdbGrantWireBytes) ||
+      memcmp(p, magic, sizeof magic)) return false;
+  const uint32_t version = little32(p + 8), flags = little32(p + 12);
+  if ((bytes == ScratchGrantWireBytes && (version != 2 || flags != 1)) ||
+      (bytes == ExpdbGrantWireBytes && (version != 3 || flags != 2))) return false;
   ScratchGrant candidate{};
   candidate.enabled = true;
   memcpy(candidate.token, p + 16, 32); candidate.token[32] = 0;
@@ -51,6 +54,10 @@ bool decodeScratchGrant(const void *data, size_t bytes, ScratchGrant &g) {
   candidate.scratchBlocks = little64(p + 208);
   candidate.tailGuardBlocks = little64(p + 216);
   candidate.sequence = little64(p + 224);
+  if (bytes == ExpdbGrantWireBytes) {
+    if (little32(p + 232) != static_cast<uint32_t>(ScratchTarget::Expdb)) return false;
+    candidate.target = ScratchTarget::Expdb;
+  }
   if (!scratchGrantValid(candidate)) return false;
   g = candidate;
   return true;
@@ -114,21 +121,31 @@ bool scratchGrantValid(const ScratchGrant &g) {
       !nonzero(g.sourceSha256, sizeof g.sourceSha256) || !g.sequence ||
       !nonzero(g.partitionGuid, sizeof g.partitionGuid)) return false;
   if (g.blockBytes < 512 || g.blockBytes > 65536 || (g.blockBytes & (g.blockBytes - 1)) ||
-      ScratchBytes % g.blockBytes || !g.capacityBlocks || !g.bootBlocks || !g.payloadEndBytes) return false;
+      ScratchBytes % g.blockBytes || !g.capacityBlocks || !g.bootBlocks) return false;
   if (g.bootBlocks > UINT64_MAX / g.blockBytes) return false;
   const uint64_t bootBytes = g.bootBlocks * g.blockBytes;
   if (g.payloadEndBytes > bootBytes || g.bootStartLba >= g.capacityBlocks ||
       g.bootBlocks > g.capacityBlocks - g.bootStartLba) return false;
   const uint64_t expectedWindowBlocks = ScratchBytes / g.blockBytes;
-  if (g.scratchBlocks != expectedWindowBlocks || g.tailGuardBlocks != expectedWindowBlocks ||
-      g.sequence > g.scratchBlocks / 2 ||
+  if (g.scratchBlocks != expectedWindowBlocks || g.sequence > g.scratchBlocks / 2 ||
       g.scratchStartLba < g.bootStartLba) return false;
   const uint64_t bootEndLba = g.bootStartLba + g.bootBlocks;
   const uint64_t scratchOffsetBlocks = g.scratchStartLba - g.bootStartLba;
-  if (scratchOffsetBlocks > UINT64_MAX / g.blockBytes ||
-      scratchOffsetBlocks * g.blockBytes < g.payloadEndBytes ||
-      g.scratchStartLba > bootEndLba || g.scratchBlocks > bootEndLba - g.scratchStartLba ||
-      g.tailGuardBlocks != bootEndLba - g.scratchStartLba - g.scratchBlocks) return false;
+  if (scratchOffsetBlocks > UINT64_MAX / g.blockBytes || g.scratchStartLba > bootEndLba ||
+      g.scratchBlocks > bootEndLba - g.scratchStartLba) return false;
+  if (g.target == ScratchTarget::BootB) {
+    if (!g.payloadEndBytes || g.tailGuardBlocks != expectedWindowBlocks ||
+        scratchOffsetBlocks * g.blockBytes < g.payloadEndBytes ||
+        g.tailGuardBlocks != bootEndLba - g.scratchStartLba - g.scratchBlocks) return false;
+  } else if (g.target == ScratchTarget::Expdb) {
+    // Expdb is an independent partition. It has no candidate payload extent;
+    // the remainder after the fixed 1 MiB window is the guard and must retain
+    // the complete vendor log area.
+    const uint64_t minimumGuard = (4 * ScratchBytes) / g.blockBytes;
+    if (g.payloadEndBytes != 0 || scratchOffsetBlocks != expectedWindowBlocks ||
+        g.tailGuardBlocks != bootEndLba - g.scratchStartLba - g.scratchBlocks ||
+        g.tailGuardBlocks < minimumGuard) return false;
+  } else return false;
   return true;
 }
 bool scratchWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uint64_t lba, uint32_t blocks) {
@@ -137,7 +154,7 @@ bool scratchWriteAllowed(const ScratchGrant &g, const ScratchObservation &o, uin
       !tokenValid(o.token) || strcmp(g.token, o.token) ||
       memcmp(o.deviceBinding, g.deviceBinding, sizeof g.deviceBinding) ||
       memcmp(o.candidateSha256, g.candidateSha256, sizeof g.candidateSha256) ||
-      memcmp(o.sourceSha256, g.sourceSha256, sizeof g.sourceSha256) ||
+      memcmp(o.sourceSha256, g.sourceSha256, sizeof g.sourceSha256) || o.target != g.target ||
       o.lun != g.lun || o.blockBytes != g.blockBytes || o.capacityBlocks != g.capacityBlocks ||
       o.bootStartLba != g.bootStartLba || o.bootBlocks != g.bootBlocks ||
       memcmp(o.partitionGuid, g.partitionGuid, sizeof g.partitionGuid) || !blocks ||

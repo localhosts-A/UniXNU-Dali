@@ -164,3 +164,32 @@ class ResourceTests(unittest.TestCase):
                 self.assertNotEqual(subprocess.run(command,env=bad_env,capture_output=True).returncode,0)
             wrong=command.copy();wrong[-1]='ffffffffffffffffffffffffffffffff'
             self.assertNotEqual(subprocess.run(wrong,env=env,capture_output=True).returncode,0)
+
+    def test_expdb_schema_and_adt_property_cannot_be_confused_with_boot_b(self):
+        value = scratch_grant(profile='expdb-scratch-write-test-v1', target_partition='expdb',
+                              partition_guid='00000003-39c2-4488-9bb0-00cb43c9ccd4',
+                              boot_start_lba=2184, boot_blocks=32768, payload_end_bytes=0,
+                              scratch_start_lba=2440, tail_guard_blocks=32256)
+        wire = encode_scratch_grant(value)
+        self.assertEqual((len(wire), wire[:16], wire[232:]),
+                         (236, b'DALIUFSW'+struct.pack('<II',3,2), struct.pack('<I',1)))
+        for change in ({'target_partition':'boot_b'}, {'target_partition':None}, {'payload_end_bytes':1},
+                       {'scratch_start_lba':2441,'tail_guard_blocks':32255}, {'boot_blocks':1024},
+                       {'tail_guard_blocks':256}, {'profile':'boot-b-scratch-write-test-v1'}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                encode_scratch_grant(dict(value, **change))
+        for block in (512, 4096, 65536):
+            blocks = 1024*1024//block
+            shape = dict(value, block_bytes=block, boot_start_lba=1024, boot_blocks=128*blocks,
+                         scratch_start_lba=1024+blocks, scratch_blocks=blocks, tail_guard_blocks=126*blocks)
+            self.assertEqual(len(encode_scratch_grant(shape)), 236)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'fdt';output=root/'adt';grant=root/'grant.json'
+            source.write_bytes(dtb(fixture()));grant.write_text(json.dumps(value))
+            command=[sys.executable,str(SCRIPTS/'make-dali-adt.py'),'--fdt',str(source),'--dram-size','0x300000000',
+                     '--output',str(output),'--ufs-scratch-grant',str(grant),'--run-token',value['token']]
+            env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='true',DALI_XNU_UFS_SCRATCH_WRITE='true')
+            subprocess.run(command,env=env,check=True,capture_output=True)
+            self.assertIn(b'scratch-grant-v3\0', output.read_bytes())
+            self.assertNotIn(b'scratch-grant-v2\0', output.read_bytes())
+            self.assertIn(wire, output.read_bytes())

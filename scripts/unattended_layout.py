@@ -23,8 +23,8 @@ def aligned(value):
     return (value + PAGE - 1) // PAGE * PAGE
 
 
-def plan_scratch(image, partition_bytes):
-    """Fail closed on unsupported metadata and return byte ranges, not LBAs."""
+def boot_image_extent(image, partition_bytes):
+    """Validate the candidate container independently of any scratch target."""
     if type(partition_bytes) is not int or partition_bytes <= 0 or partition_bytes % PAGE:
         raise ValueError("partition size must be a positive 4096-byte multiple")
     if len(image) < PAGE or len(image) > partition_bytes or len(image) % PAGE:
@@ -49,6 +49,12 @@ def plan_scratch(image, partition_bytes):
     # Reject any other metadata instead of treating an apparently empty tail as free.
     if any(image[PAGE + kernel_size:]):
         raise ValueError("unrecognized data outside the declared kernel payload")
+    return payload_end
+
+
+def plan_scratch(image, partition_bytes):
+    """Fail closed on unsupported metadata and return byte ranges, not LBAs."""
+    payload_end = boot_image_extent(image, partition_bytes)
     scratch_start = partition_bytes - TAIL_GUARD_BYTES - SCRATCH_BYTES
     if scratch_start < payload_end:
         raise ValueError("boot payload overlaps the proposed scratch reservation")

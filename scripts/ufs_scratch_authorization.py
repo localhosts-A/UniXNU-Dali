@@ -12,7 +12,8 @@ import uuid
 import ufs_geometry as ufs
 from ufs_identity import validate_captured_identity
 from dali_ufs_resources import encode_scratch_grant
-from unattended_layout import plan_scratch, verify_original_avb_and_scratch
+from unattended_layout import boot_image_extent, plan_scratch, verify_original_avb_and_scratch
+from ufs_expdb import validate_expdb_backup
 
 
 TOKEN = re.compile(r"[0-9a-f]{32}\Z")
@@ -40,7 +41,8 @@ def source_binding_sha256(manifest):
 
 
 def build_xnu_scratch_grant(*, serial, token, sequence, baseline, baseline_dir, source_manifest, kernel_bytes,
-                            candidate_image, original_boot_b):
+                            candidate_image, original_boot_b, target_partition="boot_b",
+                            expdb_baseline=None, expdb_dir=None):
     """Validate offline inputs, then return grant/wire/proposal bound to one XNU token.
 
     ``candidate_sha256`` intentionally names the exact source-XNU kernel payload:
@@ -55,6 +57,8 @@ def build_xnu_scratch_grant(*, serial, token, sequence, baseline, baseline_dir, 
         raise ValueError("invalid fresh scratch run token")
     if type(sequence) is not int or sequence <= 0:
         raise ValueError("scratch sequence must be a positive integer")
+    if target_partition not in ("boot_b", "expdb"):
+        raise ValueError("unsupported scratch target partition")
     if not isinstance(baseline, dict) or baseline.get("kind") != "dali-ufs-android-read-only-baseline":
         raise ValueError("verified Android UFS baseline is required")
     if (baseline.get("serial") != serial or baseline.get("all_partition_hashes_match") is not True or
@@ -93,7 +97,6 @@ def build_xnu_scratch_grant(*, serial, token, sequence, baseline, baseline_dir, 
     try:
         if not isinstance(guid, str) or str(uuid.UUID(guid)) != guid:
             raise ValueError
-        raw_guid = uuid.UUID(guid).bytes
     except (ValueError, AttributeError):
         raise ValueError("baseline boot_b GUID is invalid") from None
     gpt = baseline.get("gpt")
@@ -114,11 +117,24 @@ def build_xnu_scratch_grant(*, serial, token, sequence, baseline, baseline_dir, 
     if source_manifest.get("kernel_sha256") != kernel_sha:
         raise ValueError("XNU kernel bytes differ from the pinned source manifest")
 
-    proposal = plan_scratch(candidate_image, len(original))
-    avb = verify_original_avb_and_scratch(original_boot_b, len(original), proposal["scratch"])
-    if (avb.get("scratch_disjoint") is not True or avb.get("scratch_was_zero_in_original") is not True or
-            avb.get("tail_guard_covers_footer") is not True or not avb.get("tail_guard_only_footer_data")):
-        raise ValueError("original boot_b AVB/scratch layout is not safe for a scratch test")
+    if target_partition == "expdb":
+        boot_payload_end = boot_image_extent(candidate_image, len(original))
+        verified_expdb = validate_expdb_backup(expdb_baseline, expdb_dir, serial=serial,
+                                             geometry=geometry, reference_gpt=gpt, original_boot_sha=original_sha)
+        part = verified_expdb["partition"]
+        proposal = dict(verified_expdb, schema=1, kind="offline-expdb-scratch-proposal",
+                        candidate_bytes=len(candidate_image), candidate_sha256=hashlib.sha256(candidate_image).hexdigest(),
+                        boot_payload_end_bytes=boot_payload_end, device_access_performed=False,
+                        media_writes_qualified=False)
+        avb = None  # Candidate is in boot_b; expdb has no boot-image extent.
+    else:
+        if expdb_baseline is not None or expdb_dir is not None:
+            raise ValueError("expdb evidence cannot be attached to a legacy boot_b grant")
+        proposal = plan_scratch(candidate_image, len(original))
+        avb = verify_original_avb_and_scratch(original_boot_b, len(original), proposal["scratch"])
+        if (avb.get("scratch_disjoint") is not True or avb.get("scratch_was_zero_in_original") is not True or
+                avb.get("tail_guard_covers_footer") is not True or not avb.get("tail_guard_only_footer_data")):
+            raise ValueError("original boot_b AVB/scratch layout is not safe for a scratch test")
 
     logical = block_bytes
     offset = proposal["scratch"]["offset_bytes"]
@@ -129,17 +145,21 @@ def build_xnu_scratch_grant(*, serial, token, sequence, baseline, baseline_dir, 
     scratch_blocks = length // logical
     tail_guard_blocks = proposal["scratch"]["tail_guard_bytes"] // logical
     boot_blocks = part["blocks"]
-    payload_end = proposal["boot_payload_end_bytes"]
+    payload_end = 0 if target_partition == "expdb" else proposal["boot_payload_end_bytes"]
     grant = {
-        "profile": "boot-b-scratch-write-test-v1", "write_authorized": True, "media_writes": True,
+        "profile": "expdb-scratch-write-test-v1" if target_partition == "expdb" else "boot-b-scratch-write-test-v1",
+        "target_partition": target_partition, "write_authorized": True, "media_writes": True,
         "token": token, "device_binding_sha256": device_binding,
         "candidate_sha256": kernel_sha, "source_sha256": source_sha,
-        "partition_guid": str(uuid.UUID(bytes=raw_guid)), "lun": lun,
+        "partition_guid": str(uuid.UUID(part["guid"])), "lun": lun,
         "block_bytes": logical, "capacity_blocks": capacity_blocks,
         "boot_start_lba": part["first_lba"], "boot_blocks": boot_blocks,
         "payload_end_bytes": payload_end, "scratch_start_lba": scratch_start,
         "scratch_blocks": scratch_blocks, "tail_guard_blocks": tail_guard_blocks,
         "sequence": sequence,
     }
+    if target_partition == "expdb":
+        grant["original_partition_sha256"] = proposal["original_partition_sha256"]
+        grant["original_scratch_sha256"] = proposal["original_scratch_sha256"]
     wire = encode_scratch_grant(grant)
     return grant, wire, dict(proposal, original_avb=avb)

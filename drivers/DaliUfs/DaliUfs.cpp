@@ -74,7 +74,7 @@ class DaliUfs : public IOService {
   bool initialize();
   bool diagnose();
   void partitions(uint8_t, IORegistryEntry *, unsigned depth, unsigned &count, bool &bootSample);
-  IOMedia *findBootB(IORegistryEntry *, unsigned depth, unsigned &count);
+  IOMedia *findScratchPartition(IORegistryEntry *, unsigned depth, unsigned &count, const char *name);
   bool publishScratch(uint8_t, IOMedia *whole);
   bool testScratchRecord(uint8_t, IOMedia *);
   bool quiesce(bool requireSync = false);
@@ -316,6 +316,7 @@ bool DaliUfs::initialize() {
       bzero(digest, sizeof digest); record("identity-mismatch"); return false;
     }
     memcpy(scratchObservation_.token, token_, sizeof scratchObservation_.token);
+    scratchObservation_.target = scratchGrant_.target;
     memcpy(scratchObservation_.deviceBinding, digest, sizeof digest);
     scratchObservation_.identityVerified = true;
     bzero(digest, sizeof digest);
@@ -432,7 +433,7 @@ void DaliUfs::partitions(uint8_t lun, IORegistryEntry *root, unsigned depth, uns
   }
   entries->release();
 }
-IOMedia *DaliUfs::findBootB(IORegistryEntry *root, unsigned depth, unsigned &count) {
+IOMedia *DaliUfs::findScratchPartition(IORegistryEntry *root, unsigned depth, unsigned &count, const char *name) {
   if (!root || depth > 8 || count >= 512) return nullptr;
   auto entries = root->getChildIterator(gIOServicePlane); if (!entries) return nullptr;
   IOMedia *found = nullptr;
@@ -440,10 +441,10 @@ IOMedia *DaliUfs::findBootB(IORegistryEntry *root, unsigned depth, unsigned &cou
     if (++count > 512) break;
     auto entry = OSDynamicCast(IORegistryEntry, object); if (!entry) continue;
     auto media = OSDynamicCast(IOMedia, entry);
-    if (media && !media->isWhole() && strcmp(media->getName(), "boot_b") == 0) {
+    if (media && !media->isWhole() && name && strcmp(media->getName(), name) == 0) {
       media->retain(); found = media; break;
     }
-    found = findBootB(entry, depth + 1, count);
+    found = findScratchPartition(entry, depth + 1, count, name);
     if (found) break;
   }
   entries->release(); return found;
@@ -462,11 +463,12 @@ bool DaliUfs::publishScratch(uint8_t lun, IOMedia *whole) {
     record("scratch-observation-refused", lun); return false;
   }
   IOMedia *boot = nullptr;
+  const char *partitionName = scratchGrant_.target == dali_ufs::ScratchTarget::Expdb ? "expdb" : "boot_b";
   for (unsigned attempt = 0; attempt < 500 && !boot; ++attempt) {
-    unsigned count = 0; boot = findBootB(whole, 0, count);
+    unsigned count = 0; boot = findScratchPartition(whole, 0, count, partitionName);
     if (!boot) IOSleep(10);
   }
-  if (!boot) { record("scratch-boot-b-missing", lun); return false; }
+  if (!boot) { record("scratch-partition-missing", lun); return false; }
   bool valid = false; uint8_t guid[16] = {};
   dali_ufs::ScratchObservation verified{};
   auto uuid = OSDynamicCast(OSString, boot->getProperty(kIOMediaUUIDKey));
@@ -628,7 +630,8 @@ bool DaliUfs::testScratchRecord(uint8_t lun, IOMedia *media) {
     if (!daliUfsMakeScratchExpected(token_, scratchGrant_, expected, marker, expectedDigest)) {
       record("scratch-record-build-failed", lun, scratchGrant_.sequence); return false;
     }
-    if (!media->open(this, 0, kIOStorageAccessReaderWriter)) { record("scratch-open-failed", lun); return false; }
+    const auto access = scratchChild_->writeEnabled() ? kIOStorageAccessReaderWriter : kIOStorageAccessReader;
+    if (!media->open(this, 0, access)) { record("scratch-open-failed", lun); return false; }
     opened = true;
     auto readBlock = [&](uint64_t offset, const char *stage) -> bool {
       uint64_t actual = 0; IOReturn status = media->read(this, offset, data, nullptr, &actual);
@@ -820,8 +823,14 @@ bool DaliUfs::start(IOService *provider) {
   if (!resource || !dali_ufs::resourceValid(resource->getBytesNoCopy(), resource->getLength())) { if (node) node->release(); return false; }
   memcpy(resources_, resource->getBytesNoCopy(), sizeof resources_);
   if (scratchArg) {
-    auto grant = OSDynamicCast(OSData, node->getProperty("scratch-grant-v2"));
+    // Reject two grants and cross-version property/wire combinations. The
+    // selected partition must be explicit before the first controller access.
+    auto legacyProperty = node->getProperty("scratch-grant-v2");
+    auto expdbProperty = node->getProperty("scratch-grant-v3");
+    if ((!legacyProperty && !expdbProperty) || (legacyProperty && expdbProperty)) { node->release(); return false; }
+    auto grant = OSDynamicCast(OSData, expdbProperty ? expdbProperty : legacyProperty);
     if (!grant || !dali_ufs::decodeScratchGrant(grant->getBytesNoCopy(), grant->getLength(), scratchGrant_) ||
+        (expdbProperty ? scratchGrant_.target != dali_ufs::ScratchTarget::Expdb : scratchGrant_.target != dali_ufs::ScratchTarget::BootB) ||
         strcmp(scratchGrant_.token, token_)) { node->release(); return false; }
     scratchWriteMode_ = true;
   }
