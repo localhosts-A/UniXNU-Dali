@@ -84,6 +84,8 @@ def toolchain_identity():
         ["sw_vers"], ["uname", "-m"], ["xcodebuild", "-version"],
         ["xcrun", "--sdk", "iphoneos", "--show-sdk-version"],
         ["xcrun", "--sdk", "iphoneos", "--show-sdk-build-version"],
+        ["xcrun", "--sdk", "macosx", "--show-sdk-version"],
+        ["xcrun", "--sdk", "macosx", "--show-sdk-build-version"],
         ["xcrun", "--sdk", "iphoneos", "clang", "--version"],
         ["clang", "--version"], ["ld.lld", "--version"], ["llvm-ar", "--version"],
         ["make", "--version"], ["cmake", "--version"], ["ninja", "--version"],

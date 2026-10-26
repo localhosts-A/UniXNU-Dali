@@ -114,7 +114,10 @@ IOHIDFamily-1035.41.2 Apple usage table at commit
 `12d918c6280fcd5e8312e4fb47b4e0e9c48a0fac`, scoped inside a private C++ namespace
 only for the existing NXEvent wrapper. It preserves event construction and
 dispatch, and does not enable general Apple vendor report parsing. The complete
-family archive, child compilation, kernel link and runtime still require a pass.
+family archive now compiles in Action 40280750435 (SHA-256
+`294b427c33c3d2dcb75bf339bf2209882620312a5da3bfdb30236ed4c2de1b63`).
+The subsequent msdosfs build stopped on a missing SDK include; child
+compilation, kernel link and runtime still require a pass.
 
 `DaliUsbHid` is a concrete source `IOHIDDevice` child. It snapshots the USB
 interface identity, supplies descriptors matching the forced Boot protocol,
