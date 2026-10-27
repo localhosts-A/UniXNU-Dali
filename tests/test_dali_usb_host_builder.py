@@ -137,11 +137,14 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
                          "usb_xhci_control_submit", "usb_xhci_control_event",
                          "usb_xhci_control_finish", "usb_xhci_control_release_stopped",
                          "usb_xhci_controller_command", "usb_xhci_device_prepare",
+                         "usb_xhci_root_port_get_status", "usb_xhci_root_port_ack_changes",
                          "usb_xhci_device_address", "usb_xhci_device_configure_hub",
                          "usb_xhci_device_control", "usb_xhci_device_disable",
                          "usb_xhci_device_release_stopped",
                          "usb_xhci_host_adapter_init", "usb_xhci_host_adapter_get_ops",
                          "usb_xhci_host_adapter_reset_root_port",
+                         "usb_xhci_host_adapter_root_port_get_status",
+                         "usb_xhci_host_adapter_root_port_ack_changes",
                          "usb_xhci_host_adapter_next_event",
                          "usb_xhci_host_adapter_release_stopped"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))
