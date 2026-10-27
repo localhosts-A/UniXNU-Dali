@@ -85,6 +85,11 @@ class IpadosProfileTests(unittest.TestCase):
             },
             {
                 "bundle": "com.apple.iokit.IOStorageFamily",
+                "donor_va": "0xfffffff0059795b8",
+                "symbol": "__ZNK16IOMediaBSDClient11getProviderEv",
+            },
+            {
+                "bundle": "com.apple.iokit.IOStorageFamily",
                 "donor_va": "0xfffffff00597c344",
                 "symbol": "__ZN17IOPartitionSchemeD2Ev",
             },

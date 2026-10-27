@@ -17,6 +17,7 @@ class PrelinkQemuTests(unittest.TestCase):
     STORAGE_SYNCHRONIZE_SYMBOL = '__ZN7IOMedia11synchronizeEP9IOServiceyyj'
     BLOCK_STORAGE_PROPERTY_SYMBOL = '__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol'
     IOMEDIA_D2_SYMBOL = '__ZN7IOMediaD2Ev'
+    IOMEDIA_BSD_CLIENT_PROVIDER_SYMBOL = '__ZNK16IOMediaBSDClient11getProviderEv'
     PARTITION_SCHEME_D2_SYMBOL = '__ZN17IOPartitionSchemeD2Ev'
 
     def test_prelink_qemu_captures_security_kext_panic_path(self):
@@ -91,6 +92,13 @@ class PrelinkQemuTests(unittest.TestCase):
                     },
                     {
                         "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff0059795b8,
+                        "symbol": self.IOMEDIA_BSD_CLIENT_PROVIDER_SYMBOL,
+                        "native_va": 0xfffffff00bf9fe10,
+                        "reference_count": 2,
+                    },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
                         "donor_va": 0xfffffff00597c344,
                         "symbol": self.PARTITION_SCHEME_D2_SYMBOL,
                         "native_va": 0xfffffff00bfa2e38,
@@ -121,6 +129,16 @@ class PrelinkQemuTests(unittest.TestCase):
                     {
                         "target": 0xfffffff00597c344,
                         "new_target": 0xfffffff00bfa2e38,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff0059795b8,
+                        "new_target": 0xfffffff00bf9fe10,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff0059795b8,
+                        "new_target": 0xfffffff00bf9fe10,
                         "kind": "source_interface",
                     },
                 ],
@@ -187,6 +205,13 @@ class PrelinkQemuTests(unittest.TestCase):
                     },
                     {
                         "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff0059795b8,
+                        "symbol": self.IOMEDIA_BSD_CLIENT_PROVIDER_SYMBOL,
+                        "native_va": 0xfffffff00bf9fe10,
+                        "reference_count": 2,
+                    },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
                         "donor_va": 0xfffffff00597c344,
                         "symbol": self.PARTITION_SCHEME_D2_SYMBOL,
                         "native_va": 0xfffffff00bfa2e38,
@@ -217,6 +242,16 @@ class PrelinkQemuTests(unittest.TestCase):
                     {
                         "target": 0xfffffff00597c344,
                         "new_target": 0xfffffff00bfa2e38,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff0059795b8,
+                        "new_target": 0xfffffff00bf9fe10,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff0059795b8,
+                        "new_target": 0xfffffff00bf9fe10,
                         "kind": "source_interface",
                     },
                 ],
@@ -252,6 +287,11 @@ class PrelinkQemuTests(unittest.TestCase):
 
             bad_bindings = [{**base["bindings"][0], "new_target": 0xfffffff00bf9c708}]
             report.write_text(json.dumps({**base, "bindings": bad_bindings}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            missing_donor_reference = {**base, "bindings": base["bindings"][:-1]}
+            report.write_text(json.dumps(missing_donor_reference))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
 

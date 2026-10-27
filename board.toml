@@ -80,16 +80,16 @@ early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4
 # donor bundle identity/personality metadata as codeless so dependents resolve
 # without registering a second IOUserBlockStorageDevice class.
 source_interfaces = ["com.apple.iokit.IOStorageFamily"]
-# Pinned donor disassembly at these addresses matches IOMedia::attachToChild,
-# IOMedia::synchronize, IOMedia's base-object destructor,
-# IOPartitionScheme's base-object destructor, and IOBlockStorageDevice::getProperty
-# in the public IOStorageFamily source pin.
+# Pinned donor disassembly at these addresses matches IOBlockStorageDevice::getProperty,
+# IOMedia::{attachToChild,synchronize,D2}, IOMediaBSDClient::getProvider, and
+# IOPartitionScheme::D2 in the public IOStorageFamily source pin.
 # These static mappings do not qualify runtime behavior; prelink and ABI remain audit-only.
 source_interface_bindings = [
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596ee88", symbol = "__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005975f0c", symbol = "__ZN7IOMediaD2Ev" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059762a8", symbol = "__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976eb0", symbol = "__ZN7IOMedia11synchronizeEP9IOServiceyyj" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059795b8", symbol = "__ZNK16IOMediaBSDClient11getProviderEv" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c344", symbol = "__ZN17IOPartitionSchemeD2Ev" },
 ]
 roots = [
