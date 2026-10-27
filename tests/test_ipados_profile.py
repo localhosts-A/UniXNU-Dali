@@ -65,6 +65,11 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertEqual(prelink["source_interface_bindings"], [
             {
                 "bundle": "com.apple.iokit.IOStorageFamily",
+                "donor_va": "0xfffffff00596ee88",
+                "symbol": "__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol",
+            },
+            {
+                "bundle": "com.apple.iokit.IOStorageFamily",
                 "donor_va": "0xfffffff0059762a8",
                 "symbol": "__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane",
             },

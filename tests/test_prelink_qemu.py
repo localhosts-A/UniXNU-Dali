@@ -15,6 +15,7 @@ SPEC.loader.exec_module(DALI_QEMU)
 class PrelinkQemuTests(unittest.TestCase):
     STORAGE_SYMBOL = '__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane'
     STORAGE_SYNCHRONIZE_SYMBOL = '__ZN7IOMedia11synchronizeEP9IOServiceyyj'
+    BLOCK_STORAGE_PROPERTY_SYMBOL = '__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol'
     PARTITION_SCHEME_D2_SYMBOL = '__ZN17IOPartitionSchemeD2Ev'
 
     def test_prelink_qemu_captures_security_kext_panic_path(self):
@@ -61,6 +62,13 @@ class PrelinkQemuTests(unittest.TestCase):
                 "source_interface_bindings": [
                     {
                         "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff00596ee88,
+                        "symbol": self.BLOCK_STORAGE_PROPERTY_SYMBOL,
+                        "native_va": 0xfffffff00bf94be4,
+                        "reference_count": 1,
+                    },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
                         "donor_va": 0xfffffff0059762a8,
                         "symbol": self.STORAGE_SYMBOL,
                         "native_va": 0xfffffff00bf9c704,
@@ -90,6 +98,11 @@ class PrelinkQemuTests(unittest.TestCase):
                     {
                         "target": 0xfffffff005976eb0,
                         "new_target": 0xfffffff00bf9d3a8,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff00596ee88,
+                        "new_target": 0xfffffff00bf94be4,
                         "kind": "source_interface",
                     },
                     {
@@ -133,6 +146,13 @@ class PrelinkQemuTests(unittest.TestCase):
                 "source_interface_bindings": [
                     {
                         "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff00596ee88,
+                        "symbol": self.BLOCK_STORAGE_PROPERTY_SYMBOL,
+                        "native_va": 0xfffffff00bf94be4,
+                        "reference_count": 1,
+                    },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
                         "donor_va": 0xfffffff0059762a8,
                         "symbol": self.STORAGE_SYMBOL,
                         "native_va": 0xfffffff00bf9c704,
@@ -162,6 +182,11 @@ class PrelinkQemuTests(unittest.TestCase):
                     {
                         "target": 0xfffffff005976eb0,
                         "new_target": 0xfffffff00bf9d3a8,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff00596ee88,
+                        "new_target": 0xfffffff00bf94be4,
                         "kind": "source_interface",
                     },
                     {
