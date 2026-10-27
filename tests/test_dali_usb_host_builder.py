@@ -119,7 +119,7 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
         self.assertIn("build-dali-usb-host.py", board["kernel"]["archives"])
         self.assertEqual([source.name for source in BUILDER.SOURCES],
                          ["UsbCore.c", "UsbHost.c", "UsbStorage.c", "UsbXhci.c",
-                          "UsbXhciController.c"])
+                          "UsbXhciController.c", "UsbXhciHost.c"])
         workflow = (ROOT / ".github/workflows/dali-usb-xnu.yml").read_text()
         self.assertIn('build-dali-usb-host.py" --verify-kernel "$kernel"', workflow)
         self.assertIn("'tests/test_dali_usb_host_builder.py'", workflow)
@@ -139,7 +139,11 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
                          "usb_xhci_controller_command", "usb_xhci_device_prepare",
                          "usb_xhci_device_address", "usb_xhci_device_configure_hub",
                          "usb_xhci_device_control", "usb_xhci_device_disable",
-                         "usb_xhci_device_release_stopped"} <=
+                         "usb_xhci_device_release_stopped",
+                         "usb_xhci_host_adapter_init", "usb_xhci_host_adapter_get_ops",
+                         "usb_xhci_host_adapter_reset_root_port",
+                         "usb_xhci_host_adapter_next_event",
+                         "usb_xhci_host_adapter_release_stopped"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))
 
 

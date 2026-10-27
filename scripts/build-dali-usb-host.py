@@ -15,7 +15,8 @@ OUT = ROOT / "build/dali-usb-host"
 ARCHIVE = OUT / "libDaliUsbHost.a"
 SOURCES = (ROOT / "drivers/UsbCore/UsbCore.c", ROOT / "drivers/UsbCore/UsbHost.c",
            ROOT / "drivers/UsbCore/UsbStorage.c", ROOT / "drivers/UsbCore/UsbXhci.c",
-           ROOT / "drivers/UsbCore/UsbXhciController.c")
+           ROOT / "drivers/UsbCore/UsbXhciController.c",
+           ROOT / "drivers/UsbCore/UsbXhciHost.c")
 REQUIRED_SYMBOLS = (
     "usb_host_enumerate", "usb_host_start_storage", "usb_host_poll_input",
     "usb_host_stop_device", "usb_host_release_stopped_device", "usb_host_disconnect",
@@ -39,6 +40,9 @@ REQUIRED_SYMBOLS = (
     "usb_xhci_device_address", "usb_xhci_device_configure_hub",
     "usb_xhci_device_control", "usb_xhci_device_disable",
     "usb_xhci_device_release_stopped",
+    "usb_xhci_host_adapter_init", "usb_xhci_host_adapter_get_ops",
+    "usb_xhci_host_adapter_reset_root_port", "usb_xhci_host_adapter_next_event",
+    "usb_xhci_host_adapter_release_stopped",
     "usb_xhci_control_submit", "usb_xhci_control_event",
     "usb_xhci_control_finish", "usb_xhci_control_release_stopped",
 )
