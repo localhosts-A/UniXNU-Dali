@@ -22,7 +22,9 @@ kernelcache, vendor firmware or other private input.
 
 The proposed v2 schema, bounded slot scan, and oldest-safe-pair rotation rules
 are recorded in [`docs/unixnu-logs-v2-design.md`](docs/unixnu-logs-v2-design.md).
-Automatic writes and the XNU storage owner remain unimplemented.
+The offline decoder handles v1 and the proposed v2 record metadata and
+generation ordering; the focused host cases passed. Automatic writes and the
+XNU storage owner remain unimplemented.
 
 The pinned OS profile separates the nearest public XNU source tag from the
 23G90 runtime kernelcache. The tag does not match the runtime XNU version; ABI,

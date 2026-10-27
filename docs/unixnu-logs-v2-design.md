@@ -1,6 +1,6 @@
 # `unixnu_logs` automatic logging design
 
-**Status:** design proposal; automatic writes and v2 decoding are not implemented.
+**Status:** v1/v2 offline decoding is implemented and passed the approved host cases; the device scanner and automatic writes remain design-only.
 
 ## Existing partition and records
 
@@ -27,7 +27,19 @@ from pair number.
 
 Keep `Sequence` as the physical pair index for backwards-compatible geometry,
 and add a distinct 64-bit `Generation`. Use a new `DALIUFSLOG2` magic and
-version 2. Each record must bind:
+version 2. Keep the v1 fields and offsets through the record digest at
+`0xD4–0xF3`. Add these little-endian fields to each 4 KiB record block:
+
+| Offset | Field |
+|---|---|
+| `0xF4–0xFB` | 64-bit `Generation` |
+| `0xFC–0xFF` | 32-bit flags; bit 0 means body capture was truncated; all other bits must be zero |
+| `0x100–0x103` | capture stage: 1=UEFI before handoff, 2=XNU capture |
+| `0x104–0x107` | body format: 1=raw UEFI console bytes, 2=`DALI-XNU-BODY1` |
+| `0x108–block end` | zero padding |
+
+The record digest covers the v2 fields and zero padding with its own digest
+field zeroed. Each record must bind:
 
 - physical pair index, `Generation`, owner, and a per-boot token;
 - device binding, block geometry, target slot bounds, and target input digests;
@@ -48,8 +60,9 @@ records for one boot must carry the same generation, token, and pair index.
 `Generation` orders committed records; the random token distinguishes attempts
 that did not commit.
 
-Use explicit body schemas. The UEFI body should identify the captured console
-range and UEFI end stage. The XNU body should identify diagnostics, the real
+The UEFI body consists of captured console bytes and its record flags mark
+truncation. The XNU body uses the existing `DALI-XNU-BODY1` payload, which
+identifies diagnostics, the real
 `msgbuf` ring cursors, console bytes, capture stage, and truncation. UEFI can
 only record output available before its handoff; it cannot claim to contain
 later DarwinBoot or XNU messages. The XNU record must be produced by an XNU-side
