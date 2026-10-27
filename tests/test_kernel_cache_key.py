@@ -74,8 +74,8 @@ class SourceGraphTests(unittest.TestCase):
         self.device = self.repo(base / "Device", {"board.toml": (ROOT / "board.toml").read_text(),
             "configs/dali_defconfig": "config", "README.md": "docs"})
 
-    def keys(self, toolchain="Xcode+SDK+LLVM"):
-        return module.fingerprints(self.unixnu, self.device, toolchain)
+    def keys(self, toolchain="Xcode+SDK+LLVM", profile="default"):
+        return module.fingerprints(self.unixnu, self.device, toolchain, profile)
 
     def change(self, root, path):
         (root / path).write_text((root / path).read_text() + "\nchanged")
@@ -108,6 +108,13 @@ class SourceGraphTests(unittest.TestCase):
         self.change(self.unixnu, "feeds.toml")
         self.assertNotEqual(before["kernel"], self.keys()["kernel"])
         self.assertNotEqual(before["feeds"], self.keys()["feeds"])
+
+    def test_selected_validation_profile_invalidates_only_kernel_cache(self):
+        base = self.keys(profile="reset-qualification")
+        root = self.keys(profile="ipados-root-compile")
+        self.assertNotEqual(base["kernel"], root["kernel"])
+        self.assertEqual(base["feeds"], root["feeds"])
+        self.assertEqual(base["edk"], root["edk"])
 
     def test_dirty_or_untracked_input_is_rejected(self):
         (self.device / "local.toml").write_text("local overrides")

@@ -120,8 +120,12 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("CONFIG_XNU_DALI_OWNER_PUBLIC_KEY=", boot_profile)
 
     def test_root_compile_action_uses_owner_profile_without_qemu_or_device_artifact(self):
-        self.assertIn("options: [reset-qualification, pid1, ipados-root-compile]", self.workflow)
-        self.assertIn('"dali_ipados_root_defconfig" if profile == "ipados-root-compile"', self.workflow)
+        self.assertIn("options: [reset-qualification, pid1, ipados-root-compile, ipados-root-policy-compile]", self.workflow)
+        self.assertIn('profile == "ipados-root-compile"', self.workflow)
+        self.assertIn('profile == "ipados-root-policy-compile"', self.workflow)
+        self.assertIn('defconfig = "dali_ipados_root_boot_defconfig"', self.workflow)
+        self.assertIn("Build pinned OS and SystemOS root windows", self.workflow)
+        self.assertIn("Build metadata-preserving skip-setup Data seed candidate", self.workflow)
         self.assertGreaterEqual(self.workflow.count("env.VALIDATION_PROFILE != 'ipados-root-compile'"), 5)
 
 

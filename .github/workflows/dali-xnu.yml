@@ -16,9 +16,9 @@ on:
   workflow_dispatch:
     inputs:
       validation_profile:
-        description: Qualification target; ipados-root-compile builds only and emits no device artifact
+        description: Qualification target; iPadOS root profiles build only and emit no device artifact
         type: choice
-        options: [reset-qualification, pid1, ipados-root-compile]
+        options: [reset-qualification, pid1, ipados-root-compile, ipados-root-policy-compile]
         default: reset-qualification
       auto_fastboot:
         description: Arm the default one-shot bootloader recovery watchdog
@@ -156,7 +156,8 @@ jobs:
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/kernel-cache-key.py" \
             --unixnu "$GITHUB_WORKSPACE/UniXNU" \
-            --device "$GITHUB_WORKSPACE/UniXNU-Dali" >> "$GITHUB_OUTPUT"
+            --device "$GITHUB_WORKSPACE/UniXNU-Dali" \
+            --profile "$VALIDATION_PROFILE" >> "$GITHUB_OUTPUT"
 
       - name: Restore pinned feed and BaseTools cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.0
@@ -164,7 +165,15 @@ jobs:
           path: UniXNU/out/feeds
           key: dali-feeds-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache_inputs.outputs.feeds }}
 
+      - name: Restore exact-pinned iPadOS component cache
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.0
+        with:
+          path: UniXNU/out/ipsw
+          key: dali-ipsw-v1-${{ runner.os }}-${{ hashFiles('UniXNU-Dali/board.toml') }}
+
       - name: Restore exact-input source kernel cache
+        if: env.VALIDATION_PROFILE != 'ipados-root-policy-compile'
         id: kernel_cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.0.0
         with:
@@ -189,11 +198,53 @@ jobs:
           with open(sys.argv[1], "rb") as source:
               board = tomllib.load(source)
           profile = __import__("os").environ.get("VALIDATION_PROFILE", "")
-          defconfig = "dali_ipados_root_defconfig" if profile == "ipados-root-compile" else board["kernel"]["defconfig"]
+          if profile == "ipados-root-compile":
+              defconfig = "dali_ipados_root_defconfig"
+          elif profile == "ipados-root-policy-compile":
+              defconfig = "dali_ipados_root_boot_defconfig"
+          else:
+              defconfig = board["kernel"]["defconfig"]
           print(defconfig)
           PY
           )"
           ./unixnu defconfig -D "$GITHUB_WORKSPACE/UniXNU-Dali" "$defconfig"
+
+      - name: Build pinned OS and SystemOS root windows
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu build userdata -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
+
+      - name: Build metadata-preserving skip-setup Data seed candidate
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          os_dmg="$UNIXNU_OUT/ipsw/21H461/044-76040-038.dmg"
+          mount_point="$RUNNER_TEMP/dali-21h461-os"
+          seed_output="$RUNNER_TEMP/dali-ipados-data-seed"
+          python3_path="$(command -v python3)"
+          mkdir -p "$mount_point"
+          trap 'sudo hdiutil detach "$mount_point" >/dev/null 2>&1 || true' EXIT
+          sudo hdiutil attach -readonly -nobrowse -owners on -mountpoint "$mount_point" "$os_dmg"
+          sudo "$python3_path" "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/build-dali-ipados-data-seed.py" \
+            --os-root "$mount_point" \
+            --os-dmg "$os_dmg" \
+            --output-dir "$seed_output" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU"
+
+      - name: Create per-build VerifiedRoot signing input
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          key_dir="$UNIXNU_OUT/dali/tree/build/dali-verified-root/keys"
+          mkdir -p "$key_dir"
+          openssl genrsa -out "$key_dir/owner.pem" 3072
+          openssl rsa -in "$key_dir/owner.pem" -pubout -out "$key_dir/owner-public.pem"
+          chmod 600 "$key_dir/owner.pem"
 
       - name: Build and validate source-only XNU
         shell: bash
@@ -250,6 +301,20 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Upload bounded iPadOS root-policy and Data seed evidence
+        if: always() && env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-ipados-root-inputs
+          path: |
+            ${{ runner.temp }}/dali-ipados-data-seed/seed-candidate.json
+            ${{ runner.temp }}/dali-ipados-data-seed/data-seed-skip-setup.dbr
+            UniXNU/out/dali/userdata/userdata-root.json
+            UniXNU/out/dali/tree/build/dali-verified-root/build-report.json
+            UniXNU/out/dali/tree/build/dali-verified-root/libVerifiedRootDali.a
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Build UniXNU package and locate pinned Mu BaseCore
         shell: bash
         run: |
@@ -289,7 +354,7 @@ jobs:
             --output "$RUNNER_TEMP/dali-pid1-entitlement-negative"
 
       - name: Test one-core DarwinBoot to source XNU handoff
-        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile' && env.VALIDATION_PROFILE != 'ipados-root-policy-compile'
         shell: bash
         run: |
           set -euo pipefail
@@ -300,7 +365,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu"
 
       - name: Test actual source storage media interfaces in QEMU
-        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile' && env.VALIDATION_PROFILE != 'ipados-root-policy-compile'
         shell: bash
         run: |
           set -euo pipefail
@@ -311,7 +376,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-source-storage-qemu"
 
       - name: Upload source storage QEMU evidence
-        if: always() && env.VALIDATION_PROFILE != 'ipados-root-compile'
+        if: always() && env.VALIDATION_PROFILE != 'ipados-root-compile' && env.VALIDATION_PROFILE != 'ipados-root-policy-compile'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dali-source-storage-qemu
@@ -336,7 +401,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu/pid1"
 
       - name: Upload bounded QEMU diagnostics after failure
-        if: failure() && env.VALIDATION_PROFILE != 'ipados-root-compile'
+        if: failure() && env.VALIDATION_PROFILE != 'ipados-root-compile' && env.VALIDATION_PROFILE != 'ipados-root-policy-compile'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dali-xnu-qemu-diagnostics
@@ -345,7 +410,7 @@ jobs:
           retention-days: 1
 
       - name: Validate and stage the one-day kernel artifact
-        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile' && env.VALIDATION_PROFILE != 'ipados-root-policy-compile'
         id: artifact
         shell: bash
         env:
@@ -388,7 +453,7 @@ jobs:
             --watchdog-timeout-seconds "$watchdog_timeout"
 
       - name: Upload source-only XNU for one day
-        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile' && env.VALIDATION_PROFILE != 'ipados-root-policy-compile'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dali-xnu-source

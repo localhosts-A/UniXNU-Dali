@@ -62,7 +62,7 @@ def source_records(root, excluded=frozenset(), *, board=False):
     return result
 
 
-def fingerprints(unixnu, device, toolchain):
+def fingerprints(unixnu, device, toolchain, profile="default"):
     generic = source_records(unixnu, EFI_ONLY)
     target = source_records(device, frozenset({"README.md"}), board=True)
     # Feeds contain pinned sources and compiled EDK BaseTools, so their separate
@@ -72,7 +72,7 @@ def fingerprints(unixnu, device, toolchain):
     if (device / "feeds.toml").exists():
         feed_inputs.append(("device/feeds.toml", (device / "feeds.toml").read_bytes().hex()))
     revisions = [git(root, "rev-parse", "HEAD").decode().strip() for root in (unixnu, device)]
-    return {"kernel": digest([generic, target, revisions, toolchain]),
+    return {"kernel": digest([generic, target, revisions, toolchain, profile]),
             "feeds": digest([feed_inputs, toolchain]),
             "edk": digest([git(unixnu, "rev-parse", "HEAD").decode().strip(), target, toolchain])}
 
@@ -95,6 +95,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unixnu", required=True, type=Path)
     parser.add_argument("--device", required=True, type=Path)
+    parser.add_argument("--profile", default="default", help="selected workflow validation profile/defconfig")
     args = parser.parse_args()
-    for name, value in fingerprints(args.unixnu, args.device, toolchain_identity()).items():
+    for name, value in fingerprints(args.unixnu, args.device, toolchain_identity(), args.profile).items():
         print(f"{name}={value}")
