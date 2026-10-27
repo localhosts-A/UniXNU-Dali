@@ -136,8 +136,12 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("--prelink-report", self.workflow)
         self.assertIn("dali-ipados-prelink-qemu-not-for-device", self.workflow)
         self.assertNotIn('rm -rf "$UNIXNU_OUT/ipsw', self.workflow)
-        self.assertIn('mkdir -p "$output_dir"', self.workflow)
-        self.assertIn('output_dir="$GITHUB_WORKSPACE/UniXNU/build/DarwinBoot/DEBUG_CLANGPDB/AARCH64"', self.workflow)
+        darwinboot_step = self.workflow.split("- name: Build DarwinBoot", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn('build_root="$GITHUB_WORKSPACE/UniXNU/build"', darwinboot_step)
+        self.assertIn('sudo chown -R "$(id -u):$(id -g)" "$build_root"', darwinboot_step)
+        self.assertIn('mkdir -p "$output_dir"', darwinboot_step)
+        self.assertIn('output_dir="$GITHUB_WORKSPACE/UniXNU/build/DarwinBoot/DEBUG_CLANGPDB/AARCH64"', darwinboot_step)
+        self.assertLess(darwinboot_step.index('sudo chown -R'), darwinboot_step.index('mkdir -p "$output_dir"'))
         device_artifact = self.workflow.split("- name: Validate and stage the one-day kernel artifact", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("env.VALIDATION_PROFILE != 'ipados-root-policy-compile'", device_artifact)
         xnu_step = self.workflow.split("- name: Build and validate source-only XNU", 1)[1].split("\n      - name:", 1)[0]

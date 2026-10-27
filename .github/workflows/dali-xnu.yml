@@ -364,6 +364,12 @@ jobs:
         run: |
           set -euo pipefail
           df -h "$GITHUB_WORKSPACE"
+          build_root="$GITHUB_WORKSPACE/UniXNU/build"
+          if [[ -d "$build_root" ]]; then
+            test ! -L "$build_root"
+            ls -ldeO "$build_root"
+            sudo chown -R "$(id -u):$(id -g)" "$build_root"
+          fi
           output_dir="$GITHUB_WORKSPACE/UniXNU/build/DarwinBoot/DEBUG_CLANGPDB/AARCH64"
           mkdir -p "$output_dir"
           test -d "$output_dir"
