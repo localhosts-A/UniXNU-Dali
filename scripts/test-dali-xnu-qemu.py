@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Run bounded single-CPU DarwinBoot/XNU QEMU checkpoints for the Dali build."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -59,6 +61,18 @@ def validate_budget_refusal(refusal, kernel_sha256, kernel_args):
         raise SystemExit('Default-budget control did not reproduce the real kalloc scratch-array assertion')
 
 
+def validate_prelink_audit_candidate(kernel, report_path):
+    """Bind diagnostic QEMU runs to an exact candidate explicitly marked non-loadable."""
+    report = json.loads(report_path.read_text())
+    digest = hashlib.sha256(kernel.read_bytes()).hexdigest()
+    if report.get('candidate_sha256') != digest:
+        raise SystemExit('Prelink report does not identify this exact candidate')
+    if any(report.get(key) is not False for key in (
+            'instruction_relocation_complete', 'abi_qualified', 'runtime_qualified', 'loadable')):
+        raise SystemExit('This QEMU path only accepts an explicitly non-loadable prelink audit candidate')
+    return report
+
+
 def validate_reset_instructions(kernel, output):
     """Require the real compiled call chain; source/compile success is insufficient."""
     output.mkdir(parents=True, exist_ok=True)
@@ -104,19 +118,32 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unixnu", type=Path, required=True)
     parser.add_argument("--kernel", type=Path, required=True)
+    parser.add_argument("--prelink-report", type=Path,
+                        help="Exact report for a diagnostic-only, explicitly non-loadable candidate")
     parser.add_argument("--uefi-efi", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     root = args.unixnu.resolve()
     output = args.output_dir.resolve()
-    validate_reset_instructions(args.kernel.resolve(), output)
+    kernel = args.kernel.resolve()
+    prelink_report = None
+    prelink_report_sha256 = None
+    if args.prelink_report:
+        report_path = args.prelink_report.resolve()
+        prelink_report = validate_prelink_audit_candidate(kernel, report_path)
+        prelink_report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
+    validate_reset_instructions(kernel, output)
     probe = root / "scripts/probe-darwinboot-xnu.py"
     board_args = hardware_arguments()
     # Keep only console diagnostics specific to the offline VM. Allocation
     # policy comes from the hardware configuration, never the probe's defaults.
     kernel_args = ' '.join([*board_args, 'serial=3', 'debug=0x14e'])
-    common = [sys.executable, probe, "--kernel", args.kernel.resolve(), "--uefi-efi", args.uefi_efi.resolve(),
+    common = [sys.executable, probe, "--kernel", kernel, "--uefi-efi", args.uefi_efi.resolve(),
               "--timeout", "90", "--armvirt", "--armcpu", "--nvram-proxy"]
+    if args.prelink_report:
+        # Preserve the checkpoint's live crypto-state checks while keeping
+        # the prelink report's optional per-initializer breakpoints out of QEMU.
+        common += ["--prelink-report", args.prelink_report.resolve(), "--skip-initializer-traces"]
     cases = {
         "platform": "__ZN13ArmDTPlatform9configureEP9IOService",
         "cpu": "__ZN6ArmCpu5startEP9IOService",
@@ -138,6 +165,7 @@ def main():
         reports[name] = json.loads(report_path.read_text())
         if reports[name].get('kernel_arguments') != kernel_args:
             raise SystemExit(f'{name}: QEMU did not use the hardware allocation arguments')
+        shutil.rmtree(destination / "esp", ignore_errors=True)
 
     hashes = {report.get("kernel_sha256") for report in reports.values()}
     if len(hashes) != 1 or None in hashes:
@@ -191,9 +219,14 @@ def main():
         raise SystemExit(f'Default kalloc budget control failed:\n{result.stdout[-5000:]}')
     refusal = json.loads((destination / 'gdb-stop.json').read_text())
     validate_budget_refusal(refusal, reports['platform']['kernel_sha256'], negative_args)
+    shutil.rmtree(destination / "esp", ignore_errors=True)
 
     summary = {
         "kernel_sha256": hashes.pop(),
+        "kernel_kind": "prelink-audit-candidate" if prelink_report else "source-xnu",
+        "prelink_report_sha256": prelink_report_sha256,
+        "candidate_loadable": prelink_report.get("loadable") if prelink_report else None,
+        "diagnostic_only": bool(prelink_report),
         "hardware_kernel_arguments": board_args,
         "default_kalloc_budget_assertion_reproduced": True,
         "compiled_reset_instruction_chain_present": True,
@@ -204,6 +237,7 @@ def main():
         "gic_ready": True,
         "timer_interrupts": timer["_armcpu_timer_interrupts"],
         "hardware_boot_demonstrated": False,
+        "device_flashable": False,
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

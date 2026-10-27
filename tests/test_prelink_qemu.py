@@ -1,0 +1,64 @@
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location("dali_qemu", ROOT / "scripts/test-dali-xnu-qemu.py")
+DALI_QEMU = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(DALI_QEMU)
+
+
+class PrelinkQemuTests(unittest.TestCase):
+    def test_prelink_qemu_keeps_candidate_hash_gate_and_bounds_initializer_breakpoints(self):
+        source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
+
+        self.assertIn('"--prelink-report", args.prelink_report.resolve()', source)
+        self.assertIn('"--skip-initializer-traces"', source)
+        self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
+
+    def test_candidate_must_match_report_and_stay_explicitly_non_loadable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            kernel = root / "kernel.macho"
+            kernel.write_bytes(b"exact diagnostic candidate")
+            report = root / "kernel.json"
+            report.write_text(json.dumps({
+                "candidate_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+                "instruction_relocation_complete": False,
+                "abi_qualified": False,
+                "runtime_qualified": False,
+                "loadable": False,
+            }))
+
+            parsed = DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            self.assertIs(parsed["loadable"], False)
+
+    def test_candidate_rejects_hash_mismatch_and_any_loadability_claim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            kernel = root / "kernel.macho"
+            kernel.write_bytes(b"candidate")
+            report = root / "kernel.json"
+            base = {
+                "candidate_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+                "instruction_relocation_complete": False,
+                "abi_qualified": False,
+                "runtime_qualified": False,
+                "loadable": False,
+            }
+            report.write_text(json.dumps({**base, "candidate_sha256": "0" * 64}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            report.write_text(json.dumps({**base, "loadable": True}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+
+if __name__ == "__main__":
+    unittest.main()

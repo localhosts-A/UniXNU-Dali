@@ -119,7 +119,7 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("CONFIG_XNU_DALI_OWNER_PRIVATE_KEY=", boot_profile)
         self.assertIn("CONFIG_XNU_DALI_OWNER_PUBLIC_KEY=", boot_profile)
 
-    def test_root_compile_action_uses_owner_profile_without_qemu_or_device_artifact(self):
+    def test_root_policy_action_adds_audit_qemu_but_no_device_artifact(self):
         self.assertIn("options: [reset-qualification, pid1, ipados-root-compile, ipados-root-policy-compile]", self.workflow)
         self.assertIn('profile == "ipados-root-compile"', self.workflow)
         self.assertIn('profile == "ipados-root-policy-compile"', self.workflow)
@@ -130,6 +130,14 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("Audit pinned 21H461 prelink candidate", self.workflow)
         self.assertIn("dali-ipados-prelink-audit-not-for-device", self.workflow)
         self.assertIn("./unixnu build prelink", self.workflow)
+        self.assertIn("Release audited raw root image before firmware/QEMU builds", self.workflow)
+        self.assertIn('rm -f "$image"', self.workflow)
+        self.assertIn("Probe non-loadable 21H461 prelink candidate in QEMU", self.workflow)
+        self.assertIn("--prelink-report", self.workflow)
+        self.assertIn("dali-ipados-prelink-qemu-not-for-device", self.workflow)
+        self.assertNotIn('rm -rf "$UNIXNU_OUT/ipsw', self.workflow)
+        device_artifact = self.workflow.split("- name: Validate and stage the one-day kernel artifact", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("env.VALIDATION_PROFILE != 'ipados-root-policy-compile'", device_artifact)
         xnu_step = self.workflow.split("- name: Build and validate source-only XNU", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("UNIXNU_SOURCE_ROOT: ${{ github.workspace }}/UniXNU", xnu_step)
         self.assertIn("PYTHONDONTWRITEBYTECODE: '1'", xnu_step)

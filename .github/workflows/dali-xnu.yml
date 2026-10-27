@@ -337,6 +337,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Release audited raw root image before firmware/QEMU builds
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$UNIXNU_OUT/dali/userdata/userdata-root.img"
+          test -f "$image"
+          du -h "$image"
+          rm -f "$image"
+          test ! -e "$image"
+          df -h "$GITHUB_WORKSPACE"
+
       - name: Build UniXNU package and locate pinned Mu BaseCore
         shell: bash
         run: |
@@ -351,8 +363,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          df -h "$GITHUB_WORKSPACE"
           cd UniXNU
           bash scripts/build-darwinboot.sh
+
+      - name: Probe non-loadable 21H461 prelink candidate in QEMU
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/test-dali-xnu-qemu.py" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --kernel "$UNIXNU_OUT/dali/kernel/kernel.macho" \
+            --prelink-report "$UNIXNU_OUT/dali/kernel/kernel.json" \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
+            --output-dir "$RUNNER_TEMP/dali-ipados-prelink-qemu"
+
+      - name: Upload non-loadable prelink QEMU diagnostics
+        if: always() && env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-ipados-prelink-qemu-not-for-device
+          path: |
+            ${{ runner.temp }}/dali-ipados-prelink-qemu/summary.json
+            ${{ runner.temp }}/dali-ipados-prelink-qemu/*.log
+            ${{ runner.temp }}/dali-ipados-prelink-qemu/*/gdb-stop.json
+            ${{ runner.temp }}/dali-ipados-prelink-qemu/reset-instructions.json
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Test UniXNU to DarwinBoot handoff fixtures
         shell: bash
