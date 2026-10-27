@@ -50,6 +50,22 @@ def require_symbols(output, required, description):
         raise ValueError(description + " lacks production symbols: " + ", ".join(missing))
 
 
+def generic_usb_core_include(root=ROOT):
+    candidates = [
+        root / "UniXNU/drivers/UsbCore/include",
+        root.parent / "UniXNU/drivers/UsbCore/include",
+    ]
+    unixnu_out = os.environ.get("UNIXNU_OUT")
+    if unixnu_out:
+        candidates.append(
+            Path(unixnu_out).resolve().parent / "drivers/UsbCore/include")
+    candidates.extend(parent / "drivers/UsbCore/include" for parent in root.parents)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[-1]
+
+
 def build():
     helper = helpers()
     missing_sources = [str(path) for path in SOURCES if not path.is_file()]
@@ -58,9 +74,7 @@ def build():
     record_path, record = helper.compiler_record(
         ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837")
     xnu = ROOT / ".cache/xnu-work"
-    core_include = ROOT / "UniXNU/drivers/UsbCore/include"
-    if not core_include.is_dir():
-        core_include = ROOT.parent / "UniXNU/drivers/UsbCore/include"
+    core_include = generic_usb_core_include()
     if not core_include.is_dir():
         raise ValueError("pinned generic UsbCore headers are missing: " + str(core_include))
     includes = [SOURCE.parent, OWNER_SOURCE.parent, DMA_SOURCE.parent, core_include, xnu / "iokit"]

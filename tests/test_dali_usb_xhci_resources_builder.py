@@ -42,6 +42,17 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
                     BUILDER, "build", side_effect=AssertionError("disabled builder must not run")):
             BUILDER.main([])
 
+    def test_builder_finds_usb_core_outside_the_source_only_tree(self):
+        with tempfile.TemporaryDirectory(prefix="dali-usb-xhci-source-tree-") as temporary:
+            checkout = Path(temporary) / "UniXNU"
+            core_include = checkout / "drivers/UsbCore/include"
+            core_include.mkdir(parents=True)
+            source_tree = checkout / "out/dali/tree"
+            source_tree.mkdir(parents=True)
+            with patch.dict(os.environ, {"UNIXNU_OUT": str(checkout / "out")}):
+                self.assertEqual(
+                    BUILDER.generic_usb_core_include(source_tree), core_include)
+
     def test_builder_uses_kernel_cpp_compile_record_for_all_xhci_units(self):
         helper = BUILDER.helpers()
         with tempfile.TemporaryDirectory(prefix="dali-usb-xhci-compile-record-") as temporary:
