@@ -8,6 +8,7 @@ ROOT_SOURCE = ROOT / "drivers/DaliUfs/DaliUfsRoot.cpp"
 DIAGNOSTIC_SOURCE = ROOT / "drivers/DaliUfs/DaliUfs.cpp"
 BUILDER = ROOT / "scripts/build-dali-xnu-platform.py"
 PERSONALITY = ROOT / "patches/xnu/dali-bootlog-personality.patch"
+WORKFLOW = ROOT / ".github/workflows/dali-xnu.yml"
 
 
 class UfsRootServiceTests(unittest.TestCase):
@@ -17,6 +18,7 @@ class UfsRootServiceTests(unittest.TestCase):
         cls.diagnostic = DIAGNOSTIC_SOURCE.read_text()
         cls.builder = BUILDER.read_text()
         cls.personality = PERSONALITY.read_text()
+        cls.workflow = WORKFLOW.read_text()
         with (ROOT / "board.toml").open("rb") as source:
             cls.board = tomllib.load(source)
 
@@ -84,6 +86,11 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertNotIn('ROOT.parent / "UniXNU"', self.builder)
         self.assertIn('"root_service_default_off": True', self.builder)
         self.assertIn('"boot_root_authenticated": False', self.builder)
+
+    def test_root_compile_action_uses_owner_profile_without_qemu_or_device_artifact(self):
+        self.assertIn("options: [reset-qualification, pid1, ipados-root-compile]", self.workflow)
+        self.assertIn('"dali_ipados_root_defconfig" if profile == "ipados-root-compile"', self.workflow)
+        self.assertGreaterEqual(self.workflow.count("env.VALIDATION_PROFILE != 'ipados-root-compile'"), 5)
 
 
 if __name__ == "__main__":

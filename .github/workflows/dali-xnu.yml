@@ -16,9 +16,9 @@ on:
   workflow_dispatch:
     inputs:
       validation_profile:
-        description: Qualification target (PID1 work is paused by default)
+        description: Qualification target; ipados-root-compile builds only and emits no device artifact
         type: choice
-        options: [reset-qualification, pid1]
+        options: [reset-qualification, pid1, ipados-root-compile]
         default: reset-qualification
       auto_fastboot:
         description: Arm the default one-shot bootloader recovery watchdog
@@ -185,7 +185,10 @@ jobs:
           defconfig="$(python3 - "$GITHUB_WORKSPACE/UniXNU-Dali/board.toml" <<'PY'
           import sys, tomllib
           with open(sys.argv[1], "rb") as source:
-              print(tomllib.load(source)["kernel"]["defconfig"])
+              board = tomllib.load(source)
+          profile = __import__("os").environ.get("VALIDATION_PROFILE", "")
+          defconfig = "dali_ipados_root_defconfig" if profile == "ipados-root-compile" else board["kernel"]["defconfig"]
+          print(defconfig)
           PY
           )"
           ./unixnu defconfig -D "$GITHUB_WORKSPACE/UniXNU-Dali" "$defconfig"
@@ -284,6 +287,7 @@ jobs:
             --output "$RUNNER_TEMP/dali-pid1-entitlement-negative"
 
       - name: Test one-core DarwinBoot to source XNU handoff
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
         shell: bash
         run: |
           set -euo pipefail
@@ -294,6 +298,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu"
 
       - name: Test actual source storage media interfaces in QEMU
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
         shell: bash
         run: |
           set -euo pipefail
@@ -304,7 +309,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-source-storage-qemu"
 
       - name: Upload source storage QEMU evidence
-        if: always()
+        if: always() && env.VALIDATION_PROFILE != 'ipados-root-compile'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dali-source-storage-qemu
@@ -329,7 +334,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-xnu-qemu/pid1"
 
       - name: Upload bounded QEMU diagnostics after failure
-        if: failure()
+        if: failure() && env.VALIDATION_PROFILE != 'ipados-root-compile'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dali-xnu-qemu-diagnostics
@@ -338,6 +343,7 @@ jobs:
           retention-days: 1
 
       - name: Validate and stage the one-day kernel artifact
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
         id: artifact
         shell: bash
         env:
@@ -380,6 +386,7 @@ jobs:
             --watchdog-timeout-seconds "$watchdog_timeout"
 
       - name: Upload source-only XNU for one day
+        if: env.VALIDATION_PROFILE != 'ipados-root-compile'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dali-xnu-source
