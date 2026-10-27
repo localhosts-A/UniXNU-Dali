@@ -36,7 +36,7 @@ windows = [
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-unixnu_commit = "9ad0254b70c96cdadff24050063bde93587ca540"
+unixnu_commit = "64ce12a70b97831fd8cf063a715ff37a4a7680e3"
 uefi_commit = "0f82a6a85d28660cbaa5db662507ea2a78891c44"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
@@ -80,17 +80,93 @@ early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4
 # donor bundle identity/personality metadata as codeless so dependents resolve
 # without registering a second IOUserBlockStorageDevice class.
 source_interfaces = ["com.apple.iokit.IOStorageFamily"]
-# Pinned donor disassembly at these addresses matches IOBlockStorageDevice::getProperty,
-# IOMedia::{attachToChild,synchronize,D2}, IOMediaBSDClient::getProvider, and
-# IOPartitionScheme::D2 in the public IOStorageFamily source pin.
-# These static mappings do not qualify runtime behavior; prelink and ABI remain audit-only.
+# Pinned exact-cache imports are mapped to the public IOStorageFamily source build.
+# Data targets additionally require exact section identity and matching protections.
 source_interface_bindings = [
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596ed98", symbol = "__ZN20IOBlockStorageDeviceC2EPK11OSMetaClass" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596edb8", symbol = "__ZN20IOBlockStorageDeviceD2Ev" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596ee30", symbol = "__ZN20IOBlockStorageDevice4initEP12OSDictionary" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596ee88", symbol = "__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596ef38", symbol = "__ZN20IOBlockStorageDevice13setPropertiesEP8OSObject" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596f050", symbol = "__ZN20IOBlockStorageDevice11requestIdleEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596f068", symbol = "__ZN20IOBlockStorageDevice13doSetPriorityEP26IOBlockStorageDeviceExtentjh" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596f074", symbol = "__ZN20IOBlockStorageDevice18doSynchronizeCacheEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596f08c", symbol = "__ZN20IOBlockStorageDevice20doGetProvisionStatusEyyPjP35IOBlockStorageProvisionDeviceExtenty" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005975ecc", symbol = "__ZN7IOMediaC1Ev" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005975f0c", symbol = "__ZN7IOMediaD2Ev" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976084", symbol = "__ZNK7IOMedia11getProviderEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976094", symbol = "__ZN7IOMedia18matchPropertyTableEP12OSDictionaryPi" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976230", symbol = "__ZN7IOMedia4freeEv" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059762a8", symbol = "__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059763a0", symbol = "__ZN7IOMedia15detachFromChildEP15IORegistryEntryPK15IORegistryPlane" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976474", symbol = "__ZN7IOMedia10handleOpenEP9IOServicejPv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059767bc", symbol = "__ZNK7IOMedia12handleIsOpenEPK9IOService" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059767f8", symbol = "__ZN7IOMedia11handleCloseEP9IOServicej" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976ae8", symbol = "__ZN7IOMedia5closeEP9IOServicej" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976c48", symbol = "__ZN7IOMedia4readEP9IOServiceyP18IOMemoryDescriptorP19IOStorageAttributesP19IOStorageCompletion" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976d70", symbol = "__ZN7IOMedia5writeEP9IOServiceyP18IOMemoryDescriptorP19IOStorageAttributesP19IOStorageCompletion" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976eb0", symbol = "__ZN7IOMedia11synchronizeEP9IOServiceyyj" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976f88", symbol = "__ZN7IOMedia5unmapEP9IOServiceP15IOStorageExtentjj" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977084", symbol = "__ZN7IOMedia18getProvisionStatusEP9IOServiceyyPjP24IOStorageProvisionExtenty" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059771a0", symbol = "__ZN7IOMedia19lockPhysicalExtentsEP9IOService" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977208", symbol = "__ZN7IOMedia18copyPhysicalExtentEP9IOServicePyS2_" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059772b0", symbol = "__ZN7IOMedia21unlockPhysicalExtentsEP9IOService" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059772f8", symbol = "__ZN7IOMedia11setPriorityEP9IOServiceP15IOStorageExtentjh" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059773e4", symbol = "__ZNK7IOMedia21getPreferredBlockSizeEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059773ec", symbol = "__ZNK7IOMedia7getSizeEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059773f4", symbol = "__ZNK7IOMedia7getBaseEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059773fc", symbol = "__ZNK7IOMedia11isEjectableEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977408", symbol = "__ZNK7IOMedia11isFormattedEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977428", symbol = "__ZNK7IOMedia10isWritableEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977430", symbol = "__ZNK7IOMedia7isWholeEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977438", symbol = "__ZNK7IOMedia10getContentEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977488", symbol = "__ZNK7IOMedia14getContentHintEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059774d8", symbol = "__ZN7IOMedia4initEyyyjbbPKcP12OSDictionary" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059779b0", symbol = "__ZNK7IOMedia13getAttributesEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977a3c", symbol = "__ZN16IOMediaBSDClientC2EPK11OSMetaClass" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005977a7c", symbol = "__ZN16IOMediaBSDClientD2Ev" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059783f0", symbol = "__ZN16IOMediaBSDClient4initEP12OSDictionary" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059784ac", symbol = "__ZN16IOMediaBSDClient4freeEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059784bc", symbol = "__ZN16IOMediaBSDClient5startEP9IOService" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597856c", symbol = "__ZN16IOMediaBSDClient9terminateEj" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005978824", symbol = "__ZN16IOMediaBSDClient13getWholeMediaEP7IOMediaPjPc" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005978a00", symbol = "__ZN16IOMediaBSDClient11createNodesEP7IOMedia" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059795b8", symbol = "__ZNK16IOMediaBSDClient11getProviderEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c304", symbol = "__ZN17IOPartitionSchemeC2EPK11OSMetaClass" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c344", symbol = "__ZN17IOPartitionSchemeD2Ev" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c4bc", symbol = "__ZNK17IOPartitionScheme11getProviderEv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c57c", symbol = "__ZN17IOPartitionScheme10handleOpenEP9IOServicejPv" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c698", symbol = "__ZNK17IOPartitionScheme12handleIsOpenEPK9IOService" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c700", symbol = "__ZN17IOPartitionScheme11handleCloseEP9IOServicej" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c828", symbol = "__ZN17IOPartitionScheme4readEP9IOServiceyP18IOMemoryDescriptorP19IOStorageAttributesP19IOStorageCompletion" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c88c", symbol = "__ZN17IOPartitionScheme5writeEP9IOServiceyP18IOMemoryDescriptorP19IOStorageAttributesP19IOStorageCompletion" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c8f0", symbol = "__ZN17IOPartitionScheme11synchronizeEP9IOServiceyyj" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597c998", symbol = "__ZN17IOPartitionScheme18getProvisionStatusEP9IOServiceyyPjP24IOStorageProvisionExtenty" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597ca04", symbol = "__ZN17IOPartitionScheme19lockPhysicalExtentsEP9IOService" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597ca38", symbol = "__ZN17IOPartitionScheme18copyPhysicalExtentEP9IOServicePyS2_" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597ca84", symbol = "__ZN17IOPartitionScheme21unlockPhysicalExtentsEP9IOService" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597cab8", symbol = "__ZN17IOPartitionScheme11setPriorityEP9IOServiceP15IOStorageExtentjh" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597cb0c", symbol = "__ZN17IOPartitionScheme29attachMediaObjectToDeviceTreeEP7IOMedia" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597cce4", symbol = "__ZN17IOPartitionScheme31detachMediaObjectFromDeviceTreeEP7IOMedia" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597cd40", symbol = "__ZN17IOPartitionScheme21juxtaposeMediaObjectsEP5OSSetS1_" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597d960", symbol = "__ZN9IOStorageC2EPK11OSMetaClass" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597d980", symbol = "__ZN9IOStorageD2Ev" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597d9f8", symbol = "__ZN9IOStorage8completeEP19IOStorageCompletioniy" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597da20", symbol = "__ZN9IOStorage4openEP9IOServicejj" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597da34", symbol = "__ZN9IOStorage4readEP9IOServiceyP18IOMemoryDescriptorP19IOStorageAttributesPy" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597dbac", symbol = "__ZN9IOStorage5writeEP9IOServiceyP18IOMemoryDescriptorP19IOStorageAttributesPy" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00597dc64", symbol = "__ZN9IOStorage18getProvisionStatusEP9IOServiceyyPjP24IOStorageProvisionExtenty" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff006cb44c0", symbol = "__ZTV20IOBlockStorageDevice", target_kind = "data_const" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff006cb6a70", symbol = "__ZN7IOMedia9metaClassE", target_kind = "data_const" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff006cb6a80", symbol = "__ZTV7IOMedia", target_kind = "data_const" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff006cb7128", symbol = "__ZTV16IOMediaBSDClient", target_kind = "data_const" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff006cb7748", symbol = "__ZTV17IOPartitionScheme", target_kind = "data_const" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff006cb7db0", symbol = "__ZTV9IOStorage", target_kind = "data_const" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff007add1d0", symbol = "__ZN20IOBlockStorageDevice10gMetaClassE", target_kind = "data_rw" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff007add2e8", symbol = "__ZN7IOMedia10gMetaClassE", target_kind = "data_rw" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff007add310", symbol = "__ZN16IOMediaBSDClient10gMetaClassE", target_kind = "data_rw" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff007add338", symbol = "__ZN17IOPartitionScheme10gMetaClassE", target_kind = "data_rw" },
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff007add360", symbol = "__ZN9IOStorage10gMetaClassE", target_kind = "data_rw" },
 ]
 roots = [
   "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",

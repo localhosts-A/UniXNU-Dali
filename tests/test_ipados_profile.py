@@ -62,38 +62,31 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertEqual(prelink["early_security_init"],
                          "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0")
         self.assertEqual(prelink["source_interfaces"], ["com.apple.iokit.IOStorageFamily"])
-        self.assertEqual(prelink["source_interface_bindings"], [
-            {
-                "bundle": "com.apple.iokit.IOStorageFamily",
-                "donor_va": "0xfffffff00596ee88",
-                "symbol": "__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol",
-            },
-            {
-                "bundle": "com.apple.iokit.IOStorageFamily",
-                "donor_va": "0xfffffff005975f0c",
-                "symbol": "__ZN7IOMediaD2Ev",
-            },
-            {
-                "bundle": "com.apple.iokit.IOStorageFamily",
-                "donor_va": "0xfffffff0059762a8",
-                "symbol": "__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane",
-            },
-            {
-                "bundle": "com.apple.iokit.IOStorageFamily",
-                "donor_va": "0xfffffff005976eb0",
-                "symbol": "__ZN7IOMedia11synchronizeEP9IOServiceyyj",
-            },
-            {
-                "bundle": "com.apple.iokit.IOStorageFamily",
-                "donor_va": "0xfffffff0059795b8",
-                "symbol": "__ZNK16IOMediaBSDClient11getProviderEv",
-            },
-            {
-                "bundle": "com.apple.iokit.IOStorageFamily",
-                "donor_va": "0xfffffff00597c344",
-                "symbol": "__ZN17IOPartitionSchemeD2Ev",
-            },
-        ])
+        bindings = prelink["source_interface_bindings"]
+        self.assertEqual(len(bindings), 84)
+        self.assertEqual(len({entry["donor_va"] for entry in bindings}), 84)
+        self.assertEqual(sum(entry.get("target_kind", "code") == "code" for entry in bindings), 73)
+        self.assertEqual(sum(entry.get("target_kind") == "data_const" for entry in bindings), 6)
+        self.assertEqual(sum(entry.get("target_kind") == "data_rw" for entry in bindings), 5)
+        data_symbols = {entry["donor_va"]: entry["symbol"] for entry in bindings
+                        if entry.get("target_kind") in ("data_const", "data_rw")}
+        self.assertEqual(data_symbols, {
+            "0xfffffff006cb44c0": "__ZTV20IOBlockStorageDevice",
+            "0xfffffff006cb6a70": "__ZN7IOMedia9metaClassE",
+            "0xfffffff006cb6a80": "__ZTV7IOMedia",
+            "0xfffffff006cb7128": "__ZTV16IOMediaBSDClient",
+            "0xfffffff006cb7748": "__ZTV17IOPartitionScheme",
+            "0xfffffff006cb7db0": "__ZTV9IOStorage",
+            "0xfffffff007add1d0": "__ZN20IOBlockStorageDevice10gMetaClassE",
+            "0xfffffff007add2e8": "__ZN7IOMedia10gMetaClassE",
+            "0xfffffff007add310": "__ZN16IOMediaBSDClient10gMetaClassE",
+            "0xfffffff007add338": "__ZN17IOPartitionScheme10gMetaClassE",
+            "0xfffffff007add360": "__ZN9IOStorage10gMetaClassE",
+        })
+        code_symbols = {entry["donor_va"]: entry["symbol"] for entry in bindings}
+        self.assertEqual(code_symbols["0xfffffff00597d9f8"], "__ZN9IOStorage8completeEP19IOStorageCompletioniy")
+        self.assertEqual(code_symbols["0xfffffff00597dc64"],
+                         "__ZN9IOStorage18getProvisionStatusEP9IOServiceyyPjP24IOStorageProvisionExtenty")
         self.assertNotIn("com.apple.iokit.IOStorageFamily", prelink["roots"])
         self.assertIn("com.apple.filesystems.apfs", prelink["roots"])
         self.assertIn("com.apple.security.AppleImage4", prelink["roots"])

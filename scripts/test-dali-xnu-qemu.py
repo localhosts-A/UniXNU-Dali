@@ -75,7 +75,7 @@ def validate_prelink_audit_candidate(kernel, report_path):
     transform = report.get('source_interface_transform', {})
     expected_interfaces = sorted(prelink.get('source_interfaces', []))
     if report.get('original_sha256') != prelink.get('kernelcache_sha256') or \
-            transform.get('version') != 1 or \
+            transform.get('version') != 2 or \
             transform.get('original_kernelcache_sha256') != prelink.get('kernelcache_sha256') or \
             not re.fullmatch(r'[0-9a-f]{64}', transform.get('rewritten_prelink_input_sha256', '')) or \
             report.get('source_interfaces') != expected_interfaces:
@@ -90,7 +90,8 @@ def validate_prelink_audit_candidate(kernel, report_path):
             not storage_record.get('segments'):
         raise SystemExit('Prelink must use the source-linked IOStorageFamily as codeless metadata')
     expected_bindings = sorted((
-        {'bundle': item['bundle'], 'donor_va': int(item['donor_va'], 0), 'symbol': item['symbol']}
+        {'bundle': item['bundle'], 'donor_va': int(item['donor_va'], 0),
+         'symbol': item['symbol'], 'target_kind': item.get('target_kind', 'code')}
         for item in prelink.get('source_interface_bindings', [])
     ), key=lambda item: (item['bundle'], item['donor_va'], item['symbol']))
     if len({(item['bundle'], item['donor_va']) for item in expected_bindings}) != len(expected_bindings):
@@ -102,15 +103,42 @@ def validate_prelink_audit_candidate(kernel, report_path):
     if not isinstance(candidate_bindings, list):
         raise SystemExit('Prelink report pointer bindings are malformed')
     for expected, actual in zip(expected_bindings, reported_bindings):
-        if not isinstance(actual, dict) or set(actual) != {
-                'bundle', 'donor_va', 'symbol', 'native_va', 'reference_count'} or \
+        base_fields = {'bundle', 'donor_va', 'symbol', 'target_kind', 'native_va', 'reference_count'}
+        data_fields = {'donor_segment', 'donor_section', 'donor_initprot', 'donor_maxprot',
+                       'native_segment', 'native_section', 'native_initprot', 'native_maxprot'}
+        expected_fields = base_fields | (data_fields if expected['target_kind'] in ('data_const', 'data_rw') else set())
+        if not isinstance(actual, dict) or set(actual) != expected_fields or \
                 any(actual.get(key) != value for key, value in expected.items()):
             raise SystemExit('Prelink report source-interface binding differs from the board declaration')
         native_va = actual.get('native_va')
         reference_count = actual.get('reference_count')
+        alignment = 8 if expected['target_kind'] in ('data_const', 'data_rw') else 4
         if type(native_va) is not int or not 0xffff000000000000 <= native_va < 1 << 64 or \
-                native_va % 4 or type(reference_count) is not int or reference_count < 1:
+                native_va % alignment or type(reference_count) is not int or reference_count < 1:
             raise SystemExit('Prelink report source-interface binding has an invalid native address or reference count')
+        if expected['target_kind'] in ('data_const', 'data_rw'):
+            layout = ({'segment': '__DATA_CONST', 'section': '__const', 'prot': 1}
+                      if expected['target_kind'] == 'data_const' else
+                      {'segment': '__DATA', 'section': '__common', 'prot': 3})
+            for prefix in ('donor', 'native'):
+                if (actual.get(f'{prefix}_segment'), actual.get(f'{prefix}_section'),
+                        actual.get(f'{prefix}_initprot'), actual.get(f'{prefix}_maxprot')) != (
+                        layout['segment'], layout['section'], layout['prot'], layout['prot']):
+                    raise SystemExit('Prelink data binding does not preserve the pinned section/protection layout')
+            donor_segments = storage_record.get('segments', [])
+            donor_matches = [segment for segment in donor_segments
+                             if segment.get('name') == actual['donor_segment'] and
+                             segment.get('va', 0) <= expected['donor_va'] <
+                             segment.get('va', 0) + segment.get('size', 0)]
+            donor_sections = ([section for section in donor_matches[0].get('sections', [])
+                               if section.get('name') == actual['donor_section'] and
+                               section.get('va', 0) <= expected['donor_va'] <
+                               section.get('va', 0) + section.get('size', 0)]
+                              if len(donor_matches) == 1 else [])
+            if len(donor_sections) != 1 or \
+                    donor_matches[0].get('initprot') != actual['donor_initprot'] or \
+                    donor_matches[0].get('maxprot') != actual['donor_maxprot']:
+                raise SystemExit('Prelink data binding is not backed by its donor section manifest')
         donor_relocations = [binding for binding in candidate_bindings
                              if isinstance(binding, dict) and binding.get('target') == expected['donor_va']]
         if len(donor_relocations) != reference_count or any(

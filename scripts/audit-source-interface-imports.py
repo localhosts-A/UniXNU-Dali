@@ -17,6 +17,26 @@ EXECUTABLE_KEYS = (
     'CFBundleExecutable', '_PrelinkExecutableLoadAddr', '_PrelinkExecutableSourceAddr',
     '_PrelinkExecutableSize', '_PrelinkKmodInfo', '_PrelinkExecutableRelativePath',
 )
+DATA_BINDING_LAYOUTS = {
+    'data_const': {'segment': '__DATA_CONST', 'section': '__const', 'initprot': 1, 'maxprot': 1},
+    'data_rw': {'segment': '__DATA', 'section': '__common', 'initprot': 3, 'maxprot': 3},
+}
+
+
+def validate_typed_donor_target(segment, donor_va, target_kind):
+    if target_kind == 'code':
+        if segment['name'] != '__TEXT_EXEC' or not segment['initprot'] & 4:
+            raise ValueError(f'Configured donor {donor_va:#x} is not in executable __TEXT_EXEC')
+        return
+    layout = DATA_BINDING_LAYOUTS.get(target_kind)
+    if layout is None:
+        raise ValueError(f'Unsupported source-interface target kind: {target_kind}')
+    sections = [section for section in segment.get('sections', [])
+                if section['va'] <= donor_va < section['va'] + section['size']]
+    if (segment['name'], segment['initprot'], segment['maxprot']) != (
+            layout['segment'], layout['initprot'], layout['maxprot']) or \
+            len(sections) != 1 or sections[0]['name'] != layout['section'] or donor_va % 8:
+        raise ValueError(f'Configured donor {donor_va:#x} is not in the pinned {target_kind} section/protection layout')
 
 
 def scan_imports(kernelcache, roots, source_interfaces, source_interface_bindings, prelink):
@@ -107,19 +127,24 @@ def scan_imports(kernelcache, roots, source_interfaces, source_interface_binding
 
     bindings = {}
     for item in source_interface_bindings:
-        if not isinstance(item, dict) or set(item) != {'bundle', 'donor_va', 'symbol'}:
-            raise ValueError('Source-interface mapping must contain bundle, donor_va, and symbol')
+        if not isinstance(item, dict) or set(item) not in (
+                {'bundle', 'donor_va', 'symbol'}, {'bundle', 'donor_va', 'symbol', 'target_kind'}):
+            raise ValueError('Source-interface mapping requires bundle, donor_va, symbol, and optional target_kind')
         try:
             donor_va = int(item['donor_va'], 0) if isinstance(item['donor_va'], str) else int(item['donor_va'])
         except (TypeError, ValueError) as exc:
             raise ValueError('Source-interface donor_va must be an integer') from exc
+        target_kind = item.get('target_kind', 'code')
         if item['bundle'] not in interface_ids or donor_va in bindings:
             raise ValueError('Source-interface mapping names an unknown bundle or duplicate donor address')
         matches = [segment for start, end, bundle, segment in interface_segments
                    if start <= donor_va < end and bundle == item['bundle']]
-        if len(matches) != 1 or matches[0]['name'] != '__TEXT_EXEC' or not matches[0]['initprot'] & 4:
-            raise ValueError(f'Configured donor {donor_va:#x} is not in executable __TEXT_EXEC')
-        bindings[donor_va] = item['symbol']
+        if len(matches) != 1:
+            raise ValueError(f'Configured donor {donor_va:#x} does not have one source-interface owner')
+        validate_typed_donor_target(matches[0], donor_va, target_kind)
+        if not isinstance(item['symbol'], str) or not item['symbol']:
+            raise ValueError('Source-interface mapping symbol must be a non-empty string')
+        bindings[donor_va] = {'symbol': item['symbol'], 'target_kind': target_kind}
 
     packed = metadata.get('_PrelinkLinkKASLROffsets')
     if not isinstance(packed, bytes) or len(packed) < 4:
@@ -169,30 +194,37 @@ def scan_imports(kernelcache, roots, source_interfaces, source_interface_binding
 
     imports = []
     for (bundle, donor_va, segment_name), sites in sorted(references.items(), key=lambda item: (item[0][0], item[0][1])):
-        symbol = bindings.get(donor_va)
+        mapping = bindings.get(donor_va)
         donor_segment = next(segment for _, _, owner_bundle, segment in interface_segments
                              if owner_bundle == bundle and segment['name'] == segment_name and
                              segment['va'] <= donor_va < segment['va'] + segment['size'])
+        donor_sections = [section for section in donor_segment.get('sections', [])
+                          if section['va'] <= donor_va < section['va'] + section['size']]
         imports.append({
             'bundle': bundle,
             'donor_va': f'{donor_va:#x}',
             'donor_segment': segment_name,
+            'donor_section': donor_sections[0]['name'] if len(donor_sections) == 1 else None,
             'executable': bool(donor_segment['initprot'] & 4),
+            'initprot': donor_segment['initprot'],
+            'maxprot': donor_segment['maxprot'],
             'kernelcache_exports': sorted(set(original_exports.get(donor_va, []))),
-            'configured_symbol': symbol,
+            'configured_symbol': mapping['symbol'] if mapping else None,
+            'target_kind': mapping['target_kind'] if mapping else None,
             'reference_count': len(sites),
             'references': sites,
         })
 
     observed = {(item['bundle'], int(item['donor_va'], 0)) for item in imports}
-    configured = {(item['bundle'], int(item['donor_va'], 0)): item['symbol'] for item in source_interface_bindings}
-    unresolved = [item for item in imports if item['configured_symbol'] is None or not item['executable']]
+    configured = {(item['bundle'], int(item['donor_va'], 0)): item for item in source_interface_bindings}
+    unresolved = [item for item in imports if item['configured_symbol'] is None]
     unused = [
-        {'bundle': bundle, 'donor_va': f'{donor_va:#x}', 'symbol': symbol}
-        for (bundle, donor_va), symbol in sorted(configured.items()) if (bundle, donor_va) not in observed
+        {'bundle': bundle, 'donor_va': f'{donor_va:#x}', 'symbol': item['symbol'],
+         'target_kind': item.get('target_kind', 'code')}
+        for (bundle, donor_va), item in sorted(configured.items()) if (bundle, donor_va) not in observed
     ]
     return {
-        'schema_version': 1,
+        'schema_version': 2,
         'kernelcache_sha256': hashlib.sha256(kernelcache).hexdigest(),
         'roots': sorted(set(roots)),
         'selected_components': sorted(selected),
