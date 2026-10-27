@@ -65,14 +65,18 @@ class DaliVerifiedRootPolicyTests(unittest.TestCase):
     def test_verified_root_compile_matches_non_werror_xnu_build(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            tree = root / "tree"
-            source = root / "verified_root.c"
+            canonical = root / "canonical"
+            canonical.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(canonical, target_is_directory=True)
+            tree = alias / "tree"
+            source = alias / "verified_root.c"
             output = root / "verified_root.o"
             source.write_text("int verified_root_fixture;\n")
             record_path = tree / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json"
             record_path.parent.mkdir(parents=True)
             record_path.write_text(json.dumps({
-                "directory": str(root),
+                "directory": str(alias),
                 "file": str(source),
                 "arguments": ["clang", "-c", str(source), "-o", "bsd_init.o"],
             }))

@@ -139,8 +139,7 @@ def compile_xnu_object(unixnu, source, output):
         raise SystemExit("XNU bsd_init compile record has no argument vector")
     record_directory = Path(record.get("directory", unixnu)).resolve()
     record_source = Path(record["file"])
-    if not record_source.is_absolute():
-        record_source = (record_directory / record_source).resolve()
+    record_source = (record_source if record_source.is_absolute() else record_directory / record_source).resolve()
     replaced, command, index = False, [], 0
     while index < len(arguments):
         value = arguments[index]
