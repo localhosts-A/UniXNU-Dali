@@ -135,7 +135,11 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
                          "usb_xhci_controller_start", "usb_xhci_controller_stop",
                          "usb_xhci_controller_submit_command", "usb_xhci_controller_next_event",
                          "usb_xhci_control_submit", "usb_xhci_control_event",
-                         "usb_xhci_control_finish", "usb_xhci_control_release_stopped"} <=
+                         "usb_xhci_control_finish", "usb_xhci_control_release_stopped",
+                         "usb_xhci_controller_command", "usb_xhci_device_prepare",
+                         "usb_xhci_device_address", "usb_xhci_device_configure_hub",
+                         "usb_xhci_device_control", "usb_xhci_device_disable",
+                         "usb_xhci_device_release_stopped"} <=
                         set(BUILDER.REQUIRED_SYMBOLS))
 
 
