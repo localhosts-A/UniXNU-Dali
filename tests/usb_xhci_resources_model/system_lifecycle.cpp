@@ -7,8 +7,12 @@
 #include "usb_xhci_controller_test_api.h"
 
 #include <array>
+#include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstring>
+#include <future>
+#include <thread>
 
 namespace {
 constexpr uint32_t kFatTotalSectors = 66584;
@@ -121,6 +125,27 @@ struct Controller {
     uint8_t keyboardReport[8] = {0, 0, 4, 0, 0, 0, 0, 0};
 };
 
+struct RegisterGuard {
+    std::atomic<bool> active{false};
+    std::atomic<bool> block{false};
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    std::atomic<unsigned> calls{0};
+};
+
+static int register_guard(void *context)
+{
+    auto *guard = static_cast<RegisterGuard *>(context);
+    ++guard->calls;
+    if (guard->block.exchange(false, std::memory_order_acq_rel)) {
+        guard->entered.store(true, std::memory_order_release);
+        while (!guard->release.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    }
+    return guard->active.load(std::memory_order_acquire) ? USB_OK : USB_BUSY;
+}
+
 struct CompletionResult { IOReturn result = kIOReturnError; UInt64 bytes = 0; unsigned calls = 0; };
 static void complete(void *opaque, void *, IOReturn result, UInt64 bytes)
 {
@@ -208,7 +233,58 @@ static void test_owner_host_children_and_readonly_fat32()
     assert(resources.start(&fdtProvider));
     DaliUsbXhciOwner owner;
     assert(owner.start(&resources));
-    assert(owner.hasMappedWindow()); // production owner maps resources without touching registers
+    assert(owner.hasMappedWindow());
+
+    RegisterGuard registerGuard;
+    usb_mmio ownerMmio = {};
+    assert(!owner.bindGuardedMmio(register_guard, &registerGuard, &ownerMmio));
+    assert(!ownerMmio.context && !ownerMmio.read32 && !ownerMmio.write32);
+    registerGuard.active = true;
+    assert(owner.bindGuardedMmio(register_guard, &registerGuard, &ownerMmio));
+    assert(ownerMmio.context == &owner && ownerMmio.size == DALI_USB_XHCI_RESOURCE_V1_LENGTH);
+    uint32_t registerValue = 0xfeedfaceu;
+    registerGuard.active = false;
+    assert(usb_mmio_read(&ownerMmio, 0x40u, &registerValue) == USB_BUSY);
+    assert(registerValue == 0xfeedfaceu);
+    assert(usb_mmio_write(&ownerMmio, 0x40u, 0x12345678u) == USB_BUSY);
+    registerGuard.active = true;
+    assert(usb_mmio_write(&ownerMmio, 0x40u, 0x12345678u) == USB_OK);
+    assert(usb_mmio_read(&ownerMmio, 0x40u, &registerValue) == USB_OK);
+    assert(registerValue == 0x12345678u);
+    registerValue = 0xaabbccddu;
+    assert(usb_mmio_read(&ownerMmio, 0x42u, &registerValue) == USB_RANGE);
+    assert(usb_mmio_read(&ownerMmio, ownerMmio.size, &registerValue) == USB_RANGE);
+    assert(registerValue == 0xaabbccddu);
+
+    unsigned releasesBeforeBlockedStop = gIOKitMemoryModel.map_releases;
+    owner.stop(&resources);
+    assert(owner.hasMappedWindow());
+    assert(gIOKitMemoryModel.map_releases == releasesBeforeBlockedStop);
+    assert(!owner.releaseGuardedMmio(false));
+    registerGuard.active = false;
+    assert(!owner.releaseGuardedMmio(true));
+    registerGuard.active = true;
+
+    registerGuard.block.store(true, std::memory_order_release);
+    registerGuard.entered.store(false, std::memory_order_release);
+    registerGuard.release.store(false, std::memory_order_release);
+    uint32_t concurrentRead = 0;
+    auto readFuture = std::async(std::launch::async, [&] {
+        return usb_mmio_read(&ownerMmio, 0x40u, &concurrentRead);
+    });
+    while (!registerGuard.entered.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    auto revokeFuture = std::async(std::launch::async, [&] {
+        return owner.releaseGuardedMmio(true);
+    });
+    assert(revokeFuture.wait_for(std::chrono::milliseconds(10)) == std::future_status::timeout);
+    registerGuard.release.store(true, std::memory_order_release);
+    assert(readFuture.get() == USB_OK && concurrentRead == 0x12345678u);
+    assert(revokeFuture.get());
+    registerGuard.block.store(false, std::memory_order_release);
+    assert(owner.hasMappedWindow());
+    assert(gIOKitMemoryModel.map_releases == releasesBeforeBlockedStop);
 
     dali_usb_xhci_dma_context dmaContext = {};
     assert(dali_usb_xhci_dma_init(&dmaContext, &owner));
@@ -295,8 +371,12 @@ static void test_owner_host_children_and_readonly_fat32()
     assert(gIOKitDmaModel.memory_allocations == gIOKitDmaModel.memory_releases);
     assert(gIOKitDmaModel.command_allocations == gIOKitDmaModel.command_releases);
     assert(gIOKitDmaModel.active_prepares == 0);
+    unsigned releasesBeforeFinalStop = gIOKitMemoryModel.map_releases;
     owner.stop(&resources);
-    assert(!owner.hasMappedWindow() && gIOKitLockCount == 0);
+    assert(!owner.hasMappedWindow());
+    assert(gIOKitMemoryModel.map_releases == releasesBeforeFinalStop + 1u);
+    owner.free();
+    assert(gIOKitLockCount == 0);
 }
 } // namespace
 

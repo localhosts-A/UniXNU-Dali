@@ -31,6 +31,7 @@ struct IOKitMemoryModel {
     unsigned memory_releases = 0;
     unsigned map_calls = 0;
     unsigned map_releases = 0;
+    uint8_t registers[0x1000] = {};
 };
 
 inline IOKitMemoryModel gIOKitMemoryModel;
@@ -160,6 +161,7 @@ inline void *IOMallocZero(size_t size) { return std::calloc(1, size); }
 inline void *IOMalloc(size_t size) { return std::malloc(size); }
 inline void IOFree(void *memory, size_t) { std::free(memory); }
 inline void OSMemoryBarrier() { std::atomic_thread_fence(std::memory_order_seq_cst); }
+inline void IODelay(unsigned int) {}
 
 class IOService;
 
@@ -325,7 +327,8 @@ class IOMemoryMap : public OSObject {
 
 public:
     explicit IOMemoryMap(IOKitMemoryModel *model) : mModel(model) {}
-    uint64_t getVirtualAddress() const { return 0xfeed0000u; }
+    uint64_t getVirtualAddress() const
+    { return reinterpret_cast<uintptr_t>(mModel->registers); }
     void release() override { ++mModel->map_releases; OSObject::release(); }
 };
 

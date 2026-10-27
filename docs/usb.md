@@ -173,13 +173,20 @@ The opt-in `DaliUsbXhciResources` service matches the Dali `xhci0` platform
 device, checks its exact compatible string, and decodes the versioned resource
 property without casting its packed wire bytes to a native structure. Its copy
 API supplies the validated range to `DaliUsbXhciOwner`, which maps that absolute
-range with an inhibit-cache `IODeviceMemory` mapping and retains it until
-`stop()`. The mapping model checks exact range, options, allocation failures,
-and teardown. The owner performs no register reads/writes; it does not acquire
-power, clocks, an IRQ, or qualified DMA, so it does not start or enumerate the
-controller. Source-XNU Action 40386387528 verified both the resource service and
-mapping-owner archive/kernel link; runtime enumeration and hardware qualification
-remain separate.
+range with an inhibit-cache `IODeviceMemory` mapping. The owner can bind bounded
+`usb_mmio` callbacks only while a caller-supplied platform guard succeeds; every
+32-bit read/write rechecks the guard and the mapping bounds, and output remains
+unchanged on failure. An owner lock serializes callbacks, revocation and stop;
+the guard must be nonblocking and non-reentrant. Binding itself does not touch
+registers. Binding retains the owner until revocation, and `stop()` retains the
+mapping while callbacks are bound. Revocation requires a controller-stop proof
+while the platform lease is still valid. These callbacks are a production MMIO
+seam, not a controller owner: no production provider binds the guard, starts
+the xHCI core, acquires power/clocks/IRQ/qualified DMA, or enumerates devices.
+The production-body model covers guarded MMIO and stop-proof retention; its
+controller/host path still uses synthetic MMIO. Source-XNU Action 40386387528
+verified the earlier resource service and mapping-owner link. Runtime enumeration
+and hardware qualification remain separate.
 
 The opt-in XNU profile also compiles the portable MTU3 gadget units for QMU,
 EP0, endpoint setup and the CDC device/log-ring lifecycle into

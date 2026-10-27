@@ -200,6 +200,8 @@ int main()
     owner.stop(&service);
     assert(!owner.started && !owner.hasMappedWindow());
     assert(gIOKitMemoryModel.memory_releases == 1 && gIOKitMemoryModel.map_releases == 1);
+    owner.free();
+    assert(gIOKitLockCount == 0);
 
     gIOKitMemoryModel = {};
     gIOKitMemoryModel.fail_range = true;
