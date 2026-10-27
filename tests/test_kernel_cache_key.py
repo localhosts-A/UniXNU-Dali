@@ -29,7 +29,10 @@ class KernelCacheKeyTests(unittest.TestCase):
             ('name = "dali"', 'name = "other"'),
             ('kit = "Dali"', 'kit = "Other"'),
             ('"build-dali-xnu-platform.py"', '"other-platform.py"'),
-            ('defconfig = "dali_defconfig"', 'defconfig = "other_defconfig"'),
+            ('defconfig = "dali_ipados_defconfig"', 'defconfig = "other_defconfig"'),
+            ('build = "21H461"', 'build = "21H462"'),
+            ('partition_name = "unixnu_data"', 'partition_name = "userdata"'),
+            ('lun = 2', 'lun = 3'),
             ('size_mib = 24', 'size_mib = 25'),
         ]:
             with self.subTest(field=old):

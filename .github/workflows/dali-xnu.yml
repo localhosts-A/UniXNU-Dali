@@ -117,7 +117,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install cmake ninja unifdef llvm lld qemu
+          brew install cmake ninja unifdef llvm lld qemu openssl@3
           printf '%s\n' "$(brew --prefix llvm)/bin" "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
       - name: Test portable UFS commands against the QEMU model
@@ -177,12 +177,18 @@ jobs:
           path: UniXNU/out/dali/package
           key: dali-edk-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache_inputs.outputs.edk }}
 
-      - name: Select the Dali source-only profile
+      - name: Select the Dali compile-only iPadOS profile
         shell: bash
         run: |
           set -euo pipefail
           cd UniXNU
-          ./unixnu defconfig -D "$GITHUB_WORKSPACE/UniXNU-Dali" dali_defconfig
+          defconfig="$(python3 - "$GITHUB_WORKSPACE/UniXNU-Dali/board.toml" <<'PY'
+          import sys, tomllib
+          with open(sys.argv[1], "rb") as source:
+              print(tomllib.load(source)["kernel"]["defconfig"])
+          PY
+          )"
+          ./unixnu defconfig -D "$GITHUB_WORKSPACE/UniXNU-Dali" "$defconfig"
 
       - name: Build and validate source-only XNU
         shell: bash

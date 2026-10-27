@@ -1,8 +1,36 @@
 [board]
 name = "dali"
 soc = "MT6991"
-description = "REDMI K80 Ultra — single-core XNU early boot"
+description = "REDMI K80 Ultra — iPadOS 17.7.11 donor profile; source-XNU compile-only"
 kit = "Dali"
+
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+fetch = ["KernelCache", "StaticTrustCache", "Cryptex1,SystemTrustCache", "OS", "Cryptex1,SystemOS"]
+
+[ipsw.sha256]
+"kernelcache.release.ipad7" = "13b97fa2c5ce97f04408dcc28c41fb6b0d60b9440065197879acf44b2572bf7b"
+"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
+"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+"044-76040-038.dmg.trustcache" = "4563bdbf6ed8f72237d45dbba3ccde432634338f95c10d79d5d4631678a97c7c"
+"044-76034-038.dmg.trustcache" = "9742f3d566369e6c48f63b3dc0740b06c243d13c6650e25bbf44616e13d6d097"
+
+[userdata]
+partition_name = "unixnu_data"
+lun = 2
+first_lba = 7023103
+last_lba = 15403518
+lba_bytes = 4096
+windows = [
+  { name = "OS", component = "OS" },
+  { name = "SystemOS", component = "Cryptex1,SystemOS" },
+]
 
 [firmware]
 config = "dali"
@@ -28,7 +56,7 @@ header_version = 4
 # The generic UniXNU bootimg command currently assumes gzip and BootShim.S.
 
 [kernel]
-defconfig = "dali_defconfig"
+defconfig = "dali_ipados_defconfig"
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
@@ -45,6 +73,9 @@ loader = "firmware"
 title = "Dali single-core XNU early boot"
 dram_size = "0x300000000"
 timeout = 10
+trust_cache_sha256 = ["7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7"]
+skip_setup_tool = "scripts/seed-data-skip-setup.py"
+skip_setup_args = ["--no-auto-dim"]
 # Qualified with the source-only kernel's typed-allocation metadata. The
 # upstream default exceeds kalloc's 32-zone per-size scratch array here.
 kernel_args = ["-v", "dali-earlyboot=1", "kt_fixed_zones=120"]
@@ -53,3 +84,6 @@ kernel_args = ["-v", "dali-earlyboot=1", "kt_fixed_zones=120"]
 tool = "scripts/make-dali-adt.py"
 cpu_regs = "0"
 psci_method = "smc"
+# UUID of the exact hash-pinned donor OS volume; this identifies the mounted root, not Dali hardware.
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+packed_data_ramdisk = true

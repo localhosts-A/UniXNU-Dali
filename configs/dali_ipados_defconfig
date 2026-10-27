@@ -1,0 +1,21 @@
+# Compile-only profile for the iPadOS 17.7.11 port. It intentionally keeps the
+# current proven Dali source-XNU feature set: it does not enable Apple trust,
+# native UFS root, APFS, or userland startup before those paths are qualified.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_SOURCE_STORAGE_FAMILY=y
+CONFIG_XNU_SOURCE_ENTITLEMENT_FREE=y
+# The BCM2837 source development profile has no Image4/AMFI provider. Keep its
+# original runtime selection; a supplied own TC is a loader input, not proof of
+# a functioning Apple trust runtime. Enabling it panics before platform start.
+# CONFIG_XNU_TRUST_CACHE_RUNTIME is not set
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+# MT6991 and the QEMU A710 implement PAN; copyin/copyout must bracket access.
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliUfs.a"
+CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-xnu-platform/libDaliUfs.a"

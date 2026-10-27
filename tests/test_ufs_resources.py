@@ -130,6 +130,32 @@ class ResourceTests(unittest.TestCase):
             self.assertIn(resource_contract(adt.Fdt(raw),raw),output.read_bytes())
             self.assertNotIn(b'darwinboot-kernel-sha256',output.read_bytes())
 
+    def test_os_root_match_adds_ufs_resources_and_data_ramdisk_slot(self):
+        root_uuid = '04769D26-2CA0-4825-B443-E2E5F88300F2'
+        xml = (b'<dict><key>IOProviderClass</key><string>IOMedia</string>'
+               b'<key>IOPropertyMatch</key><dict><key>UUID</key><string>' + root_uuid.encode() +
+               b'</string></dict></dict>\0')
+        for flag in ('--data-ramdisk', '--packed-data-ramdisk'):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as temp:
+                root=Path(temp);source=root/'fdt';output=root/'adt';raw=dtb(fixture());source.write_bytes(raw)
+                command=[sys.executable,str(SCRIPTS/'make-dali-adt.py'),'--fdt',str(source),'--dram-size',
+                         '0x300000000','--output',str(output),'--root-match-volume-uuid',root_uuid,flag]
+                subprocess.run(command,env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='false'),check=True,capture_output=True)
+                result=output.read_bytes()
+                self.assertIn(xml,result)
+                self.assertIn(b'RAMDisk',result)
+                self.assertIn(b'dali-ufs\0',result)
+                self.assertIn(resource_contract(adt.Fdt(raw),raw),result)
+
+    def test_invalid_os_root_uuid_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'fdt';output=root/'adt';source.write_bytes(dtb(fixture()))
+            command=[sys.executable,str(SCRIPTS/'make-dali-adt.py'),'--fdt',str(source),'--dram-size',
+                     '0x300000000','--output',str(output),'--root-match-volume-uuid','not-a-uuid']
+            result=subprocess.run(command,capture_output=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertFalse(output.exists())
+
     def test_explicit_scratch_grant_wire_and_profile_validation(self):
         value=scratch_grant();wire=encode_scratch_grant(value)
         self.assertEqual(len(wire),232)

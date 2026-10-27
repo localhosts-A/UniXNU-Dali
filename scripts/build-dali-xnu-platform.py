@@ -74,7 +74,10 @@ def compile_source(source, output):
     if not replaced:
         raise SystemExit(f"Could not replace compile-record source {record_source} in {record_path}")
     command += ["-I", str(ROOT / "build/storage-abi/include"),
-                "-I", str(ROOT / "refer/IOStorageFamily"), "-I", str(ROOT / "drivers/UfsTransport")]
+                "-I", str(ROOT / "refer/IOStorageFamily"), "-I", str(ROOT / "drivers/UfsTransport"),
+                "-I", str(ROOT.parent / "UniXNU/drivers/NativeUfs"),
+                "-I", str(ROOT.parent / "UniXNU/drivers/NativeVirtioBlock"),
+                "-I", str(ROOT.parent / "UniXNU/kits/VerifiedRoot/include")]
     result = subprocess.run(command, cwd=record_directory, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
     output.with_suffix(output.suffix + ".log").write_text(result.stdout)
@@ -105,7 +108,8 @@ def ufs_archive():
     destination = OUT / "libDaliUfs.a"
     OUT.mkdir(parents=True, exist_ok=True)
     objects, entries = [], []
-    for source in (ROOT / "drivers/DaliUfs/DaliUfsPlatform.cpp", ROOT / "drivers/DaliUfs/DaliUfs.cpp"):
+    for source in (ROOT / "drivers/DaliUfs/DaliUfsPlatform.cpp", ROOT / "drivers/DaliUfs/DaliUfs.cpp",
+                   ROOT / "drivers/DaliUfs/DaliUfsRoot.cpp"):
         obj = OUT / (source.stem + ".o")
         obj.unlink(missing_ok=True)
         compile_source(source, obj)
@@ -121,15 +125,30 @@ def ufs_archive():
     subprocess.run(["xcrun", "ar", "rcs", str(destination), *map(str, objects)], check=True)
     symbols = subprocess.check_output(["xcrun", "nm", "-g", str(destination)], text=True)
     (OUT / "dali-ufs-symbols.txt").write_text(symbols)
-    for symbol in ("DaliUfs10gMetaClassE", "DaliUfsBlock10gMetaClassE"):
+    for symbol in ("DaliUfs10gMetaClassE", "DaliUfsBlock10gMetaClassE",
+                   "DaliUfsRoot10gMetaClassE", "DaliUfsRootBlock10gMetaClassE"):
         if not any(symbol in line and " U " not in line for line in symbols.splitlines()):
             raise SystemExit(f"Dali UFS archive lacks actual metaclass {symbol}")
-    headers = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in
+    headers = {str(p.relative_to(ROOT.parent)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
                sorted((ROOT / "drivers/DaliUfs").glob("*.h"))}
+    generic_headers = (
+        ROOT.parent / "UniXNU/drivers/NativeUfs/RootDiagnostics.h",
+        ROOT.parent / "UniXNU/drivers/NativeUfs/RootPublication.h",
+        ROOT.parent / "UniXNU/drivers/NativeUfs/RootWindowRead.h",
+        ROOT.parent / "UniXNU/drivers/NativeVirtioBlock/VerifiedBlockPolicy.h",
+        ROOT.parent / "UniXNU/kits/VerifiedRoot/include/verified_root.h",
+        ROOT.parent / "UniXNU/drivers/UfsTransport/UfsTransport.h",
+    )
+    for path in generic_headers:
+        if not path.is_file():
+            raise SystemExit(f"Dali root UFS build input is missing: {path}")
+        headers[str(path.relative_to(ROOT.parent))] = hashlib.sha256(path.read_bytes()).hexdigest()
     return {"sources": entries, "headers": headers, "archive_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
             "compiled_source_pins": SOURCE_PINS,
             "effective_xnu_source": XNU_SOURCE_PROOF,
-            "physical_ufs_qualified": False, "write_authorized": False}
+            "physical_ufs_qualified": False, "write_authorized": False,
+            "root_service_default_off": True, "boot_root_authenticated": False,
+            "verified_root_policy_archive_required": True}
 
 
 sources = {

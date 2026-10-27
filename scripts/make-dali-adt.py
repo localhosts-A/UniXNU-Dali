@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import struct
+import uuid
 import zlib
 from dali_ufs_resources import encode_scratch_grant, resource_contract
 
@@ -127,8 +128,11 @@ def main():
                         help="private live FDT; or set DALI_RUNTIME_FDT")
     parser.add_argument("--cpu-regs", default="0")
     parser.add_argument("--psci-method", choices=("smc", "hvc"), default="smc")
-    parser.add_argument("--ramdisk", action="store_true", help="zero RAMDisk slot for DarwinBoot to fill")
+    parser.add_argument("--ramdisk", "--data-ramdisk", "--packed-data-ramdisk", dest="ramdisk", action="store_true",
+                        help="zero RAMDisk slot for DarwinBoot to fill with the Data ramdisk")
     parser.add_argument("--trust-cache", action="store_true", help="zero TrustCache slot for the explicit own test input")
+    parser.add_argument("--root-match-volume-uuid", type=uuid.UUID,
+                        help="match the mounted OS root IOMedia UUID")
     parser.add_argument("--ufs-readonly", action="store_true", help="validate and include the optional physical UFS nub")
     parser.add_argument("--ufs-scratch-grant", type=Path, help="explicit private grant JSON for a boot_b scratch-write test")
     parser.add_argument("--run-token", help="fresh run token; must match the explicit scratch grant")
@@ -156,7 +160,9 @@ def main():
             if not isinstance(document, dict) or document.get("token") != args.run_token:
                 raise ValueError("scratch grant token differs from the candidate run token")
             scratch_grant = encode_scratch_grant(document)
-        ufs_resources = resource_contract(tree, raw_fdt) if args.ufs_readonly or ufs_mode == "true" else None
+        # A root-match selector describes a physical OS volume, so include the
+        # validated UFS platform resource even when the diagnostic UFS flag is off.
+        ufs_resources = resource_contract(tree, raw_fdt) if args.ufs_readonly or ufs_mode == "true" or args.root_match_volume_uuid else None
         root = tree.nodes.get("/", {})
         if b"mediatek,MT6991" not in tree.string_list("/", "compatible"):
             raise ValueError("FDT is not MT6991")
@@ -224,11 +230,18 @@ def main():
         ("recovery-aee-reset-type", struct.pack("<I", 0x80000201)),
     ])
     dram_base = memory[0][0]
+    root_matching = []
+    if args.root_match_volume_uuid:
+        xml = ('<dict><key>IOProviderClass</key><string>IOMedia</string>'
+               '<key>IOPropertyMatch</key><dict><key>UUID</key><string>' +
+               str(args.root_match_volume_uuid).upper() + '</string></dict></dict>\0')
+        root_matching = [("root-matching", xml.encode("ascii"))]
     chosen = apple_node("chosen", [
         ("random-seed", secrets.token_bytes(64)),
         ("osenvironment", b"main\0"),
         ("dram-base", struct.pack("<Q", dram_base)),
         ("dram-size", struct.pack("<Q", args.dram_size)),
+        *root_matching,
         # Only DarwinBoot may fill the measurement of the actual loaded file.
         *([("darwinboot-kernel-sha256", bytes(32))] if scratch_grant is not None else []),
         *empty_nvram_proxy(),

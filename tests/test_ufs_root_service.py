@@ -1,0 +1,79 @@
+from pathlib import Path
+import tomllib
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ROOT_SOURCE = ROOT / "drivers/DaliUfs/DaliUfsRoot.cpp"
+DIAGNOSTIC_SOURCE = ROOT / "drivers/DaliUfs/DaliUfs.cpp"
+BUILDER = ROOT / "scripts/build-dali-xnu-platform.py"
+PERSONALITY = ROOT / "patches/xnu/dali-bootlog-personality.patch"
+
+
+class UfsRootServiceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.root = ROOT_SOURCE.read_text()
+        cls.diagnostic = DIAGNOSTIC_SOURCE.read_text()
+        cls.builder = BUILDER.read_text()
+        cls.personality = PERSONALITY.read_text()
+        with (ROOT / "board.toml").open("rb") as source:
+            cls.board = tomllib.load(source)
+
+    def test_root_personality_is_separate_and_requires_explicit_pid1_mode(self):
+        start = self.root[self.root.index("bool DaliUfsRoot::start("):]
+        self.assertIn('PE_parse_boot_argn("dali-ipados-root"', start)
+        self.assertIn('PE_parse_boot_argn("dali-pid1"', start)
+        self.assertIn('PE_parse_boot_argn("dali-earlyboot"', start)
+        self.assertIn('PE_parse_boot_argn("dali-run"', start)
+        self.assertIn('"dali-auto-fastboot"', start)
+        self.assertIn('"dali-reset-method"', start)
+        self.assertNotIn("dali-ufs-writable", start)
+        self.assertIn("IOClass'         = DaliUfsRoot", self.personality)
+        self.assertIn("IOMatchCategory' = DaliUfsRoot", self.personality)
+
+    def test_diagnostic_service_refuses_to_compete_for_root_controller(self):
+        start = self.diagnostic[self.diagnostic.index("bool DaliUfs::start("):]
+        guard = start.index('PE_parse_boot_argn("dali-ipados-root"')
+        register = start.index("registerService()")
+        self.assertLess(guard, register)
+        self.assertIn("root == 1", start[guard:register])
+
+    def test_only_verified_read_only_windows_can_be_published(self):
+        self.assertIn('findRootLayout(&layout_, &why, rootLun_, kDaliRootContainer)', self.root)
+        self.assertIn('constexpr char kDaliRootContainer[] = "unixnu_data"', self.root)
+        self.assertIn("static constexpr uint8_t kDaliRootLun = 2", self.root)
+        self.assertIn(self.board["payload"]["adt"]["root_match_volume_uuid"], self.root)
+        self.assertIn(f"kDaliContainerFirstLba = {self.board['userdata']['first_lba']}", self.root)
+        self.assertIn(f"kDaliContainerLastLba = {self.board['userdata']['last_lba']}", self.root)
+        self.assertIn("ufsBuildRootPlan(names, layout_.windows, plan_)", self.root)
+        self.assertIn("vr_open(manifest, manifestBytes", self.root)
+        self.assertIn("memcmp(verified_[index].image_sha256, window.sha256", self.root)
+        self.assertIn("vr_verify_block(&block.verified_", self.root)
+        self.assertIn("ufsReadWindow(ops, block->absolute_, block->bytes_", self.root)
+        self.assertIn('"DaliUfsRootLayout.h"', self.root)
+        self.assertIn("*out = true; return kIOReturnSuccess", self.root)
+        self.assertIn("kIOReturnLockedWrite", self.root)
+        self.assertIn("unixnu_ufs::Port port{this, portRead, portWrite, cache, micros, delay, exclusive, nullptr}", self.root)
+        self.assertNotIn("transport_.write(", self.root)
+        self.assertNotIn("dali_ufs_wait_for_manual_recovery", self.root)
+        self.assertNotIn("scratchWrite", self.root)
+
+    def test_owner_authorization_is_bound_to_the_os_window_and_verified_media(self):
+        self.assertIn('index_ != owner_->osWindow_', self.root)
+        self.assertIn("native_verified_block_root_authorized(dev_t device)", self.root)
+        self.assertIn("block->authenticatesVolume(uuid->getCStringNoCopy())", self.root)
+        self.assertIn("__atomic_store_n(&rootAuthorized_, true, __ATOMIC_RELEASE)", self.root)
+        self.assertIn("rootAuthorized() const", self.root)
+
+    def test_archive_records_root_service_and_shared_verification_inputs(self):
+        self.assertIn("ROOT / \"drivers/DaliUfs/DaliUfsRoot.cpp\"", self.builder)
+        for header in ("RootWindowRead.h", "RootPublication.h",
+                       "VerifiedBlockPolicy.h", "verified_root.h"):
+            self.assertIn(header, self.builder)
+        self.assertIn('"root_service_default_off": True', self.builder)
+        self.assertIn('"boot_root_authenticated": False', self.builder)
+
+
+if __name__ == "__main__":
+    unittest.main()

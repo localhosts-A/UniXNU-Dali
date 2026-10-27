@@ -807,8 +807,11 @@ void DaliUfs::worker(void *p, wait_result_t) {
   self->quiesce(); self->release(); thread_terminate(current_thread());
 }
 bool DaliUfs::start(IOService *provider) {
-  unsigned enabled = 0, early = 0, autoFastboot = 0, pid1 = 0, scratch = 0, stopAfter = 0; char reset[16] = {};
+  unsigned enabled = 0, early = 0, autoFastboot = 0, pid1 = 0, root = 0, scratch = 0, stopAfter = 0; char reset[16] = {};
   if (!PE_parse_boot_argn("dali-ufs-readonly", &enabled, sizeof enabled) || enabled != 1) return false;
+  // Root mode has a separate owner and lifetime. Never let this diagnostic
+  // personality race it for the MT6991 controller or publish whole LUNs.
+  if (PE_parse_boot_argn("dali-ipados-root", &root, sizeof root) && root == 1) return false;
   bool scratchArg = PE_parse_boot_argn("dali-ufs-scratch-write", &scratch, sizeof scratch);
   bool stopArg = PE_parse_boot_argn("dali-ufs-stop-after-diagnostics", &stopAfter, sizeof stopAfter);
   PE_parse_boot_argn("dali-earlyboot", &early, sizeof early); PE_parse_boot_argn("dali-auto-fastboot", &autoFastboot, sizeof autoFastboot); PE_parse_boot_argn("dali-pid1", &pid1, sizeof pid1);
