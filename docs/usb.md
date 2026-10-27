@@ -219,12 +219,15 @@ cover the exact source transform, drift refusal and copyin preservation, and
 the VFS patch applies to the pinned XNU d8 source files. A boot-arg-gated QEMU
 test is now wired to mount a FAT32-sized volatile `SourceStorageFixture` volume
 through its published `/dev/diskN` path and read `/mnt/README.TXT` with
-production VFS/msdosfs before launchd. Its mockfs `/mnt` node and runtime hook
-have not yet passed the macOS compile/link or QEMU run, so production FAT32
-runtime remains unqualified. This exercises XNU VFS/msdosfs over a RAM-backed
-IOStorage device; it does not traverse the Dali USB host/controller path or
-qualify USB storage, DMA, physical media, persistence or hardware. No physical
-media test is claimed.
+production VFS/msdosfs before launchd. macOS Action `40592547320` passes the
+source-XNU compile/link, all post-link verifiers and the QEMU `rw4096`,
+`readonly512`, and FAT32 cases. The msdosfs checkpoint returns `0x4d5344460000003f`
+with error 0, covering read-only mount, file content readback and write refusal;
+the final kernel and storage link reports bind to SHA-256
+`0b23b18df34dbe2493bf4845951f4240ff37da117a7c78faf4e75daf02e09691`. This
+validates XNU VFS/msdosfs over volatile RAM-backed IOStorage. It does not
+traverse the Dali USB host/controller path or qualify USB storage, DMA, physical
+media, persistence or hardware. No physical-media test is claimed.
 
 The device tree contains a production SID14 PMIF-M transport with actual identity
 gating, atomic shared-lock operations, bounded completion/error handling,
