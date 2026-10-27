@@ -12,6 +12,7 @@ on:
       - 'drivers/DaliUsbXhciResources/**'
       - 'drivers/DaliUsbXhciOwner/**'
       - 'drivers/DaliUsbGadgetLog/**'
+      - 'drivers/DaliUsb/**'
       - 'patches/xnu/**'
       - 'references/usb-sources.toml'
       - 'scripts/build-dali-usb-host.py'
@@ -26,6 +27,8 @@ on:
       - 'tests/test_dali_usb_hid_builder.py'
       - 'tests/test_dali_usb_xhci_resources_builder.py'
       - 'tests/fixtures/usb_xhci_resource_v1_test.c'
+      - 'tests/fixtures/usb_typec_test.c'
+      - 'tests/test_usb_typec.py'
       - 'tests/usb_xhci_resources_model/**'
       - 'tests/usb_hid_model/**'
       - 'tests/usb_storage_model/**'
@@ -111,6 +114,7 @@ jobs:
           python3 -m unittest discover -s tests/usb -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-core-tests.log"
           python3 -m unittest discover -s tests/unixnu -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/source-builder-tests.log"
           python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_dali_usb_*builder.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-builder-tests.log"
+          UNIXNU_ROOT="$GITHUB_WORKSPACE/UniXNU" python3 "$GITHUB_WORKSPACE/UniXNU-Dali/tests/test_usb_typec.py" 2>&1 | tee "$RUNNER_TEMP/usb-typec-role-worker-tests.log"
 
       - name: Fetch fixed USB and storage source references
         shell: bash
