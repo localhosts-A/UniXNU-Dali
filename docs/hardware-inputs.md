@@ -13,7 +13,11 @@ evidence.
 
 - Root model `MT6991`; compatible `mediatek,MT6991`.
 - Eight CPU affinity IDs (`0x0` through `0x700`), grouped as four, three and
-  one. The live CPU nodes contain no `compatible` strings or MIDR values.
+  one. The live CPU nodes contain no `compatible` strings or MIDR values. The
+  shared MT6991 DTSI now records a derived mapping: CPUs 0–3 A720, CPUs 4–6 X4,
+  and CPU 7 X925, inferred from the public MediaTek core mix plus the reference
+  DTS cluster/PMU association pinned by `UniXNU-MT6991-Common/soc.toml`. This
+  is not a live CPU identity capture.
 - PSCI uses the SMC conduit.
 - GICv3 distributor `0x0c400000`/`0x40000` and redistributor region
   `0x0c440000`/`0x200000`.
@@ -23,11 +27,13 @@ evidence.
 
 ## Format 2 blockers
 
-Do not infer per-core CPU compatibles from PMU cluster names. The public
-reference DTS also has no CPU compatible values, so an authoritative CPU
-mapping is still needed. Before advertising DRAM to XNU, reconcile the root
-range with the reserved-memory, protected and firmware-owned regions. Review
-the timer/GIC ADT contract against the exact target XNU source as well.
+The per-core CPU compatible mapping is evidence-backed but remains inferred;
+runtime MIDRs are still required to make it authoritative. The root memory
+range is 12 GiB, but the FDT has 54 fixed reserved ranges and four dynamically
+allocated reservations. The latter do not have final physical addresses. The
+current UniXNU FDT-to-ADT converter also drops `/reserved-memory` and its
+allocation constraints, so the reservation map cannot yet be handed to XNU.
+Review the timer/GIC ADT contract against the exact target XNU source as well.
 
 Until then `board.toml` stays `example = true` and intentionally has no active
 `[device_tree]`, `[firmware]` or `[payload]` section. The current profile and
