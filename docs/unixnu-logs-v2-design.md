@@ -1,6 +1,6 @@
 # `unixnu_logs` automatic logging design
 
-**Status:** v1/v2 offline decoding is implemented. UEFI source has an empty-pair-only read scanner, selected-slot grant rebinding, and a PCD-gated automatic call to the v1 writer. BDS requests a 128-bit token from EFI RNG and passes it separately as record identity; the storage grant remains unchanged. Three synthetic BlockIo host cases pass, and a DEBUG build compiled RngDxe, BaseRngLib, BDS and UFS logging code using a temporary non-bootable payload fixture. The build kept logging disabled and did not verify runtime entropy or device behavior. Full v1/v2 classification, generation, rotation, v2 writes, target RNG availability, and XNU ownership remain incomplete.
+**Status:** v1/v2 offline decoding and bounded eight-slot classification are implemented. UEFI selects an empty pair first; when none exists, it can rotate only the oldest fully verified UEFI v2 slot whose XNU sibling is all zero, and only when another committed UEFI v2 record remains. Before replacement, the writer revalidates the victim identity and full body, clears and syncs the complete 4 MiB slot, verifies the zero readback, then writes and verifies the new three-phase v2 record. Host simulations pass: scanner 11 cases, selector/grant 14 cases, writer/token/replacement 9 cases. A DEBUG build verified 59 images with a temporary seven-byte non-bootable payload fixture. Logs were disabled; build artifacts, fixture and temporary Python dependencies were removed. Runtime entropy, XNU ownership, device writes, and cross-reboot behavior remain unverified.
 
 ## Existing partition and records
 
@@ -83,10 +83,11 @@ Run the scanner only after the device identity, LUN geometry, and primary and
 backup GPT have been checked. Restrict every request to the exact 8,192-block
 partition extent above, use 4 KiB alignment, serialize access while media is
 stable, and cap each transfer at 1 MiB. Never scan or write adjacent `userdata`
-sectors. The current UEFI source has a separate read-only parent-LUN scanner
-that checks the exact `unixnu_logs` geometry, reads the eight owner slots in
-bounded chunks, and selects a fully zero pair before publishing a single-UEFI-
-slot grant. Each read remains under the scratch driver's admission fence.
+sectors. The current UEFI source has a separate read-only parent-LUN scanner that
+checks the exact `unixnu_logs` geometry and classifies all eight owner slots in
+bounded chunks. It selects an empty pair first or a verified rotation victim
+within the limits below before publishing a single-UEFI-slot grant. Each read
+remains under the scratch driver's admission fence.
 
 Classify every owner slot as one of:
 
@@ -94,17 +95,21 @@ Classify every owner slot as one of:
 |---|---|---|
 | Empty | Entire 4 MiB slot is zero | First choice for a new pair |
 | Valid v1 | Full v1 header, body and commit verification succeeds | Preserve permanently; never select for automatic writes |
-| Valid v2 | Header, commit, body digest, record digest, pair, owner, token and generation agree | Eligible for oldest-generation rotation |
-| Interrupted | Recognizable v2 attempt exists without a matching committed final record | Never count as committed; preserve unless a safe empty pair is available |
+| Valid v2 | Header, commit, body digest, record digest, pair, owner, token and generation agree | UEFI v2 is eligible only with an empty XNU sibling and at least two committed UEFI v2 records overall; a pair containing XNU data remains pinned |
+| Interrupted | Recognizable v2 attempt exists without a matching committed final record | Never count as committed or select for rotation; preserve |
 | Unknown/corrupt | Nonzero bytes do not validate as a known supported schema | Never treat as empty or overwrite automatically |
 
-Choose a wholly empty pair first. When all pairs are occupied, replace the pair
-with the lowest valid v2 generation only if both owner slots are empty or valid
-records consistent with that pair. Never overwrite a valid v1 slot: older
+Choose a wholly empty pair first. The current UEFI grant covers one UEFI slot,
+not its XNU sibling, so replacement is limited to a fully verified UEFI v2
+record whose XNU sibling is entirely empty. Do not reclaim a pair containing a
+valid XNU record until an XNU owner and pair-scoped authority exist. Require at
+least two committed UEFI v2 records before replacement so an interrupted
+in-place clear/write leaves another verified UEFI record. Select the lowest
+generation among eligible victims. Never overwrite a valid v1 slot: older
 firmware can still write a new v1 record into an empty slot, and v1 has no
 generation with which to order that record against v2. A v1 slot remains pinned
-for preservation. If an unknown/corrupt, interrupted, or inconsistent pair
-would have to be reused, skip this boot's write and preserve the remaining
+for preservation. If an unknown/corrupt, interrupted, inconsistent, or XNU-owned
+pair would have to be reused, skip this boot's write and preserve the remaining
 records. Never choose a candidate from a corrupt GPT, a mismatched partition
 identity, an ambiguous generation, or a failed full-record verification.
 
@@ -121,47 +126,56 @@ It recognizes an attempt without a matching final record as interrupted, keeps
 other nonzero failures unknown/corrupt, and derives `max_generation + 1` only
 from fully verified committed UEFI v2 records. Duplicate committed generations
 and generation overflow fail closed. Orphaned or mismatched v2 owner records
-are reported as inconsistent; they remain occupied but do not block selecting a
-separate wholly empty pair.
+are reported as inconsistent and remain pinned; they do not block selection of
+an independent empty pair or eligible victim.
 
 Selection consumes this same scan result, so it reads the partition once while
-the scratch admission fence is held. It still selects only a wholly empty pair;
-there is no v2 writer or rotation yet. Unknown, corrupt, interrupted, v1 and
-inconsistent slots remain preserved. The offline decoder additionally verifies
-the exported XNU body and presents v1 order as unknown while sorting v2 by
+the scratch admission fence is held. It prefers a wholly empty pair, otherwise
+it records the selected oldest eligible UEFI v2 victim and its generation,
+token, input digests and body digest in the scan result. The selector refuses
+rotation when fewer than two committed UEFI v2 records exist. Unknown, corrupt,
+interrupted, v1 and nonempty XNU sibling slots remain preserved. The offline
+decoder additionally verifies the exported XNU body and presents v1 order as unknown while sorting v2 by
 generation. SHA-256 detects corruption; neither format has keyed authentication
 or claims tamper resistance.
 
 ## Commit sequence and owners
 
 Keep the existing three-stage UEFI write protocol: write an attempt record,
-write the body and metadata, then write the final commit record. Synchronize
-media between phases and read the entire selected slot back before reporting
-success. Bind generation and token into each phase. A failed write, sync,
-readback or digest check stops this boot's persistent write; the other valid
-pairs remain untouched.
+write the body and metadata, then write the final commit record. For a selected
+victim, first re-read and verify all three v2 records, record hashes, body digest,
+generation, token, input digests and current device binding against the scan
+identity. Clear the complete 4 MiB slot, synchronize it and read it back as
+zero before writing the new attempt/body/commit records. Synchronize media
+between phases and read the entire selected slot back before reporting success.
+Bind generation and token into each phase. A failed victim check performs no
+write; a failure during clear, sync, write, readback or digest checking stops
+this boot's persistent write immediately and never tries another victim. An
+interrupted replacement can lose its victim, which is why another committed
+UEFI v2 record must remain outside that victim.
 
 The UEFI integration point is after UFS initialization and before controller
 quiesce. The source uses the read-only scan result to publish a grant for exactly
-one UEFI slot and now writes v2 records when the log PCD is explicitly enabled.
+one UEFI slot and writes v2 records when the log PCD is explicitly enabled.
 The scanner's checked `NextGeneration` is passed separately from physical pair
 `Sequence` and the runtime record token. The live grant remains unchanged. The
-logger writes only when the selected pair is entirely empty; it binds generation
-and token into attempt, body and commit records, synchronizes between phases,
-and verifies the full slot after commit. It does not rotate occupied pairs yet.
-The default PCD remains disabled, and there is no XNU writer or token handoff.
+logger writes to an empty pair or to the selected eligible victim. For a victim,
+it performs a full identity/body recheck and clear/readback before binding the
+new generation and token into attempt, body and commit records. It synchronizes
+between phases and verifies the full slot after commit. Rotation remains limited
+to an empty XNU sibling; XNU owner and token handoff are not implemented. The
+default PCD remains disabled.
 The log protocol is revision 3: WRITE requests generation 0 so the host chooses
 the next value; READBACK uses generation 0 for legacy v1 or an explicit nonzero
 generation and token for v2.
 
-The zero/nonzero scanner passed eight earlier host cases; three runtime-token
-BlockIo cases also pass. The v1/v2 scanner passed 11 synthetic cases, the
-affected empty-pair selector passed 8, and the v2 writer/token suite passed 6.
-Host SHA implementations are deterministic test shims, not cryptographic SHA-256
-verification. A DEBUG build verified 59 images with a temporary 7-byte
-non-bootable payload fixture; build output and fixture were removed. The log PCD
-remained disabled, so this build did not perform a runtime write or prove target
-entropy availability. No device behavior has been validated.
+The v1/v2 scanner passed 11 synthetic cases, the selector/grant suite passed 14,
+and the v2 writer/token/replacement suite passed 9. Host SHA implementations
+are deterministic test shims, not cryptographic SHA-256 verification. A DEBUG
+build verified 59 images with a temporary seven-byte non-bootable payload
+fixture; temporary Python dependencies, build output and fixture were removed.
+The log PCD remained disabled, so this build did not perform a runtime write or
+prove target entropy availability. No device behavior has been validated.
 
 XNU persistence is a separate milestone. The current UEFI logger rejects the
 XNU owner, the `msgbuf` snapshot helper has no caller, and storage quiesce does
@@ -173,15 +187,15 @@ failure-path fallback, not a substitute for `unixnu_logs` persistence.
 ## Enablement gates
 
 Keep the default log PCD disabled until all of the following exist. The current
-explicit build profile can exercise the v2 auto-write path on a completely empty
-pair; it is not a device-validated persistent logging configuration.
+explicit build profile can exercise empty-first v2 logging and limited UEFI-slot
+rotation; it is not a device-validated persistent logging configuration.
 
 1. Runtime entropy source verified on the target and shared-token handoff to XNU; v2 token/generation encoding is implemented.
 2. Shared v1/v2 offline decoding and bounded read-only slot classification are implemented and host-tested.
-3. Dynamic per-slot grants and an oldest-safe-v2 pair allocator.
+3. UEFI single-slot dynamic grants and oldest eligible UEFI v2 rotation are implemented; pair-wide reclamation remains gated on XNU ownership and handoff.
 4. Interrupted-write recovery, fail-closed handling, and explicit truncation
    reporting.
 5. An XNU storage owner and handoff that cannot access outside `unixnu_logs`.
-6. User-approved host tests for the new scan, rotation and failure cases, then
-   separately approved device validation of sync and cross-reboot persistence.
+6. Host tests for the scan, rotation and failure cases, then separately
+   authorized device validation of sync and cross-reboot persistence.
 
