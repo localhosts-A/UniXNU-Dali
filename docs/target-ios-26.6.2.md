@@ -20,3 +20,8 @@ remote tags as of 2026-10-27. `xnu-12377.121.6` is an earlier reference,
 not an established source match. Page size, prelink inputs, PAC compatibility,
 boot-args and driver ABI still require examination before enabling an OS profile.
 The target kernelcache and manifest remain in private local storage, not Git.
+
+`ipsw macho info --header` identifies the decompressed kernelcache as an
+AARCH64 ARM64e fileset. The observed Dali Android `/proc/cpuinfo` advertises
+`paca` and `pacg`; that observation alone does not validate the Apple ARM64e
+kernel or user-space ABI on Dali.
