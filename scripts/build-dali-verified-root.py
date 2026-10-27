@@ -159,7 +159,10 @@ def compile_xnu_object(unixnu, source, output):
         index += 1
     if not replaced:
         raise SystemExit(f"could not replace source path in XNU compile record {record_path}")
-    command += ["-I" + str(unixnu / "kits/VerifiedRoot/include"), "-Werror"]
+    # Match the source-only XNU build, which sets BUILD_WERROR=0. Its compile
+    # record may include an optional EXPORT_HDRS/libsa path absent in this
+    # checkout; do not turn that harmless missing-directory warning fatal.
+    command += ["-I" + str(unixnu / "kits/VerifiedRoot/include")]
     result = subprocess.run(command, cwd=record_directory, capture_output=True, text=True)
     output.with_suffix(output.suffix + ".log").write_text(result.stdout + result.stderr)
     if result.returncode:

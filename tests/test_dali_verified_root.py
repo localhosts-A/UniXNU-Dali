@@ -62,6 +62,34 @@ class DaliVerifiedRootPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, str(tree / "build/xnu/ios-obj")):
                     builder.compile_xnu_object(UNIXNU, source, output)
 
+    def test_verified_root_compile_matches_non_werror_xnu_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tree = root / "tree"
+            source = root / "verified_root.c"
+            output = root / "verified_root.o"
+            source.write_text("int verified_root_fixture;\n")
+            record_path = tree / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json"
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps({
+                "directory": str(root),
+                "file": str(source),
+                "arguments": ["clang", "-c", str(source), "-o", "bsd_init.o"],
+            }))
+            captured = {}
+
+            def compile_fixture(command, **kwargs):
+                captured["command"] = command
+                output.write_bytes(struct.pack("<4I", 0xfeedfacf, 0x100000c, 0, 1))
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch.object(builder, "SCRIPT_ROOT", tree), \
+                    patch.object(builder.subprocess, "run", side_effect=compile_fixture):
+                builder.compile_xnu_object(UNIXNU, source, output)
+
+            self.assertNotIn("-Werror", captured["command"])
+            self.assertIn("-I" + str(UNIXNU / "kits/VerifiedRoot/include"), captured["command"])
+
     def test_policy_manifests_bind_both_verified_windows_and_share_one_owner_key(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
