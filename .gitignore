@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+/out/
+/.cache/
+/local.toml
+*.img
+*.dtb
+*.efi
