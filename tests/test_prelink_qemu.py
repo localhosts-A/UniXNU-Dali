@@ -13,12 +13,15 @@ SPEC.loader.exec_module(DALI_QEMU)
 
 
 class PrelinkQemuTests(unittest.TestCase):
-    def test_prelink_qemu_keeps_candidate_hash_gate_and_bounds_initializer_breakpoints(self):
+    def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
 
         self.assertIn('"--prelink-report", args.prelink_report.resolve()', source)
-        self.assertIn('"--skip-initializer-traces"', source)
+        self.assertIn('"--kext-logs"', source)
         self.assertIn('"--trace-symbol", "_register_and_init_prng"', source)
+        for symbol in ("_OSRuntimeInitializeCPP", "__ZN11OSMetaClass11postModLoadEPv",
+                       "__ZN6OSKext5startEb", "__ZN12KLDBootstrap22loadSecurityExtensionsEv"):
+            self.assertIn(f'"--trace-symbol", "{symbol}"', source)
         self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
 
     def test_prelink_requires_the_target_crypto_table_owner(self):

@@ -150,10 +150,15 @@ def main():
     common = [sys.executable, probe, "--kernel", kernel, "--uefi-efi", args.uefi_efi.resolve(),
               "--timeout", "90", "--armvirt", "--armcpu", "--nvram-proxy"]
     if args.prelink_report:
-        # Keep the optional component-initializer breakpoint fan-out disabled,
-        # but trace the actual PRNG registration to catch duplicate startup calls.
-        common += ["--prelink-report", args.prelink_report.resolve(), "--skip-initializer-traces",
-                   "--trace-symbol", "_register_and_init_prng"]
+        # This candidate is explicitly non-loadable, so keep the QEMU run
+        # diagnostic-only and capture the real security-kext/class-registration
+        # path if the pinned target kernel panics during bootstrap.
+        common += ["--prelink-report", args.prelink_report.resolve(), "--kext-logs",
+                   "--trace-symbol", "_register_and_init_prng",
+                   "--trace-symbol", "_OSRuntimeInitializeCPP",
+                   "--trace-symbol", "__ZN11OSMetaClass11postModLoadEPv",
+                   "--trace-symbol", "__ZN6OSKext5startEb",
+                   "--trace-symbol", "__ZN12KLDBootstrap22loadSecurityExtensionsEv"]
     cases = {
         "platform": "__ZN13ArmDTPlatform9configureEP9IOService",
         "cpu": "__ZN6ArmCpu5startEP9IOService",
