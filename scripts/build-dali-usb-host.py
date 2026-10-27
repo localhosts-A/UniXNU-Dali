@@ -35,6 +35,8 @@ REQUIRED_SYMBOLS = (
     "usb_xhci_event_ring_destroy",
     "usb_xhci_controller_start", "usb_xhci_controller_stop",
     "usb_xhci_controller_submit_command", "usb_xhci_controller_next_event",
+    "usb_xhci_control_submit", "usb_xhci_control_event",
+    "usb_xhci_control_finish", "usb_xhci_control_release_stopped",
 )
 
 
