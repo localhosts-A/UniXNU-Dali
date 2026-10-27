@@ -1,7 +1,7 @@
 """Validate and decode the dedicated Dali 32 MiB UFS log partition.
 
-This module never accesses a device. It authenticates bounded partition
-geometry, journal slots and the source-XNU body before producing viewable files.
+This module never accesses a device. It validates bounded partition geometry,
+journal slots and the source-XNU body before producing viewable files.
 The binary snapshots remain authoritative; text files are convenience views.
 """
 import hashlib
@@ -13,7 +13,15 @@ import stat
 import struct
 import uuid
 
-from ufs_expdb_log import decode_log
+from ufs_expdb_log import (
+    MAGIC_V1,
+    MAGIC_V2,
+    V2_BODY_FORMAT_OFFSET,
+    V2_CAPTURE_STAGE_OFFSET,
+    V2_FLAGS_OFFSET,
+    V2_GENERATION_OFFSET,
+    decode_log,
+)
 
 MIB = 1024 * 1024
 PARTITION_BYTES = 32 * MIB
@@ -143,7 +151,12 @@ def decode_slot(slot, *, expected_owner, expected_sequence, expected=None):
         return None
     block = 4096
     header = slot[block:2 * block]
-    if header[:11] != b"DALIUFSLOG1" or any(header[11:16]):
+    magic = header[:16]
+    if magic == MAGIC_V1 and struct.unpack_from("<I", header, 20)[0] == 1:
+        schema = 1
+    elif magic == MAGIC_V2 and struct.unpack_from("<I", header, 20)[0] == 2:
+        schema = 2
+    else:
         raise ValueError("userdata log slot header magic is invalid")
     try:
         token = header[24:56].decode("ascii")
@@ -155,19 +168,28 @@ def decode_slot(slot, *, expected_owner, expected_sequence, expected=None):
             struct.unpack_from("<I", header, 72)[0] != block or
             struct.unpack_from("<Q", header, 76)[0] != SLOT_BLOCKS):
         raise ValueError("userdata log slot owner/sequence/geometry is misplaced")
-    bindings = dict(token=token, owner=expected_owner, sequence=expected_sequence,
+    bindings = dict(schema=schema, token=token, owner=expected_owner, sequence=expected_sequence,
                     block_bytes=block, device_binding=header[84:116].hex(),
                     candidate_sha256=header[116:148].hex(), source_sha256=header[148:180].hex())
+    if schema == 2:
+        bindings.update(
+            generation=struct.unpack_from("<Q", header, V2_GENERATION_OFFSET)[0],
+            flags=struct.unpack_from("<I", header, V2_FLAGS_OFFSET)[0],
+            capture_stage=struct.unpack_from("<I", header, V2_CAPTURE_STAGE_OFFSET)[0],
+            body_format=struct.unpack_from("<I", header, V2_BODY_FORMAT_OFFSET)[0],
+        )
     if expected is not None:
-        for name in ("token", "owner", "sequence", "block_bytes", "device_binding", "candidate_sha256", "source_sha256"):
-            actual_name = "device_binding" if name == "device_binding" else name
-            value = expected.get(actual_name)
-            if value is not None and value != bindings[actual_name]:
+        for name, value in expected.items():
+            if value is not None and name in bindings and value != bindings[name]:
                 raise ValueError("userdata log slot binding differs: " + name)
     body, result = decode_log(slot, token=token, device_binding=bindings["device_binding"],
                               candidate_sha256=bindings["candidate_sha256"], source_sha256=bindings["source_sha256"],
                               block_bytes=block, owner=expected_owner, sequence=expected_sequence,
-                              window_bytes=SLOT_BYTES)
+                              window_bytes=SLOT_BYTES, expected_schema=schema,
+                              expected_generation=bindings.get("generation"),
+                              expected_flags=bindings.get("flags"),
+                              expected_capture_stage=bindings.get("capture_stage"),
+                              expected_body_format=bindings.get("body_format"))
     return dict(body=body, record=result, bindings=bindings)
 
 
@@ -196,7 +218,7 @@ def decode_xnu_body(body):
 def decode_partition(raw, *, expected=None):
     if not isinstance(raw, bytes) or len(raw) != PARTITION_BYTES:
         raise ValueError("expected complete 32 MiB userdata log partition")
-    result = dict(schema=1, bytes=len(raw), sha256=sha256(raw), entries=[])
+    result = dict(schema=2, bytes=len(raw), sha256=sha256(raw), entries=[])
     required = set(expected.get("required_owners", ())) if isinstance(expected, dict) else set()
     for sequence in range(1, 5):
         for owner in (1, 2):
@@ -217,6 +239,28 @@ def decode_partition(raw, *, expected=None):
                 entry["uefi_console_bytes"] = len(decoded["body"])
             result["entries"].append(entry)
             result.setdefault("bodies", {})[str(index)] = decoded["body"]
+    v2_pairs = []
+    for sequence in range(1, 5):
+        pair = [entry for entry in result["entries"] if entry["sequence"] == sequence]
+        owners = {entry["owner"]: entry for entry in pair}
+        uefi = owners.get(1)
+        xnu = owners.get(2)
+        if xnu is not None and xnu["record"]["schema"] == 2:
+            if uefi is None or uefi["record"]["schema"] != 2:
+                raise ValueError("v2 XNU slot has no matching v2 UEFI slot")
+        if uefi is not None and uefi["record"]["schema"] == 2:
+            if xnu is not None:
+                if (xnu["record"]["schema"] != 2 or
+                        xnu["record"]["generation"] != uefi["record"]["generation"] or
+                        xnu["bindings"]["token"] != uefi["bindings"]["token"]):
+                    raise ValueError("v2 UEFI/XNU pair metadata differs")
+            v2_pairs.append(dict(sequence=sequence, generation=uefi["record"]["generation"],
+                                 token=uefi["bindings"]["token"], owners=sorted(owners)))
+    result["v2_generation_order"] = sorted(v2_pairs, key=lambda pair: pair["generation"])
+    generations = [pair["generation"] for pair in v2_pairs]
+    if len(generations) != len(set(generations)):
+        raise ValueError("multiple v2 pairs claim the same generation")
+    result["v1_order"] = "unknown"
     if expected is not None:
         selected = [e for e in result["entries"] if e["sequence"] == expected.get("sequence")]
         owners = {e["owner"] for e in selected}
@@ -253,6 +297,8 @@ def _export_artifacts(raw, decoded, *, decode_error=None, supplemental_files=Non
                 views[name + "_text"] = dict(file=text_name, bytes=len(text_data), sha256=sha256(text_data))
             views[name] = dict(file=filename, bytes=len(data), sha256=sha256(data))
         entries.append(dict(sequence=entry["sequence"], owner=entry["owner"], token=entry["bindings"]["token"],
+                            record_schema=entry["record"]["schema"],
+                            generation=entry["record"].get("generation"),
                             body_file=body_name, body_bytes=len(body), body_sha256=sha256(body), files=views,
                             record=entry["record"], bindings=entry["bindings"], xnu_body=entry.get("xnu_body")))
     supplements = []
@@ -265,8 +311,10 @@ def _export_artifacts(raw, decoded, *, decode_error=None, supplemental_files=Non
                 raise ValueError("invalid supplemental ramoops capture")
             files[name] = data
             supplements.append(dict(file=name, bytes=len(data), sha256=sha256(data)))
-    manifest = dict(schema=1, kind="dali-userdata-ufs-log-export", partition_file="unixnu_logs.img",
+    manifest = dict(schema=2, kind="dali-userdata-ufs-log-export", partition_file="unixnu_logs.img",
                     partition_bytes=len(raw), partition_sha256=sha256(raw), entries=entries,
+                    v1_order=decoded.get("v1_order", "unknown") if decoded is not None else "unknown",
+                    v2_generation_order=decoded.get("v2_generation_order", []) if decoded is not None else [],
                     supplemental_files=supplements,
                     physical_write_qualified=False, persistence_qualified=False)
     if decode_error is not None:
@@ -296,6 +344,27 @@ def write_export(directory, raw, decoded, *, decode_error=None, supplemental_fil
     return manifest
 
 
+def _legacy_v1_manifest(manifest):
+    """Reconstruct the prior export manifest when every stored record is v1."""
+    if any(entry.get("record_schema") != 1 for entry in manifest.get("entries", [])):
+        return None
+    legacy = dict(manifest)
+    legacy["schema"] = 1
+    legacy.pop("v1_order", None)
+    legacy.pop("v2_generation_order", None)
+    entries = []
+    for entry in legacy.get("entries", []):
+        old_entry = dict(entry)
+        old_entry.pop("record_schema", None)
+        old_entry.pop("generation", None)
+        bindings = dict(old_entry["bindings"])
+        bindings.pop("schema", None)
+        old_entry["bindings"] = bindings
+        entries.append(old_entry)
+    legacy["entries"] = entries
+    return legacy
+
+
 def validate_export(directory, raw, decoded, *, decode_error=None, supplemental_files=None):
     """Require an existing export to exactly match current raw and ramoops data."""
     directory = Path(directory)
@@ -304,7 +373,8 @@ def validate_export(directory, raw, decoded, *, decode_error=None, supplemental_
     manifest_path = directory / "manifest.json"
     manifest_bytes = _read_local_manifest(manifest_path)
     recorded = json.loads(manifest_bytes)
-    if recorded != manifest:
+    legacy = _legacy_v1_manifest(manifest)
+    if recorded != manifest and (legacy is None or recorded != legacy):
         raise ValueError("existing userdata export manifest differs from live evidence")
     expected_names = set(files) | {"manifest.json"}
     actual_names = {entry.name for entry in directory.iterdir()}
