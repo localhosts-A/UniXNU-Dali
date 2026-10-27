@@ -1,6 +1,6 @@
 # `unixnu_logs` automatic logging design
 
-**Status:** v1/v2 offline decoding is implemented and passed the approved host cases; the device scanner and automatic writes remain design-only.
+**Status:** v1/v2 offline decoding is implemented. UEFI source now has an empty-pair-only read scanner, selected-slot grant rebinding, and a PCD-gated automatic call to the existing v1 writer; eight synthetic C host cases pass and the DEBUG firmware build compiles. No device validation has occurred. Full v1/v2 classification, runtime boot identity, rotation, v2 writes, and XNU ownership remain incomplete.
 
 ## Existing partition and records
 
@@ -74,8 +74,10 @@ Run the scanner only after the device identity, LUN geometry, and primary and
 backup GPT have been checked. Restrict every request to the exact 8,192-block
 partition extent above, use 4 KiB alignment, serialize access while media is
 stable, and cap each transfer at 1 MiB. Never scan or write adjacent `userdata`
-sectors. The current single-slot grant cannot perform this scan; add a separate
-read-only parent-LUN scanner before publishing a selected-slot grant.
+sectors. The current UEFI source has a separate read-only parent-LUN scanner
+that checks the exact `unixnu_logs` geometry, reads the eight owner slots in
+bounded chunks, and selects a fully zero pair before publishing a single-UEFI-
+slot grant. Each read remains under the scratch driver's admission fence.
 
 Classify every owner slot as one of:
 
@@ -102,12 +104,15 @@ is the cost of preserving them without assuming rollback cannot occur. If no
 fully empty or safely replaceable v2 pair remains, fail closed rather than
 silently migrating or erasing v1 records.
 
-The scanner validates all eight slots before selection. It may read in bounded
-chunks, but it must validate the whole candidate slot before calling it valid.
-The offline decoder should implement the same v1/v2 rules and show v1 order as
-unknown, while sorting v2 by generation. Keep SHA-256 as corruption detection;
-the existing format has no keyed authentication and the new schema must not
-claim tamper resistance.
+The design requires validating all eight slots and classifying the supported
+schemas before selection. The current interim scanner reads every slot but only
+distinguishes all-zero from nonzero: every nonzero slot, including valid,
+interrupted, corrupt, or unknown data, is treated as occupied. It never rotates
+or overwrites a nonzero slot and fails closed when no empty pair remains. It
+does not yet establish that a v1 or v2 record is valid. The offline decoder
+implements v1/v2 record checks and shows v1 order as unknown, while sorting v2
+by generation. Keep SHA-256 as corruption detection; neither format has keyed
+authentication or claims tamper resistance.
 
 ## Commit sequence and owners
 
@@ -119,10 +124,15 @@ readback or digest check stops this boot's persistent write; the other valid
 pairs remain untouched.
 
 The UEFI integration point is after UFS initialization and before controller
-quiesce. Replace build-time fixed slot selection with the result of the
-read-only scan, then publish a grant for exactly one UEFI slot. The current
-build-time 240-byte authorization record, fixed `Sequence`, manual menu, and
-default-disabled PCD do not support that path.
+quiesce. The source now uses the read-only scan result to publish a grant for
+exactly one UEFI slot and calls the existing v1 writer automatically when the
+log PCD is explicitly enabled. The default PCD remains disabled. The 240-byte
+build-time authorization wire still provides a preferred physical sequence and
+build-time token; authorization rebinds the sequence/window after scanning.
+That token is not unique per boot, and this path has no v2 generation, safe
+rotation, or XNU writer. The code has passed eight synthetic host cases and a
+DEBUG compile using a temporary payload fixture; neither proves device behavior
+or produces a bootable image.
 
 XNU persistence is a separate milestone. The current UEFI logger rejects the
 XNU owner, the `msgbuf` snapshot helper has no caller, and storage quiesce does
@@ -133,11 +143,13 @@ failure-path fallback, not a substitute for `unixnu_logs` persistence.
 
 ## Enablement gates
 
-Keep automatic writes disabled until all of the following exist:
+Keep the default log PCD disabled until all of the following exist. The current
+explicit build profile is experimental and can exercise the v1 auto-call path;
+it is not a device-validated persistent logging configuration.
 
 1. Runtime entropy source and v2 boot token generation.
-2. Shared v1/v2 offline decoding and bounded read-only device slot scanning.
-3. Dynamic per-slot grants and an oldest-safe-pair allocator.
+2. Shared v1/v2 offline decoding and bounded read-only slot classification.
+3. Dynamic per-slot grants and an oldest-safe-v2 pair allocator.
 4. Interrupted-write recovery, fail-closed handling, and explicit truncation
    reporting.
 5. An XNU storage owner and handoff that cannot access outside `unixnu_logs`.
