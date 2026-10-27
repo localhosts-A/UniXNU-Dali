@@ -200,6 +200,11 @@ def validate_reset_instructions(kernel, output):
     }, indent=2) + '\n')
 
 
+def should_run_default_budget_control(prelink_report):
+    """Run the fallback-allocation negative control only on source-only XNU."""
+    return prelink_report is None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unixnu", type=Path, required=True)
@@ -298,22 +303,31 @@ def main():
             timer.get("_armcpu_timer_interrupts", 0) < 1:
         raise SystemExit("QEMU did not deliver a real architectural timer interrupt through ArmCpu")
 
-    # Reproduce the hardware failure with this exact kernel by omitting only
-    # the explicit typed-zone budget. Stop at the real fatal Assert, before
-    # panic enters the debugger; no guest state or assertion is modified.
-    negative_args = ' '.join([arg for arg in board_args if not arg.startswith('kt_fixed_zones=')]
-                             + ['serial=3', 'debug=0x14e'])
-    destination = output / 'default-budget-refusal'
-    result = subprocess.run([*common, '--kernel-base-args', negative_args, '--break-symbol', '_Assert',
-                             '--read-entry-region', '0:0:40', '--read-entry-region', '2:0:60',
-                             '--output', destination], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, timeout=150)
-    (output / 'default-budget-refusal.log').write_text(result.stdout)
-    if result.returncode:
-        raise SystemExit(f'Default kalloc budget control failed:\n{result.stdout[-5000:]}')
-    refusal = json.loads((destination / 'gdb-stop.json').read_text())
-    validate_budget_refusal(refusal, reports['platform']['kernel_sha256'], negative_args)
-    shutil.rmtree(destination / "esp", ignore_errors=True)
+    budget_control = {
+        "status": "not-run",
+        "assertion_reproduced": None,
+        "reason": "non-loadable prelink audit candidate cannot qualify source allocator fallback",
+    }
+    if should_run_default_budget_control(prelink_report):
+        # Reproduce the hardware failure with this exact source-only kernel by
+        # omitting only the explicit typed-zone budget. Stop at the real fatal
+        # Assert, before panic enters the debugger; no guest state or assertion
+        # is modified.
+        negative_args = ' '.join([arg for arg in board_args if not arg.startswith('kt_fixed_zones=')]
+                                 + ['serial=3', 'debug=0x14e'])
+        destination = output / 'default-budget-refusal'
+        result = subprocess.run([*common, '--kernel-base-args', negative_args, '--break-symbol', '_Assert',
+                                 '--read-entry-region', '0:0:40', '--read-entry-region', '2:0:60',
+                                 '--output', destination], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, timeout=150)
+        (output / 'default-budget-refusal.log').write_text(result.stdout)
+        if result.returncode:
+            raise SystemExit(f'Default kalloc budget control failed:\n{result.stdout[-5000:]}')
+        refusal = json.loads((destination / 'gdb-stop.json').read_text())
+        validate_budget_refusal(refusal, reports['platform']['kernel_sha256'], negative_args)
+        shutil.rmtree(destination / "esp", ignore_errors=True)
+        budget_control = {"status": "passed", "assertion_reproduced": True,
+                          "reason": "source-only kernel stopped at the expected fatal Assert"}
 
     summary = {
         "kernel_sha256": hashes.pop(),
@@ -324,7 +338,8 @@ def main():
         "image4_crypto_hash_method": IMAGE4_CRYPTO_HASH_METHOD if prelink_report else None,
         "amfi_only_platform_code": AMFI_ONLY_PLATFORM_CODE if prelink_report else None,
         "hardware_kernel_arguments": board_args,
-        "default_kalloc_budget_assertion_reproduced": True,
+        "default_kalloc_budget_assertion_reproduced": budget_control["assertion_reproduced"],
+        "default_kalloc_budget_control": budget_control,
         "compiled_reset_instruction_chain_present": True,
         "darwinboot_uefi_to_xnu": True,
         "qemu_cpus": 1,

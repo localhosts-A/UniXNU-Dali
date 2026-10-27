@@ -103,6 +103,12 @@ class PrelinkQemuTests(unittest.TestCase):
             self.assertIn(f'"--trace-symbol", "{symbol}"', source)
         self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
 
+    def test_nonloadable_prelink_candidate_skips_source_allocator_negative_control(self):
+        self.assertFalse(DALI_QEMU.should_run_default_budget_control({"loadable": False}))
+        self.assertTrue(DALI_QEMU.should_run_default_budget_control(None))
+        source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
+        self.assertIn('"default_kalloc_budget_assertion_reproduced": budget_control["assertion_reproduced"]', source)
+
     def test_prelink_requires_the_target_crypto_table_owner(self):
         valid = {
             "crypto14_initialization_observed": True,
