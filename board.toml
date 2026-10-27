@@ -36,7 +36,7 @@ windows = [
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-unixnu_commit = "261b9670eed9df7277b3fea6e1e292a68458ad4e"
+unixnu_commit = "9ad0254b70c96cdadff24050063bde93587ca540"
 uefi_commit = "0f82a6a85d28660cbaa5db662507ea2a78891c44"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
@@ -80,6 +80,12 @@ early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4
 # donor bundle identity/personality metadata as codeless so dependents resolve
 # without registering a second IOUserBlockStorageDevice class.
 source_interfaces = ["com.apple.iokit.IOStorageFamily"]
+# Pinned donor disassembly at this address matches IOMedia::attachToChild in
+# the public IOStorageFamily source pin. This static mapping does not qualify
+# runtime behavior; the prelink and ABI reports remain audit-only.
+source_interface_bindings = [
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff0059762a8", symbol = "__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane" },
+]
 roots = [
   "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
   "com.apple.driver.AppleARMPlatform",

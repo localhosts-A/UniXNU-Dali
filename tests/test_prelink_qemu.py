@@ -13,6 +13,8 @@ SPEC.loader.exec_module(DALI_QEMU)
 
 
 class PrelinkQemuTests(unittest.TestCase):
+    STORAGE_SYMBOL = '__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane'
+
     def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
 
@@ -54,6 +56,18 @@ class PrelinkQemuTests(unittest.TestCase):
                 "runtime_qualified": False,
                 "loadable": False,
                 "source_interfaces": ["com.apple.iokit.IOStorageFamily"],
+                "source_interface_bindings": [{
+                    "bundle": "com.apple.iokit.IOStorageFamily",
+                    "donor_va": 0xfffffff0059762a8,
+                    "symbol": self.STORAGE_SYMBOL,
+                    "native_va": 0xfffffff00bf9c704,
+                    "reference_count": 1,
+                }],
+                "bindings": [{
+                    "target": 0xfffffff0059762a8,
+                    "new_target": 0xfffffff00bf9c704,
+                    "kind": "source_interface",
+                }],
                 "codeless_components": ["com.apple.iokit.IOStorageFamily"],
                 "components": [],
                 "source_interface_transform": {
@@ -63,7 +77,7 @@ class PrelinkQemuTests(unittest.TestCase):
                     "entries": {"com.apple.iokit.IOStorageFamily": {
                         "dependencies": ["com.apple.kpi.iokit"],
                         "personalities": ["StorageFixture"],
-                        "segments": [{"name": "__TEXT", "va": 0x1000, "size": 0x1000}],
+                        "segments": [{"name": "__TEXT_EXEC", "va": 0xfffffff0059762a8, "size": 0x1000}],
                     }},
                 },
             }))
@@ -86,6 +100,18 @@ class PrelinkQemuTests(unittest.TestCase):
                 "runtime_qualified": False,
                 "loadable": False,
                 "source_interfaces": ["com.apple.iokit.IOStorageFamily"],
+                "source_interface_bindings": [{
+                    "bundle": "com.apple.iokit.IOStorageFamily",
+                    "donor_va": 0xfffffff0059762a8,
+                    "symbol": self.STORAGE_SYMBOL,
+                    "native_va": 0xfffffff00bf9c704,
+                    "reference_count": 1,
+                }],
+                "bindings": [{
+                    "target": 0xfffffff0059762a8,
+                    "new_target": 0xfffffff00bf9c704,
+                    "kind": "source_interface",
+                }],
                 "codeless_components": ["com.apple.iokit.IOStorageFamily"],
                 "components": [],
                 "source_interface_transform": {
@@ -104,6 +130,39 @@ class PrelinkQemuTests(unittest.TestCase):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
 
             report.write_text(json.dumps({**base, "source_interfaces": []}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            report.write_text(json.dumps({**base, "source_interface_bindings": []}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            bad_mapping = [{**base["source_interface_bindings"][0], "native_va": 0}]
+            report.write_text(json.dumps({**base, "source_interface_bindings": bad_mapping}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            bad_bindings = [{**base["bindings"][0], "new_target": 0xfffffff00bf9c708}]
+            report.write_text(json.dumps({**base, "bindings": bad_bindings}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            contradictory = [base["bindings"][0], {
+                **base["bindings"][0], "new_target": 0xfffffff00bf9c708,
+            }]
+            report.write_text(json.dumps({**base, "bindings": contradictory}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            report.write_text(json.dumps({**base, "source_interface_bindings": [{
+                **base["source_interface_bindings"][0], "reference_count": True,
+            }]}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            report.write_text(json.dumps({**base, "source_interface_bindings": [
+                *base["source_interface_bindings"], base["source_interface_bindings"][0],
+            ]}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
 

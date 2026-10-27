@@ -89,6 +89,34 @@ def validate_prelink_audit_candidate(kernel, report_path):
             not storage_record.get('personalities') or \
             not storage_record.get('segments'):
         raise SystemExit('Prelink must use the source-linked IOStorageFamily as codeless metadata')
+    expected_bindings = sorted((
+        {'bundle': item['bundle'], 'donor_va': int(item['donor_va'], 0), 'symbol': item['symbol']}
+        for item in prelink.get('source_interface_bindings', [])
+    ), key=lambda item: (item['bundle'], item['donor_va'], item['symbol']))
+    if len({(item['bundle'], item['donor_va']) for item in expected_bindings}) != len(expected_bindings):
+        raise SystemExit('Board declares duplicate source-interface donor bindings')
+    reported_bindings = report.get('source_interface_bindings')
+    if not isinstance(reported_bindings, list) or len(reported_bindings) != len(expected_bindings):
+        raise SystemExit('Prelink report does not contain exactly the board-pinned source-interface bindings')
+    candidate_bindings = report.get('bindings', [])
+    if not isinstance(candidate_bindings, list):
+        raise SystemExit('Prelink report pointer bindings are malformed')
+    for expected, actual in zip(expected_bindings, reported_bindings):
+        if not isinstance(actual, dict) or set(actual) != {
+                'bundle', 'donor_va', 'symbol', 'native_va', 'reference_count'} or \
+                any(actual.get(key) != value for key, value in expected.items()):
+            raise SystemExit('Prelink report source-interface binding differs from the board declaration')
+        native_va = actual.get('native_va')
+        reference_count = actual.get('reference_count')
+        if type(native_va) is not int or not 0xffff000000000000 <= native_va < 1 << 64 or \
+                native_va % 4 or type(reference_count) is not int or reference_count < 1:
+            raise SystemExit('Prelink report source-interface binding has an invalid native address or reference count')
+        donor_relocations = [binding for binding in candidate_bindings
+                             if isinstance(binding, dict) and binding.get('target') == expected['donor_va']]
+        if len(donor_relocations) != reference_count or any(
+                binding.get('new_target') != native_va or binding.get('kind') != 'source_interface'
+                for binding in donor_relocations):
+            raise SystemExit('Prelink candidate pointer bindings do not match the source-interface mapping report')
     return report
 
 

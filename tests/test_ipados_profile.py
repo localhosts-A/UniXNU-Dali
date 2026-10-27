@@ -62,6 +62,11 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertEqual(prelink["early_security_init"],
                          "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0")
         self.assertEqual(prelink["source_interfaces"], ["com.apple.iokit.IOStorageFamily"])
+        self.assertEqual(prelink["source_interface_bindings"], [{
+            "bundle": "com.apple.iokit.IOStorageFamily",
+            "donor_va": "0xfffffff0059762a8",
+            "symbol": "__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane",
+        }])
         self.assertNotIn("com.apple.iokit.IOStorageFamily", prelink["roots"])
         self.assertIn("com.apple.filesystems.apfs", prelink["roots"])
         self.assertIn("com.apple.security.AppleImage4", prelink["roots"])
