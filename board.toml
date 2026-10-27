@@ -64,6 +64,7 @@ archives = [
   "build-mockfs-fixture.py",
   "build-source-storage.py",
   "build-dali-xnu-platform.py",
+  "build-dali-verified-root.py",
 ]
 
 [payload]

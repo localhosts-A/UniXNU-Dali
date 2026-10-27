@@ -8,6 +8,7 @@ ROOT_SOURCE = ROOT / "drivers/DaliUfs/DaliUfsRoot.cpp"
 ROOT_FALLBACK = ROOT / "drivers/DaliUfs/VerifiedRootUnavailable.cpp"
 DIAGNOSTIC_SOURCE = ROOT / "drivers/DaliUfs/DaliUfs.cpp"
 BUILDER = ROOT / "scripts/build-dali-xnu-platform.py"
+POLICY_BUILDER = ROOT / "scripts/build-dali-verified-root.py"
 PERSONALITY = ROOT / "patches/xnu/dali-bootlog-personality.patch"
 WORKFLOW = ROOT / ".github/workflows/dali-xnu.yml"
 
@@ -19,6 +20,7 @@ class UfsRootServiceTests(unittest.TestCase):
         cls.fallback = ROOT_FALLBACK.read_text()
         cls.diagnostic = DIAGNOSTIC_SOURCE.read_text()
         cls.builder = BUILDER.read_text()
+        cls.policy_builder = POLICY_BUILDER.read_text()
         cls.personality = PERSONALITY.read_text()
         cls.workflow = WORKFLOW.read_text()
         with (ROOT / "board.toml").open("rb") as source:
@@ -100,6 +102,22 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("__attribute__((weak)) int vr_verify_block", self.fallback)
         self.assertIn("return VR_BLOCK", self.fallback)
         self.assertIn("strong replacements", self.fallback)
+
+    def test_production_policy_builder_binds_raw_windows_and_never_archives_private_key(self):
+        self.assertIn('"OS", "SystemOS"', self.policy_builder)
+        self.assertIn("verify_built_image(image, entries, expected_capacity)", self.policy_builder)
+        self.assertIn("metadata[\"image_sha256\"] != expected_digest.hex()", self.policy_builder)
+        self.assertIn("OS and SystemOS policies must use the same owner anchor", self.policy_builder)
+        self.assertIn('"private_key_in_archive": False', self.policy_builder)
+        self.assertIn("libVerifiedRootDali.a", self.policy_builder)
+
+    def test_device_root_defconfig_links_production_policy_archive_separately(self):
+        compile_profile = (ROOT / "configs/dali_ipados_root_defconfig").read_text()
+        boot_profile = (ROOT / "configs/dali_ipados_root_boot_defconfig").read_text()
+        self.assertNotIn("libVerifiedRootDali.a", compile_profile)
+        self.assertIn("libVerifiedRootDali.a", boot_profile)
+        self.assertIn("CONFIG_XNU_DALI_OWNER_PRIVATE_KEY=", boot_profile)
+        self.assertIn("CONFIG_XNU_DALI_OWNER_PUBLIC_KEY=", boot_profile)
 
     def test_root_compile_action_uses_owner_profile_without_qemu_or_device_artifact(self):
         self.assertIn("options: [reset-qualification, pid1, ipados-root-compile]", self.workflow)
