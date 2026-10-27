@@ -121,6 +121,9 @@ class ResourceTests(unittest.TestCase):
             self.assertNotIn(b'darwinboot-kernel-sha256',result)
             self.assertEqual(result.count(b'crypto-hash-method'), 1)
             self.assertEqual(result.count(b'sha2-384\0'), 1)
+            self.assertEqual(result.count(b'amfi-only-platform-code'), 1)
+            self.assertIn(b'amfi-only-platform-code' + bytes(32 - len(b'amfi-only-platform-code')) +
+                          struct.pack('<II', 4, 1), result)
             result=subprocess.run(command+['--ufs-readonly'],env=env,capture_output=True)
             self.assertNotEqual(result.returncode,0)
 

@@ -14,6 +14,7 @@ import tomllib
 
 DEVICE_ROOT = Path(__file__).resolve().parents[1]
 IMAGE4_CRYPTO_HASH_METHOD = "sha2-384"
+AMFI_ONLY_PLATFORM_CODE = True
 
 
 def validate_psci_abis(assembly):
@@ -230,6 +231,7 @@ def main():
         # diagnostic-only and capture the real security-kext/class-registration
         # path if the pinned target kernel panics during bootstrap.
         common += ["--crypto-hash-method", IMAGE4_CRYPTO_HASH_METHOD,
+                   "--amfi-platform-only",
                    "--prelink-report", args.prelink_report.resolve(), "--kext-logs",
                    "--trace-symbol", "_register_and_init_prng",
                    "--trace-symbol", "_OSRuntimeInitializeCPP",
@@ -320,6 +322,7 @@ def main():
         "candidate_loadable": prelink_report.get("loadable") if prelink_report else None,
         "diagnostic_only": bool(prelink_report),
         "image4_crypto_hash_method": IMAGE4_CRYPTO_HASH_METHOD if prelink_report else None,
+        "amfi_only_platform_code": AMFI_ONLY_PLATFORM_CODE if prelink_report else None,
         "hardware_kernel_arguments": board_args,
         "default_kalloc_budget_assertion_reproduced": True,
         "compiled_reset_instruction_chain_present": True,

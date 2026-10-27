@@ -11,6 +11,7 @@ import zlib
 from dali_ufs_resources import encode_scratch_grant, resource_contract
 
 IMAGE4_CRYPTO_HASH_METHOD = b"sha2-384\0"
+AMFI_ONLY_PLATFORM_CODE = struct.pack("<I", 1)
 
 
 class Fdt:
@@ -244,6 +245,9 @@ def main():
         # iPadOS 17.7.11's iPad7,1/J120AP boot contract selects SHA-384 for
         # Image4. This describes the donor OS security policy, not Dali's SoC.
         ("crypto-hash-method", IMAGE4_CRYPTO_HASH_METHOD),
+        # Match the target platform's AMFI policy node. Without this boolean,
+        # AppleMobileFileIntegrity panics before platform initialization.
+        ("amfi-only-platform-code", AMFI_ONLY_PLATFORM_CODE),
         ("dram-base", struct.pack("<Q", dram_base)),
         ("dram-size", struct.pack("<Q", args.dram_size)),
         *root_matching,
@@ -279,7 +283,7 @@ def main():
     ])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(root_node)
-    print(f"Dali Apple DT: {len(root_node)} bytes, CPU MPIDR 0, GICv3, timer {timer_hz[0]} Hz, Image4 SHA-384")
+    print(f"Dali Apple DT: {len(root_node)} bytes, CPU MPIDR 0, GICv3, timer {timer_hz[0]} Hz, Image4 SHA-384, AMFI platform-only")
 
 
 if __name__ == "__main__":

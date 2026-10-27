@@ -93,6 +93,8 @@ class PrelinkQemuTests(unittest.TestCase):
 
         self.assertEqual(DALI_QEMU.IMAGE4_CRYPTO_HASH_METHOD, "sha2-384")
         self.assertIn('["--crypto-hash-method", IMAGE4_CRYPTO_HASH_METHOD,', source)
+        self.assertTrue(DALI_QEMU.AMFI_ONLY_PLATFORM_CODE)
+        self.assertIn('"--amfi-platform-only",', source)
         self.assertIn('"--prelink-report", args.prelink_report.resolve()', source)
         self.assertIn('"--kext-logs"', source)
         self.assertIn('"--trace-symbol", "_register_and_init_prng"', source)
