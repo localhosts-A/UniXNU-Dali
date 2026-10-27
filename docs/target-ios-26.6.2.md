@@ -21,6 +21,13 @@ not an established source match. Page size, prelink inputs, PAC compatibility,
 boot-args and driver ABI still require examination before enabling an OS profile.
 The target kernelcache and manifest remain in private local storage, not Git.
 
+UniXNU's `profiles/os/ios-26.6.2-23G90/profile.toml` now pins this IPSW
+identity, the compressed kernelcache member, and the locally decompressed
+kernelcache digest. Its `xnu_revision` points to public XNU commit
+`ac9718fb1af618d5ce8678d0dc6e8a58f252216f` (`xnu-12377.121.6`); the profile
+records `source_tag_matches_runtime = false`. This is a source reference for
+continued ABI work, not a claim that it builds or matches the 23G90 kernel.
+
 `ipsw macho info --header` identifies the decompressed kernelcache as an
 AARCH64 ARM64e fileset. The observed Dali Android `/proc/cpuinfo` advertises
 `paca` and `pacg`; that observation alone does not validate the Apple ARM64e

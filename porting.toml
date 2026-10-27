@@ -1,0 +1,189 @@
+schema_version = 1
+
+[device]
+name = "dali"
+soc = "MT6991"
+os_profile = "ios-26.6.2-23G90"
+summary = "Format 2 migration scaffold for a minimal iOS 26.6.2 boot and Apple display on Redmi K80 Ultra."
+
+[[area]]
+id = "configuration"
+status = "planned"
+components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink"]
+paths = ["board.toml", "feeds.toml", "configs/**", "dts/**", "docs/hardware-inputs.md"]
+inputs = ["The public MT6991 source is pinned; Dali live FDT facts are summarized in docs/hardware-inputs.md."]
+configuration = ["board.toml selects MT6991 and the iOS 26.6.2 runtime profile; the defconfig and device tree remain incomplete."]
+procedure = ["Record source and runtime inputs before selecting kernel options or publishing a board device tree."]
+findings = ["The captured CPU nodes do not provide compatible or MIDR values, and the advertised DRAM range is not reconciled with reserved regions."]
+completion = ["A reviewed device tree, target defconfig, pinned feeds and resolved profile describe the same board and runtime inputs."]
+limits = ["This is inventory only; no Format 2 checker, build or device boot has been run."]
+next_action = ["Recover authoritative CPU identifiers and reconcile every firmware-owned and reserved memory range."]
+evidence = [{ kind = "source", reference = "docs/hardware-inputs.md", result = "Sanitized observations and unresolved live-FDT inputs." }]
+
+[[area]]
+id = "firmware"
+status = "planned"
+components = ["DarwinBoot"]
+paths = ["board.toml", "docs/hardware-inputs.md"]
+inputs = ["UEFI-Dali contains earlier Dali boot and GOP work, but its Format 2 integration is not wired here."]
+configuration = ["The board scaffold does not yet select a Format 2 UEFI package or payload path."]
+procedure = ["Map the reviewed Dali UEFI DSC/FDF inputs to Format 2 and preserve source commit provenance."]
+findings = ["The existing UEFI package has its own Dali payload flow; the generic Format 2 firmware builder still needs a stable payload bridge."]
+completion = ["A reproducible firmware build enters DarwinBoot with the reviewed DTB and payload and preserves the framebuffer handoff."]
+limits = ["No UEFI build or target-device validation was run for this scaffold."]
+next_action = ["Implement and review the payload handoff after the board device tree is complete."]
+evidence = []
+
+[[area]]
+id = "cpu"
+status = "planned"
+components = []
+paths = ["board.toml", "dts/**", "docs/hardware-inputs.md"]
+inputs = ["The live FDT lists eight affinity IDs in clusters of four, three and one."]
+configuration = ["No per-core compatible or MIDR values are asserted in the device scaffold."]
+procedure = ["Source CPU identities from an authoritative Dali hardware input, then enable only the validated boot CPU first."]
+findings = ["PMU cluster names are not sufficient evidence for CPU compatible strings."]
+completion = ["The primary CPU reaches its checkpoint; additional CPUs and PSCI behavior are enabled only after their identities and entry paths are confirmed."]
+limits = ["The observed tree is not sufficient to build a valid Format 2 CPU ADT."]
+next_action = ["Obtain authoritative core identifiers and record the selected single-core MPIDR."]
+evidence = []
+
+[[area]]
+id = "memory"
+status = "planned"
+components = []
+paths = ["dts/**", "docs/hardware-inputs.md"]
+inputs = ["The live root node reports DRAM at 0x80000000 with size 0x300000000."]
+configuration = ["No DRAM range is published in a Dali board DTS until protected and reserved regions are reconciled."]
+procedure = ["Compare the root memory range, reserved-memory nodes, firmware allocations and XNU handoff ranges."]
+findings = ["The raw live FDT includes vendor memory and secure-region metadata that is not represented in the board scaffold."]
+completion = ["Every usable and reserved physical range is accounted for and DMA ownership is explicit."]
+limits = ["The advertised root range alone is not safe to hand to XNU."]
+next_action = ["Reconcile the complete reserved-memory map before generating an Apple ADT."]
+evidence = []
+
+[[area]]
+id = "storage"
+status = "planned"
+components = []
+paths = ["docs/**", "scripts/ufs_*.py", "scripts/decode-userdata-logs.py"]
+inputs = ["Earlier UEFI work includes MT6991 UFS host and bounded unixnu_logs access; the iOS 26 root path is not integrated."]
+configuration = ["The existing logs partition remains a separate authorized range; no new device write is enabled by this scaffold."]
+procedure = ["Complete ownership handoff, automatic records and slot generation before any device-side persistence claim."]
+findings = ["The current branch contains offline log decoding and identity checks, but not automatic UEFI and XNU log rotation."]
+completion = ["Read-only UFS identity and geometry are correct, and authorized automatic records survive reboot and export through Android."]
+limits = ["No new device write, XNU UFS operation or cross-reboot persistence was performed."]
+next_action = ["Finish the generation-based logger and XNU storage ownership handoff before asking for a device trial."]
+evidence = []
+
+[[area]]
+id = "display"
+status = "planned"
+components = ["GopFramebuffer"]
+paths = ["board.toml", "docs/hardware-inputs.md"]
+inputs = ["Earlier Dali firmware has GOP evidence; the Format 2 component catalog records an iOS 17 ABI, not the target 26.6.2 ABI."]
+configuration = ["The board does not yet declare a target display component or framebuffer ADT node."]
+procedure = ["Audit the target display ABI and preserve the firmware framebuffer through the XNU handoff before panel-specific work."]
+findings = ["A firmware GOP frame does not prove that target XNU can retain or present the Apple startup image."]
+completion = ["The target XNU checkpoint and Apple startup image are captured in the same boot record."]
+limits = ["No iOS 26 kernel display ABI or panel cold-start path is verified."]
+next_action = ["Complete minimal XNU handoff, then validate GOP framebuffer ownership and target driver compatibility."]
+evidence = []
+
+[[area]]
+id = "input"
+status = "planned"
+components = []
+paths = ["board.toml", "docs/**"]
+inputs = ["Touch and physical-button support are outside the first display checkpoint except for safe recovery controls."]
+configuration = ["No iOS touch component is selected in this first-stage record."]
+procedure = ["Start touch adaptation only after the target Apple image is visible."]
+findings = ["Earlier UEFI physical keys are recovery input, not iOS touch support."]
+completion = ["Touches map correctly to the display and release events remain stable under multitouch."]
+limits = ["Touch is deferred to its own plan."]
+next_action = ["Keep the touch subplan pending until the display milestone is reached."]
+evidence = []
+
+[[area]]
+id = "gpu"
+status = "planned"
+components = []
+paths = ["board.toml", "docs/**"]
+inputs = ["GPU and Metal are later stages after the minimal display path."]
+configuration = ["No GPU component or firmware is selected."]
+procedure = ["Inventory MT6991 GPU, SMMU and firmware only after the first display milestone."]
+findings = ["The target kernel ABI and board DMA policy remain unverified."]
+completion = ["A known image renders through the target GPU path with stable mapping and fences."]
+limits = ["GPU is deferred to its own plan."]
+next_action = ["Keep the GPU subplan pending until the display milestone is reached."]
+evidence = []
+
+[[area]]
+id = "network"
+status = "planned"
+components = []
+paths = ["board.toml", "docs/**"]
+inputs = ["Networking is not required for the first boot and display checkpoint."]
+configuration = ["No network component is selected."]
+procedure = ["Inventory the controller and firmware after the boot and display path is stable."]
+findings = ["No target network ABI or firmware input has been reviewed."]
+completion = ["The selected network path scans, associates and transfers data reliably."]
+limits = ["Network is outside the current milestone."]
+next_action = ["Leave network inactive until the first display milestone."]
+evidence = []
+
+[[area]]
+id = "audio"
+status = "planned"
+components = []
+paths = ["board.toml", "docs/**"]
+inputs = ["Audio is not required for the first boot and display checkpoint."]
+configuration = ["No audio component is selected."]
+procedure = ["Inventory audio routes only after the target userland stage begins."]
+findings = ["No audio device tree or codec integration has been reviewed."]
+completion = ["Each claimed audio route passes playback and capture checks on the target device."]
+limits = ["Audio is outside the current milestone."]
+next_action = ["Leave audio inactive until later userland work."]
+evidence = []
+
+[[area]]
+id = "power"
+status = "planned"
+components = []
+paths = ["board.toml", "docs/**"]
+inputs = ["Power controls are not required for the first boot and display checkpoint."]
+configuration = ["No power-management component is selected."]
+procedure = ["Inventory thermal, battery, and sleep interfaces after stable boot and display."]
+findings = ["No target power-management ABI is reviewed."]
+completion = ["Declared power controls and readings match observed behavior, and claimed sleep/resume paths recover."]
+limits = ["Power management is outside the current milestone."]
+next_action = ["Leave power controls inactive until later board work."]
+evidence = []
+
+[[area]]
+id = "packaging"
+status = "planned"
+components = []
+paths = ["board.toml", "feeds.toml", "configs/**", "dts/**"]
+inputs = ["The 23G90 IPSW and kernelcache are pinned in the UniXNU OS profile; the board inputs remain incomplete."]
+configuration = ["No Format 2 device tree, UEFI payload bridge, or boot-image recipe is selected yet."]
+procedure = ["Package only after profile, source compatibility, board tree and firmware paths are reviewed."]
+findings = ["The target kernelcache pin is distinct from the closest public XNU source revision."]
+completion = ["Kernel and ADT match the target inputs and produce a reproducible Dali boot image."]
+limits = ["No build or packaging validation was run."]
+next_action = ["Resolve target source compatibility and board tree before defining the build package."]
+evidence = []
+
+[[area]]
+id = "diagnostics"
+status = "planned"
+components = []
+paths = ["docs/**", "scripts/**", "tests/**"]
+inputs = ["Existing offline log decoders and private read-only evidence provide the starting diagnostic inventory."]
+configuration = ["The scaffold keeps private FDT, IPSW and device captures outside Git."]
+procedure = ["For each milestone, record exact revisions, commands, logs and whether evidence is source, host or device."]
+findings = ["The Dali target FDT source has no corresponding Git revision; its capture hash and firmware fingerprint identify the input."]
+completion = ["Every claimed milestone has reproducible source, host or device evidence tied to a full revision."]
+limits = ["No checker, build, test or device validation was run for this change."]
+next_action = ["Add evidence only after the user approves the relevant host tests or device step."]
+evidence = []
