@@ -116,8 +116,11 @@ class ResourceTests(unittest.TestCase):
             command=[sys.executable,str(SCRIPTS/'make-dali-adt.py'),'--fdt',str(source),'--dram-size','0x300000000','--output',str(output)]
             env=dict(os.environ,DALI_XNU_UFS_READ_ONLY='false')
             subprocess.run(command,env=env,check=True,capture_output=True)
-            self.assertNotIn(b'dali-ufs\0',output.read_bytes())
-            self.assertNotIn(b'darwinboot-kernel-sha256',output.read_bytes())
+            result = output.read_bytes()
+            self.assertNotIn(b'dali-ufs\0',result)
+            self.assertNotIn(b'darwinboot-kernel-sha256',result)
+            self.assertEqual(result.count(b'crypto-hash-method'), 1)
+            self.assertEqual(result.count(b'sha2-384\0'), 1)
             result=subprocess.run(command+['--ufs-readonly'],env=env,capture_output=True)
             self.assertNotEqual(result.returncode,0)
 

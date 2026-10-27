@@ -10,6 +10,8 @@ import uuid
 import zlib
 from dali_ufs_resources import encode_scratch_grant, resource_contract
 
+IMAGE4_CRYPTO_HASH_METHOD = b"sha2-384\0"
+
 
 class Fdt:
     def __init__(self, data):
@@ -239,6 +241,9 @@ def main():
     chosen = apple_node("chosen", [
         ("random-seed", secrets.token_bytes(64)),
         ("osenvironment", b"main\0"),
+        # iPadOS 17.7.11's iPad7,1/J120AP boot contract selects SHA-384 for
+        # Image4. This describes the donor OS security policy, not Dali's SoC.
+        ("crypto-hash-method", IMAGE4_CRYPTO_HASH_METHOD),
         ("dram-base", struct.pack("<Q", dram_base)),
         ("dram-size", struct.pack("<Q", args.dram_size)),
         *root_matching,
@@ -274,7 +279,7 @@ def main():
     ])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(root_node)
-    print(f"Dali Apple DT: {len(root_node)} bytes, CPU MPIDR 0, GICv3, timer {timer_hz[0]} Hz")
+    print(f"Dali Apple DT: {len(root_node)} bytes, CPU MPIDR 0, GICv3, timer {timer_hz[0]} Hz, Image4 SHA-384")
 
 
 if __name__ == "__main__":

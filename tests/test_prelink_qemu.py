@@ -91,6 +91,8 @@ class PrelinkQemuTests(unittest.TestCase):
     def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
 
+        self.assertEqual(DALI_QEMU.IMAGE4_CRYPTO_HASH_METHOD, "sha2-384")
+        self.assertIn('["--crypto-hash-method", IMAGE4_CRYPTO_HASH_METHOD,', source)
         self.assertIn('"--prelink-report", args.prelink_report.resolve()', source)
         self.assertIn('"--kext-logs"', source)
         self.assertIn('"--trace-symbol", "_register_and_init_prng"', source)
