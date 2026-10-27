@@ -15,6 +15,7 @@ SPEC.loader.exec_module(DALI_QEMU)
 class PrelinkQemuTests(unittest.TestCase):
     STORAGE_SYMBOL = '__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane'
     STORAGE_SYNCHRONIZE_SYMBOL = '__ZN7IOMedia11synchronizeEP9IOServiceyyj'
+    PARTITION_SCHEME_D2_SYMBOL = '__ZN17IOPartitionSchemeD2Ev'
 
     def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
@@ -72,6 +73,13 @@ class PrelinkQemuTests(unittest.TestCase):
                         "native_va": 0xfffffff00bf9d3a8,
                         "reference_count": 1,
                     },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff00597c344,
+                        "symbol": self.PARTITION_SCHEME_D2_SYMBOL,
+                        "native_va": 0xfffffff00bfa2e38,
+                        "reference_count": 1,
+                    },
                 ],
                 "bindings": [
                     {
@@ -84,6 +92,11 @@ class PrelinkQemuTests(unittest.TestCase):
                         "new_target": 0xfffffff00bf9d3a8,
                         "kind": "source_interface",
                     },
+                    {
+                        "target": 0xfffffff00597c344,
+                        "new_target": 0xfffffff00bfa2e38,
+                        "kind": "source_interface",
+                    },
                 ],
                 "codeless_components": ["com.apple.iokit.IOStorageFamily"],
                 "components": [],
@@ -94,7 +107,7 @@ class PrelinkQemuTests(unittest.TestCase):
                     "entries": {"com.apple.iokit.IOStorageFamily": {
                         "dependencies": ["com.apple.kpi.iokit"],
                         "personalities": ["StorageFixture"],
-                        "segments": [{"name": "__TEXT_EXEC", "va": 0xfffffff0059762a8, "size": 0x1000}],
+                        "segments": [{"name": "__TEXT_EXEC", "va": 0xfffffff00596c000, "size": 0x14358}],
                     }},
                 },
             }))
@@ -132,6 +145,13 @@ class PrelinkQemuTests(unittest.TestCase):
                         "native_va": 0xfffffff00bf9d3a8,
                         "reference_count": 1,
                     },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff00597c344,
+                        "symbol": self.PARTITION_SCHEME_D2_SYMBOL,
+                        "native_va": 0xfffffff00bfa2e38,
+                        "reference_count": 1,
+                    },
                 ],
                 "bindings": [
                     {
@@ -144,6 +164,11 @@ class PrelinkQemuTests(unittest.TestCase):
                         "new_target": 0xfffffff00bf9d3a8,
                         "kind": "source_interface",
                     },
+                    {
+                        "target": 0xfffffff00597c344,
+                        "new_target": 0xfffffff00bfa2e38,
+                        "kind": "source_interface",
+                    },
                 ],
                 "codeless_components": ["com.apple.iokit.IOStorageFamily"],
                 "components": [],
@@ -154,7 +179,7 @@ class PrelinkQemuTests(unittest.TestCase):
                     "entries": {"com.apple.iokit.IOStorageFamily": {
                         "dependencies": ["com.apple.kpi.iokit"],
                         "personalities": ["StorageFixture"],
-                        "segments": [{"name": "__TEXT", "va": 0x1000, "size": 0x1000}],
+                        "segments": [{"name": "__TEXT_EXEC", "va": 0xfffffff00596c000, "size": 0x14358}],
                     }},
                 },
             }

@@ -73,6 +73,11 @@ class IpadosProfileTests(unittest.TestCase):
                 "donor_va": "0xfffffff005976eb0",
                 "symbol": "__ZN7IOMedia11synchronizeEP9IOServiceyyj",
             },
+            {
+                "bundle": "com.apple.iokit.IOStorageFamily",
+                "donor_va": "0xfffffff00597c344",
+                "symbol": "__ZN17IOPartitionSchemeD2Ev",
+            },
         ])
         self.assertNotIn("com.apple.iokit.IOStorageFamily", prelink["roots"])
         self.assertIn("com.apple.filesystems.apfs", prelink["roots"])
