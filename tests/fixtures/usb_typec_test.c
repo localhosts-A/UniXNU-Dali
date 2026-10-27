@@ -28,8 +28,11 @@ struct role_model {
     struct model *usb;
     enum role_event events[64];
     unsigned event_count;
-    int sync_result, stop_dma_result, select_result, start_result;
+    int stop_submissions_result, sync_result, cancel_result, stop_dma_result;
+    int select_stopped_result, select_device_result, select_host_result;
+    int start_device_result, start_host_result;
     bool dma_stopped;
+    bool fail_vbus_disable, fail_typec_stop;
 };
 static struct model *model_of(struct dali_usb_pmif *p) { return p->registers.context; }
 static void set_voltage(struct model *m, uint16_t millivolts, bool present, bool safe)
@@ -143,16 +146,27 @@ static int poll_through(struct model *m, uint64_t until, struct dali_typec_sampl
 static void role_record(struct role_model *r, enum role_event event)
 { assert(r->event_count < 64); r->events[r->event_count++] = event; }
 static int role_stop_submissions(void *context)
-{ role_record(context, ROLE_STOP_SUBMISSIONS); return USB_OK; }
+{
+    struct role_model *r = context; role_record(r, ROLE_STOP_SUBMISSIONS);
+    return r->stop_submissions_result;
+}
 static int role_sync_storage(void *context)
 {
     struct role_model *r = context; role_record(r, ROLE_SYNC_STORAGE); return r->sync_result;
 }
 static int role_cancel_requests(void *context)
-{ role_record(context, ROLE_CANCEL_REQUESTS); return USB_OK; }
+{
+    struct role_model *r = context; role_record(r, ROLE_CANCEL_REQUESTS);
+    return r->cancel_result;
+}
 static int role_stop_dma(void *context)
 {
     struct role_model *r = context; role_record(r, ROLE_STOP_DMA);
+    if (r->fail_vbus_disable) {
+        /* VBUS-off follows stop-DMA immediately; fail its first PMIF access. */
+        r->usb->fail_operation = r->usb->operations + 1;
+        r->fail_vbus_disable = false;
+    }
     r->dma_stopped = r->stop_dma_result == USB_OK; return r->stop_dma_result;
 }
 static int role_select(void *context, enum usb_role role)
@@ -161,6 +175,11 @@ static int role_select(void *context, enum usb_role role)
     if (role == USB_ROLE_STOPPED) {
         role_record(r, ROLE_SELECT_STOPPED);
         assert(r->dma_stopped && r->usb->vbus.state == DALI_VBUS_OFF);
+        if (r->fail_typec_stop) {
+            /* dali_usb_typec_stop() starts with this next PMIF transaction. */
+            r->usb->fail_operation = r->usb->operations + 1;
+            r->fail_typec_stop = false;
+        }
     } else if (role == USB_ROLE_DEVICE) {
         role_record(r, ROLE_SELECT_DEVICE);
         assert(r->usb->typec.mode == DALI_CC_DEVICE && r->usb->vbus.state == DALI_VBUS_OFF);
@@ -169,7 +188,8 @@ static int role_select(void *context, enum usb_role role)
         assert(role == USB_ROLE_HOST && r->usb->typec.mode == DALI_CC_HOST &&
             r->usb->vbus.state == DALI_VBUS_OFF && !(r->usb->regs[0x108] & 1));
     }
-    return r->select_result;
+    return role == USB_ROLE_STOPPED ? r->select_stopped_result :
+        role == USB_ROLE_DEVICE ? r->select_device_result : r->select_host_result;
 }
 static int role_start(void *context, enum usb_role role)
 {
@@ -182,7 +202,7 @@ static int role_start(void *context, enum usb_role role)
         assert(role == USB_ROLE_DEVICE && r->usb->typec.mode == DALI_CC_DEVICE &&
             r->usb->vbus.state == DALI_VBUS_OFF && r->usb->external_vbus);
     }
-    return r->start_result;
+    return role == USB_ROLE_HOST ? r->start_host_result : r->start_device_result;
 }
 static struct usb_role_ops role_ops(struct role_model *r)
 {
@@ -200,6 +220,15 @@ static int worker_poll_to_host(struct model *m, struct dali_usb_role_worker *wor
         if (result != USB_AGAIN) return result;
     }
     return dali_usb_role_worker_poll(worker, 120000, sample);
+}
+static int worker_detach_host(struct model *m, struct dali_usb_role_worker *worker,
+    struct dali_typec_sample *sample)
+{
+    m->regs[0x41d] = 0; set_voltage(m, 0, false, true);
+    assert(dali_usb_role_worker_poll(worker, 125000, sample) == USB_AGAIN);
+    assert(dali_usb_role_worker_poll(worker, 130000, sample) == USB_AGAIN);
+    assert(dali_usb_role_worker_poll(worker, 135000, sample) == USB_AGAIN);
+    return dali_usb_role_worker_poll(worker, 140000, sample);
 }
 static void host_attach(struct model *m, uint8_t polarity)
 {
@@ -402,11 +431,7 @@ static void test_role_worker_host_device_and_shutdown(void)
 
     /* A detach is a STOPPED boundary; only after sync/cancel/DMA proof may the
      * source turn off and the TCPC return to DRP to discover a different role. */
-    m.regs[0x41d] = 0; set_voltage(&m, 0, false, true);
-    assert(dali_usb_role_worker_poll(&worker, 125000, &sample) == USB_AGAIN);
-    assert(dali_usb_role_worker_poll(&worker, 130000, &sample) == USB_AGAIN);
-    assert(dali_usb_role_worker_poll(&worker, 135000, &sample) == USB_AGAIN);
-    assert(dali_usb_role_worker_poll(&worker, 140000, &sample) == USB_OK);
+    assert(worker_detach_host(&m, &worker, &sample) == USB_OK);
     assert(sample.role == USB_ROLE_STOPPED && worker.role.role == USB_ROLE_STOPPED &&
         m.vbus.state == DALI_VBUS_OFF && m.typec.mode == DALI_CC_DRP);
     const enum role_event host_stop[] = {ROLE_STOP_SUBMISSIONS, ROLE_SYNC_STORAGE,
@@ -447,11 +472,7 @@ static void test_role_worker_retains_source_until_sync_and_stop_proof(void)
 
         if (failure == 0) roles.sync_result = USB_TIMEOUT;
         else roles.stop_dma_result = USB_TIMEOUT;
-        m.regs[0x41d] = 0; set_voltage(&m, 0, false, true);
-        assert(dali_usb_role_worker_poll(&worker, 125000, &sample) == USB_AGAIN);
-        assert(dali_usb_role_worker_poll(&worker, 130000, &sample) == USB_AGAIN);
-        assert(dali_usb_role_worker_poll(&worker, 135000, &sample) == USB_AGAIN);
-        assert(dali_usb_role_worker_poll(&worker, 140000, &sample) == USB_TIMEOUT);
+        assert(worker_detach_host(&m, &worker, &sample) == USB_TIMEOUT);
         assert(worker.faulted && worker.role.faulted && m.vbus.state == DALI_VBUS_ON &&
             (m.regs[0x108] & 1) && m.typec.mode == DALI_CC_HOST);
 
@@ -464,12 +485,100 @@ static void test_role_worker_retains_source_until_sync_and_stop_proof(void)
             assert(roles.events[i] != ROLE_SELECT_DEVICE && roles.events[i] != ROLE_START_DEVICE);
     }
 }
+static void test_role_worker_stop_callback_failures_retain_vbus(void)
+{
+    for (unsigned failure = 0; failure < 4; ++failure) {
+        struct model m; prepare(&m); start(&m, DALI_CC_DRP);
+        struct role_model roles = {.usb = &m};
+        struct usb_role_ops ops = role_ops(&roles);
+        struct dali_usb_role_worker worker = {0};
+        struct dali_typec_sample sample = {0};
+        assert(dali_usb_role_worker_init(&worker, &m.typec, &m.vbus, &ops) == USB_OK);
+        assert(worker_poll_to_host(&m, &worker, &sample) == USB_OK);
+        if (failure == 0) roles.stop_submissions_result = USB_TIMEOUT;
+        if (failure == 1) roles.sync_result = USB_TIMEOUT;
+        if (failure == 2) roles.cancel_result = USB_TIMEOUT;
+        if (failure == 3) roles.stop_dma_result = USB_TIMEOUT;
+
+        assert(worker_detach_host(&m, &worker, &sample) == USB_TIMEOUT);
+        assert(worker.faulted && worker.role.faulted && m.vbus.state == DALI_VBUS_ON &&
+            (m.regs[0x108] & 1) && m.typec.mode == DALI_CC_HOST);
+        assert(roles.event_count >= 6 && roles.events[2] == ROLE_STOP_SUBMISSIONS &&
+            roles.events[3] == ROLE_SYNC_STORAGE && roles.events[4] == ROLE_CANCEL_REQUESTS &&
+            roles.events[5] == ROLE_STOP_DMA);
+
+        roles.stop_submissions_result = USB_OK;
+        roles.sync_result = USB_OK;
+        roles.cancel_result = USB_OK;
+        roles.stop_dma_result = USB_OK;
+        assert(dali_usb_role_worker_stop(&worker) == USB_OK);
+        assert(!worker.initialized && m.vbus.state == DALI_VBUS_OFF &&
+            !(m.regs[0x108] & 1) && !m.typec.started);
+        for (unsigned i = 0; i < roles.event_count; ++i)
+            assert(roles.events[i] != ROLE_SELECT_DEVICE && roles.events[i] != ROLE_START_DEVICE);
+    }
+}
+static void test_role_worker_late_cleanup_failures_are_retryable(void)
+{
+    for (unsigned failure = 0; failure < 3; ++failure) {
+        struct model m; prepare(&m); start(&m, DALI_CC_DRP);
+        struct role_model roles = {.usb = &m};
+        struct usb_role_ops ops = role_ops(&roles);
+        struct dali_usb_role_worker worker = {0};
+        struct dali_typec_sample sample = {0};
+        assert(dali_usb_role_worker_init(&worker, &m.typec, &m.vbus, &ops) == USB_OK);
+        assert(worker_poll_to_host(&m, &worker, &sample) == USB_OK);
+
+        if (failure == 0) roles.fail_vbus_disable = true;
+        if (failure == 1) roles.select_stopped_result = USB_IO;
+        if (failure == 2) roles.fail_typec_stop = true;
+        int result = failure == 2 ? dali_usb_role_worker_stop(&worker) :
+            worker_detach_host(&m, &worker, &sample);
+        assert(result != USB_OK && worker.initialized && worker.faulted && worker.role.faulted);
+        if (failure == 0) {
+            assert(m.vbus.state == DALI_VBUS_UNKNOWN && m.pmif.faulted && (m.regs[0x108] & 1));
+        } else if (failure == 1) {
+            assert(m.vbus.state == DALI_VBUS_OFF && !(m.regs[0x108] & 1) &&
+                m.typec.mode == DALI_CC_HOST);
+            roles.select_stopped_result = USB_OK;
+        } else {
+            assert(m.vbus.state == DALI_VBUS_OFF && m.typec.started && m.pmif.faulted);
+        }
+        m.fail_operation = 0;
+        assert(dali_usb_role_worker_stop(&worker) == USB_OK);
+        assert(!worker.initialized && m.vbus.state == DALI_VBUS_OFF &&
+            !(m.regs[0x108] & 1) && !m.typec.started && m.typec.mode == DALI_CC_OPEN);
+    }
+}
+static void test_role_worker_start_failures_cleanup_and_retain(void)
+{
+    for (unsigned failure = 0; failure < 2; ++failure) {
+        struct model m; prepare(&m); start(&m, DALI_CC_DRP);
+        struct role_model roles = {.usb = &m};
+        struct usb_role_ops ops = role_ops(&roles);
+        struct dali_usb_role_worker worker = {0};
+        struct dali_typec_sample sample = {0};
+        assert(dali_usb_role_worker_init(&worker, &m.typec, &m.vbus, &ops) == USB_OK);
+        if (failure == 0) roles.select_host_result = USB_IO;
+        else roles.start_host_result = USB_IO;
+        assert(worker_poll_to_host(&m, &worker, &sample) == USB_IO);
+        assert(worker.faulted && worker.role.faulted && m.vbus.state == DALI_VBUS_OFF &&
+            !(m.regs[0x108] & 1) && m.typec.mode == DALI_CC_DRP);
+        if (failure == 0) roles.select_host_result = USB_OK;
+        else roles.start_host_result = USB_OK;
+        assert(dali_usb_role_worker_stop(&worker) == USB_OK);
+        assert(!worker.initialized && !m.typec.started && m.vbus.state == DALI_VBUS_OFF);
+    }
+}
 int main(void)
 {
     test_probe_and_setup(); test_sample_debounce(); test_debounce_restarts(); test_lost_toggle();
     test_vbus(); test_power_guards_and_failures(); test_lost_output();
     test_role_worker_host_device_and_shutdown();
     test_role_worker_retains_source_until_sync_and_stop_proof();
+    test_role_worker_stop_callback_failures_retain_vbus();
+    test_role_worker_late_cleanup_failures_are_retryable();
+    test_role_worker_start_failures_cleanup_and_retain();
     puts("PASS: MT6379 production TCPC/VBUS/role worker; PMIC/controller callbacks modeled only");
     return 0;
 }
