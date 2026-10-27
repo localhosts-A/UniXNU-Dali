@@ -142,23 +142,26 @@ readback or digest check stops this boot's persistent write; the other valid
 pairs remain untouched.
 
 The UEFI integration point is after UFS initialization and before controller
-quiesce. The source now uses the read-only scan result to publish a grant for
-exactly one UEFI slot and calls the existing v1 writer automatically when the
-log PCD is explicitly enabled. The scan's computed generation is diagnostic
-only until a v2 writer consumes it. The default PCD remains disabled. The 240-byte
-build-time authorization wire still provides a preferred physical sequence and
-build-time grant token; authorization rebinds the sequence/window after
-scanning. The runtime record token is passed independently and does not change
-the grant. The writer still emits v1, with no generation or safe rotation, and
-there is no XNU writer or token handoff. The earlier zero/nonzero scanner passed
-eight synthetic host cases; three token-focused BlockIo cases also pass. The new
-v1/v2 scanner passed 11 synthetic cases, and the affected empty-pair selector
-passed its 8 cases. Its host SHA stub is deterministic but non-cryptographic, so
-the cases do not test SHA-256 itself. A DEBUG build verified 59 images using a
-temporary 7-byte non-bootable payload fixture; build output and fixture were
-removed. The log PCD remained disabled, so the build did not exercise a runtime
-write or prove target entropy availability. No device behavior has been
-validated.
+quiesce. The source uses the read-only scan result to publish a grant for exactly
+one UEFI slot and now writes v2 records when the log PCD is explicitly enabled.
+The scanner's checked `NextGeneration` is passed separately from physical pair
+`Sequence` and the runtime record token. The live grant remains unchanged. The
+logger writes only when the selected pair is entirely empty; it binds generation
+and token into attempt, body and commit records, synchronizes between phases,
+and verifies the full slot after commit. It does not rotate occupied pairs yet.
+The default PCD remains disabled, and there is no XNU writer or token handoff.
+The log protocol is revision 3: WRITE requests generation 0 so the host chooses
+the next value; READBACK uses generation 0 for legacy v1 or an explicit nonzero
+generation and token for v2.
+
+The zero/nonzero scanner passed eight earlier host cases; three runtime-token
+BlockIo cases also pass. The v1/v2 scanner passed 11 synthetic cases, the
+affected empty-pair selector passed 8, and the v2 writer/token suite passed 6.
+Host SHA implementations are deterministic test shims, not cryptographic SHA-256
+verification. A DEBUG build verified 59 images with a temporary 7-byte
+non-bootable payload fixture; build output and fixture were removed. The log PCD
+remained disabled, so this build did not perform a runtime write or prove target
+entropy availability. No device behavior has been validated.
 
 XNU persistence is a separate milestone. The current UEFI logger rejects the
 XNU owner, the `msgbuf` snapshot helper has no caller, and storage quiesce does
@@ -170,11 +173,11 @@ failure-path fallback, not a substitute for `unixnu_logs` persistence.
 ## Enablement gates
 
 Keep the default log PCD disabled until all of the following exist. The current
-explicit build profile is experimental and can exercise the v1 auto-call path;
-it is not a device-validated persistent logging configuration.
+explicit build profile can exercise the v2 auto-write path on a completely empty
+pair; it is not a device-validated persistent logging configuration.
 
-1. Runtime entropy source verified on the target and shared-token handoff to XNU; v2 token/generation encoding.
-2. Shared v1/v2 offline decoding and bounded read-only slot classification.
+1. Runtime entropy source verified on the target and shared-token handoff to XNU; v2 token/generation encoding is implemented.
+2. Shared v1/v2 offline decoding and bounded read-only slot classification are implemented and host-tested.
 3. Dynamic per-slot grants and an oldest-safe-v2 pair allocator.
 4. Interrupted-write recovery, fail-closed handling, and explicit truncation
    reporting.
