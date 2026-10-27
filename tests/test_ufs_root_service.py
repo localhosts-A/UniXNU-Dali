@@ -127,6 +127,9 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("Build pinned OS and SystemOS root windows", self.workflow)
         self.assertIn("Build metadata-preserving skip-setup Data seed candidate", self.workflow)
         self.assertIn('sudo env PYTHONDONTWRITEBYTECODE=1', self.workflow)
+        self.assertIn("Audit pinned 21H461 prelink candidate", self.workflow)
+        self.assertIn("dali-ipados-prelink-audit-not-for-device", self.workflow)
+        self.assertIn("./unixnu build prelink", self.workflow)
         xnu_step = self.workflow.split("- name: Build and validate source-only XNU", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("UNIXNU_SOURCE_ROOT: ${{ github.workspace }}/UniXNU", xnu_step)
         self.assertGreaterEqual(self.workflow.count("env.VALIDATION_PROFILE != 'ipados-root-compile'"), 5)

@@ -265,12 +265,20 @@ jobs:
             python3 "$cache_script" record --tree "$UNIXNU_OUT/dali/tree" --key "$KERNEL_INPUT_KEY"
           fi
 
+      - name: Audit pinned 21H461 prelink candidate
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu build prelink -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
+
       - name: Show XNU build diagnostics on failure
         if: failure()
         shell: bash
         run: |
           set -u
-          for log in "$UNIXNU_OUT"/dali/logs/kernel-bootstrap.log "$UNIXNU_OUT"/dali/logs/archive-*.log "$UNIXNU_OUT"/dali/logs/kernel.log "$UNIXNU_OUT"/dali/logs/source-storage-link.log "$UNIXNU_OUT"/dali/tree/build/source-storage/*.log; do
+          for log in "$UNIXNU_OUT"/dali/logs/kernel-bootstrap.log "$UNIXNU_OUT"/dali/logs/archive-*.log "$UNIXNU_OUT"/dali/logs/kernel.log "$UNIXNU_OUT"/dali/logs/prelink.log "$UNIXNU_OUT"/dali/logs/source-storage-link.log "$UNIXNU_OUT"/dali/tree/build/source-storage/*.log; do
             [[ -f "$log" ]] || continue
             printf '\n===== %s (last 100 lines) =====\n' "$log"
             tail -n 100 "$log"
@@ -313,6 +321,18 @@ jobs:
             UniXNU/out/dali/userdata/userdata-root.json
             UniXNU/out/dali/tree/build/dali-verified-root/build-report.json
             UniXNU/out/dali/tree/build/dali-verified-root/libVerifiedRootDali.a
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload non-loadable prelink audit candidate
+        if: always() && env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-ipados-prelink-audit-not-for-device
+          path: |
+            UniXNU/out/dali/kernel/kernel.macho
+            UniXNU/out/dali/kernel/kernel.json
+            UniXNU/out/dali/logs/prelink.log
           if-no-files-found: warn
           retention-days: 1
 

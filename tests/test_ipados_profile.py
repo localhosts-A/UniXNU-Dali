@@ -53,8 +53,18 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertEqual(windows["OS"], self.board["payload"]["adt"]["root_match_volume_uuid"])
         self.assertEqual(windows["SystemOS"], "8846FE78-2910-4297-AF97-D59BB6F8FC16")
 
-    def test_unqualified_prelink_and_runtime_root_values_remain_unset(self):
-        self.assertNotIn("prelink", self.board["kernel"])
+    def test_pinned_prelink_is_an_explicit_audit_only_candidate(self):
+        prelink = self.board["kernel"]["prelink"]
+        self.assertEqual(prelink["kernelcache_sha256"],
+                         "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7")
+        self.assertEqual(prelink["slide"], "-0x1000000")
+        self.assertEqual(prelink["early_security_init"],
+                         "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0")
+        self.assertIn("com.apple.filesystems.apfs", prelink["roots"])
+        self.assertIn("com.apple.security.AppleImage4", prelink["roots"])
+        self.assertIn("com.apple.iokit.IOSurface", prelink["roots"])
+        self.assertIn("Audit pinned 21H461 prelink candidate", (ROOT / ".github/workflows/dali-xnu.yml").read_text())
+        self.assertIn("dali-ipados-prelink-audit-not-for-device", (ROOT / ".github/workflows/dali-xnu.yml").read_text())
         adt = self.board["payload"]["adt"]
         self.assertEqual(adt["root_match_volume_uuid"], "04769D26-2CA0-4825-B443-E2E5F88300F2")
         for key in ("unique_chip_id", "ipad_identity", "chip_id"):
