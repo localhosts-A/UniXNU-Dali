@@ -11,7 +11,7 @@ import tomllib
 
 DEVICE = Path(__file__).resolve().parents[1]
 MIB = 1024 * 1024
-DATA_LOGICAL_BYTES = 32 * MIB
+MAX_DATA_LOGICAL_BYTES = 32 * MIB
 
 
 def sha256(path):
@@ -72,7 +72,9 @@ def main():
     raw = fixture / 'owner-data-32.raw'
     fixture_report_path = fixture / 'seed.json'
     fixture_report = json.loads(fixture_report_path.read_text())
-    if (raw.stat().st_size != DATA_LOGICAL_BYTES or fixture_report.get('bytes') != DATA_LOGICAL_BYTES or
+    logical_bytes = fixture_report.get('bytes')
+    if (not isinstance(logical_bytes, int) or isinstance(logical_bytes, bool) or logical_bytes <= 0 or
+            logical_bytes > MAX_DATA_LOGICAL_BYTES or logical_bytes % 4096 or raw.stat().st_size != logical_bytes or
             fixture_report.get('production_storage_qualified') is not False or
             fixture_report.get('numeric_owner_mode_xattr_copy_verified') is not True or
             fixture_report.get('acl_copy_requested') is not True):
@@ -82,10 +84,10 @@ def main():
     final = output / 'data-seed-skip-setup.dbr'
     base_metadata = packed_ramdisk.pack(raw, base)
     max_bytes = int(board['payload']['size_mib'] * MIB * 0.95)
-    inspect_packed_seed(base, packed_ramdisk, DATA_LOGICAL_BYTES, max_bytes)
+    inspect_packed_seed(base, packed_ramdisk, logical_bytes, max_bytes)
     subprocess.run([sys.executable, skip_setup, base, final, '--no-auto-dim'], check=True)
     setup_report = json.loads(final.with_suffix('.json').read_text())
-    final_metadata = inspect_packed_seed(final, packed_ramdisk, DATA_LOGICAL_BYTES, max_bytes)
+    final_metadata = inspect_packed_seed(final, packed_ramdisk, logical_bytes, max_bytes)
     if setup_report.get('build') != '21H461' or setup_report.get('no_auto_dim') is not True:
         raise SystemExit('Skip-setup Data seed is not bound to 21H461 and no-auto-dim')
 
@@ -96,7 +98,7 @@ def main():
         'os_root_launchd_sha256': fixture_report['os_root_launchd_sha256'],
         'os_root_dyld_sha256': fixture_report['os_root_dyld_sha256'],
         'volume_uuid': fixture_report['volume_uuid'],
-        'raw_bytes': DATA_LOGICAL_BYTES,
+        'raw_bytes': logical_bytes,
         'raw_sha256': fixture_report['sha256'],
         'raw_report': 'base/seed.json',
         'base_packed': base_metadata,

@@ -44,7 +44,7 @@ class DaliIpadosDataSeedTests(unittest.TestCase):
             root = Path(temporary)
             raw = root / "seed.raw"
             with raw.open("wb") as output:
-                output.truncate(builder.DATA_LOGICAL_BYTES)
+                output.truncate(builder.MAX_DATA_LOGICAL_BYTES)
                 output.seek(32)
                 output.write(b"NXSB")
                 output.seek(4096)
@@ -53,15 +53,15 @@ class DaliIpadosDataSeedTests(unittest.TestCase):
             packed_ramdisk.pack(raw, packed)
 
             metadata = builder.inspect_packed_seed(
-                packed, packed_ramdisk, builder.DATA_LOGICAL_BYTES, packed.stat().st_size)
+                packed, packed_ramdisk, builder.MAX_DATA_LOGICAL_BYTES, packed.stat().st_size)
             self.assertTrue(metadata["packed"])
-            self.assertEqual(metadata["bytes"], builder.DATA_LOGICAL_BYTES)
+            self.assertEqual(metadata["bytes"], builder.MAX_DATA_LOGICAL_BYTES)
             with self.assertRaisesRegex(ValueError, "payload budget"):
-                builder.inspect_packed_seed(packed, packed_ramdisk, builder.DATA_LOGICAL_BYTES,
+                builder.inspect_packed_seed(packed, packed_ramdisk, builder.MAX_DATA_LOGICAL_BYTES,
                                             packed.stat().st_size - 1)
             with self.assertRaisesRegex(ValueError, "packed DBRDISK1"):
-                builder.inspect_packed_seed(raw, packed_ramdisk, builder.DATA_LOGICAL_BYTES,
-                                            builder.DATA_LOGICAL_BYTES)
+                builder.inspect_packed_seed(raw, packed_ramdisk, builder.MAX_DATA_LOGICAL_BYTES,
+                                            builder.MAX_DATA_LOGICAL_BYTES)
 
     def test_seed_logical_size_must_match_the_board_candidate(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -71,7 +71,7 @@ class DaliIpadosDataSeedTests(unittest.TestCase):
             packed = root / "seed.dbr"
             packed_ramdisk.pack(raw, packed)
             with self.assertRaisesRegex(ValueError, "expected packed DBRDISK1"):
-                builder.inspect_packed_seed(packed, packed_ramdisk, builder.DATA_LOGICAL_BYTES,
+                builder.inspect_packed_seed(packed, packed_ramdisk, builder.MAX_DATA_LOGICAL_BYTES,
                                             24 * 1024 * 1024)
 
 
