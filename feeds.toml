@@ -1,0 +1,5 @@
+[[source]]
+name = "mt6991"
+kind = "soc"
+git = "https://github.com/localhosts-A/UniXNU-MT6991-Common.git"
+commit = "e116a66f72468b2d26bee0d95a229b164efc1d54"

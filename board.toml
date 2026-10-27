@@ -1,0 +1,23 @@
+schema_version = 2
+
+[board]
+example = true
+name = "dali"
+soc = "MT6991"
+soc_source = "mt6991"
+os_profile = "ios-26.6.2-23G90"
+description = "Redmi K80 Ultra / Dali Format 2 migration scaffold"
+
+[components]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot", "GopFramebuffer"]
+
+[kernel]
+defconfig = "dali_defconfig"
+# Target XNU config fragments, archives and patch series are held back until
+# the public source/runtime gap and driver ABI have been reviewed.
+config_fragments = []
+patch_series = []
+archives = []
+
+# Device-specific DTS, UEFI build integration and payload values are pending
+# authoritative CPU identity and a complete reserved-memory map.

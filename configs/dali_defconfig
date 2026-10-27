@@ -1,0 +1,2 @@
+# Deliberately empty while the target XNU source/runtime ABI and board DTS are
+# unresolved. Add only options derived from the pinned source and reviewed tree.
