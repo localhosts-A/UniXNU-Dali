@@ -113,15 +113,24 @@ is the cost of preserving them without assuming rollback cannot occur. If no
 fully empty or safely replaceable v2 pair remains, fail closed rather than
 silently migrating or erasing v1 records.
 
-The design requires validating all eight slots and classifying the supported
-schemas before selection. The current interim scanner reads every slot but only
-distinguishes all-zero from nonzero: every nonzero slot, including valid,
-interrupted, corrupt, or unknown data, is treated as occupied. It never rotates
-or overwrites a nonzero slot and fails closed when no empty pair remains. It
-does not yet establish that a v1 or v2 record is valid. The offline decoder
-implements v1/v2 record checks and shows v1 order as unknown, while sorting v2
-by generation. Keep SHA-256 as corruption detection; neither format has keyed
-authentication or claims tamper resistance.
+The UEFI source now classifies all eight slots before selection. It verifies
+record block digests and padding, the three-record attempt/body/commit identity,
+owner and physical pair sequence, device binding, body digest and zero padding.
+It also checks the `DALI-XNU-BODY1` header fields that the offline decoder uses.
+It recognizes an attempt without a matching final record as interrupted, keeps
+other nonzero failures unknown/corrupt, and derives `max_generation + 1` only
+from fully verified committed UEFI v2 records. Duplicate committed generations
+and generation overflow fail closed. Orphaned or mismatched v2 owner records
+are reported as inconsistent; they remain occupied but do not block selecting a
+separate wholly empty pair.
+
+Selection consumes this same scan result, so it reads the partition once while
+the scratch admission fence is held. It still selects only a wholly empty pair;
+there is no v2 writer or rotation yet. Unknown, corrupt, interrupted, v1 and
+inconsistent slots remain preserved. The offline decoder additionally verifies
+the exported XNU body and presents v1 order as unknown while sorting v2 by
+generation. SHA-256 detects corruption; neither format has keyed authentication
+or claims tamper resistance.
 
 ## Commit sequence and owners
 
@@ -135,17 +144,20 @@ pairs remain untouched.
 The UEFI integration point is after UFS initialization and before controller
 quiesce. The source now uses the read-only scan result to publish a grant for
 exactly one UEFI slot and calls the existing v1 writer automatically when the
-log PCD is explicitly enabled. The default PCD remains disabled. The 240-byte
+log PCD is explicitly enabled. The scan's computed generation is diagnostic
+only until a v2 writer consumes it. The default PCD remains disabled. The 240-byte
 build-time authorization wire still provides a preferred physical sequence and
 build-time grant token; authorization rebinds the sequence/window after
 scanning. The runtime record token is passed independently and does not change
 the grant. The writer still emits v1, with no generation or safe rotation, and
-there is no XNU writer or token handoff. The prior scanner code passed eight
-synthetic host cases and a DEBUG compile using a temporary payload fixture;
-neither proves device behavior or produces a bootable image. Three token-focused
-synthetic BlockIo cases also pass. The DEBUG build compiled RngDxe, BaseRngLib,
-BDS and UFS logging objects with the log PCD disabled; it did not exercise a
-runtime write or prove target entropy availability. No device behavior has been
+there is no XNU writer or token handoff. The earlier zero/nonzero scanner passed
+eight synthetic host cases; three token-focused BlockIo cases also pass. The new
+v1/v2 scanner passed 11 synthetic cases, and the affected empty-pair selector
+passed its 8 cases. Its host SHA stub is deterministic but non-cryptographic, so
+the cases do not test SHA-256 itself. A DEBUG build verified 59 images using a
+temporary 7-byte non-bootable payload fixture; build output and fixture were
+removed. The log PCD remained disabled, so the build did not exercise a runtime
+write or prove target entropy availability. No device behavior has been
 validated.
 
 XNU persistence is a separate milestone. The current UEFI logger rejects the
