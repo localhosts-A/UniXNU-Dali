@@ -137,14 +137,19 @@ def compile_xnu_object(unixnu, source, output):
     arguments = record.get("arguments")
     if not isinstance(arguments, list) or not arguments:
         raise SystemExit("XNU bsd_init compile record has no argument vector")
+    record_directory = Path(record.get("directory", unixnu)).resolve()
     record_source = Path(record["file"])
     if not record_source.is_absolute():
-        record_source = (Path(record.get("directory", unixnu)) / record_source).resolve()
+        record_source = (record_directory / record_source).resolve()
     replaced, command, index = False, [], 0
     while index < len(arguments):
         value = arguments[index]
-        if value == str(record_source) or Path(value).resolve() == record_source:
-            command.append(str(source.resolve())); replaced = True
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = record_directory / candidate
+        if candidate.resolve() == record_source:
+            command.append(str(source.resolve()))
+            replaced = True
         elif value == "-o":
             command += ["-o", str(output.resolve())]; index += 1
         elif value in ("-MF", "-MJ"):
@@ -155,7 +160,7 @@ def compile_xnu_object(unixnu, source, output):
     if not replaced:
         raise SystemExit(f"could not replace source path in XNU compile record {record_path}")
     command += ["-I" + str(unixnu / "kits/VerifiedRoot/include"), "-Werror"]
-    result = subprocess.run(command, cwd=record.get("directory", unixnu), capture_output=True, text=True)
+    result = subprocess.run(command, cwd=record_directory, capture_output=True, text=True)
     output.with_suffix(output.suffix + ".log").write_text(result.stdout + result.stderr)
     if result.returncode:
         raise SystemExit(f"VerifiedRoot source compile failed: {source.name}\n" + result.stderr[-6000:])
