@@ -42,13 +42,18 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertEqual((spec["last_lba"] - spec["first_lba"] + 1) * spec["lba_bytes"],
                          34_326_183_936)
         self.assertEqual(spec["windows"], [
-            {"name": "OS", "component": "OS"},
-            {"name": "SystemOS", "component": "Cryptex1,SystemOS"},
+            {"name": "OS", "component": "OS", "volume_uuid": "04769D26-2CA0-4825-B443-E2E5F88300F2"},
+            {"name": "SystemOS", "component": "Cryptex1,SystemOS", "volume_uuid": "8846FE78-2910-4297-AF97-D59BB6F8FC16"},
         ])
         # Read-only Android sysfs maps /dev/block/sdc to target 0:0:0:2; the XNU root reader is still unimplemented.
         self.assertEqual(spec["lun"], 2)
 
-    def test_unqualified_dali_root_and_prelink_values_remain_unset(self):
+    def test_root_volume_uuids_match_the_exact_21h461_apfs_components(self):
+        windows = {entry["name"]: entry["volume_uuid"] for entry in self.board["userdata"]["windows"]}
+        self.assertEqual(windows["OS"], self.board["payload"]["adt"]["root_match_volume_uuid"])
+        self.assertEqual(windows["SystemOS"], "8846FE78-2910-4297-AF97-D59BB6F8FC16")
+
+    def test_unqualified_prelink_and_runtime_root_values_remain_unset(self):
         self.assertNotIn("prelink", self.board["kernel"])
         adt = self.board["payload"]["adt"]
         self.assertEqual(adt["root_match_volume_uuid"], "04769D26-2CA0-4825-B443-E2E5F88300F2")

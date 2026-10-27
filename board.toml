@@ -28,8 +28,8 @@ first_lba = 7023103
 last_lba = 15403518
 lba_bytes = 4096
 windows = [
-  { name = "OS", component = "OS" },
-  { name = "SystemOS", component = "Cryptex1,SystemOS" },
+  { name = "OS", component = "OS", volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2" },
+  { name = "SystemOS", component = "Cryptex1,SystemOS", volume_uuid = "8846FE78-2910-4297-AF97-D59BB6F8FC16" },
 ]
 
 [firmware]

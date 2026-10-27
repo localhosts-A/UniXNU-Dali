@@ -5,6 +5,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_SOURCE = ROOT / "drivers/DaliUfs/DaliUfsRoot.cpp"
+ROOT_FALLBACK = ROOT / "drivers/DaliUfs/VerifiedRootUnavailable.cpp"
 DIAGNOSTIC_SOURCE = ROOT / "drivers/DaliUfs/DaliUfs.cpp"
 BUILDER = ROOT / "scripts/build-dali-xnu-platform.py"
 PERSONALITY = ROOT / "patches/xnu/dali-bootlog-personality.patch"
@@ -15,6 +16,7 @@ class UfsRootServiceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.root = ROOT_SOURCE.read_text()
+        cls.fallback = ROOT_FALLBACK.read_text()
         cls.diagnostic = DIAGNOSTIC_SOURCE.read_text()
         cls.builder = BUILDER.read_text()
         cls.personality = PERSONALITY.read_text()
@@ -56,6 +58,9 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn('constexpr char kDaliRootContainer[] = "unixnu_data"', self.root)
         self.assertIn("static constexpr uint8_t kDaliRootLun = 2", self.root)
         self.assertIn(self.board["payload"]["adt"]["root_match_volume_uuid"], self.root)
+        systemos_uuid = next(window["volume_uuid"] for window in self.board["userdata"]["windows"]
+                             if window["name"] == "SystemOS")
+        self.assertIn(systemos_uuid, self.root)
         self.assertIn(f"kDaliContainerFirstLba = {self.board['userdata']['first_lba']}", self.root)
         self.assertIn(f"kDaliContainerLastLba = {self.board['userdata']['last_lba']}", self.root)
         self.assertIn("ufsBuildRootPlan(names, layout_.windows, plan_)", self.root)
@@ -86,6 +91,15 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertNotIn('ROOT.parent / "UniXNU"', self.builder)
         self.assertIn('"root_service_default_off": True', self.builder)
         self.assertIn('"boot_root_authenticated": False', self.builder)
+        self.assertIn('ROOT / "drivers/DaliUfs/VerifiedRootUnavailable.cpp"', self.builder)
+
+    def test_missing_verified_root_inputs_are_weak_and_fail_closed(self):
+        self.assertIn("__attribute__((weak)) const uint64_t verified_root_policy_count = 0", self.fallback)
+        self.assertIn("__attribute__((weak)) int vr_open", self.fallback)
+        self.assertIn("return VR_KEY", self.fallback)
+        self.assertIn("__attribute__((weak)) int vr_verify_block", self.fallback)
+        self.assertIn("return VR_BLOCK", self.fallback)
+        self.assertIn("strong replacements", self.fallback)
 
     def test_root_compile_action_uses_owner_profile_without_qemu_or_device_artifact(self):
         self.assertIn("options: [reset-qualification, pid1, ipados-root-compile]", self.workflow)

@@ -109,7 +109,8 @@ def ufs_archive():
     OUT.mkdir(parents=True, exist_ok=True)
     objects, entries = [], []
     for source in (ROOT / "drivers/DaliUfs/DaliUfsPlatform.cpp", ROOT / "drivers/DaliUfs/DaliUfs.cpp",
-                   ROOT / "drivers/DaliUfs/DaliUfsRoot.cpp"):
+                   ROOT / "drivers/DaliUfs/DaliUfsRoot.cpp",
+                   ROOT / "drivers/DaliUfs/VerifiedRootUnavailable.cpp"):
         obj = OUT / (source.stem + ".o")
         obj.unlink(missing_ok=True)
         compile_source(source, obj)
@@ -148,7 +149,8 @@ def ufs_archive():
             "effective_xnu_source": XNU_SOURCE_PROOF,
             "physical_ufs_qualified": False, "write_authorized": False,
             "root_service_default_off": True, "boot_root_authenticated": False,
-            "verified_root_policy_archive_required": True}
+            "verified_root_policy_archive_required": True,
+            "verified_root_link_fallback": "weak empty policy; rejects all roots until strong production policy inputs are linked"}
 
 
 sources = {

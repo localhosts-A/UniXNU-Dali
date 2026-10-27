@@ -51,6 +51,7 @@ int vr_verify_block(const struct vr_view *, uint64_t, const void *, size_t,
 static constexpr uint8_t kDaliRootLun = 2;
 static constexpr char kDaliRootContainer[] = "unixnu_data";
 static constexpr char kDaliOsRootUuid[] = "04769D26-2CA0-4825-B443-E2E5F88300F2";
+static constexpr char kDaliSystemOsUuid[] = "8846FE78-2910-4297-AF97-D59BB6F8FC16";
 static constexpr uint64_t kDaliContainerFirstLba = 7023103;
 static constexpr uint64_t kDaliContainerLastLba = 15403518;
 
@@ -368,6 +369,12 @@ bool DaliUfsRoot::loadPolicies() {
       osWindow_ = index;
       if (memcmp(verified_[index].volume_uuid, osUuid, sizeof osUuid)) {
         record("verified-root-os-uuid-refused", index); return false;
+      }
+    } else if (!strcmp(window.name, "SystemOS")) {
+      uint8_t systemOsUuid[16];
+      if (!parseUuid(kDaliSystemOsUuid, systemOsUuid) ||
+          memcmp(verified_[index].volume_uuid, systemOsUuid, sizeof systemOsUuid)) {
+        record("verified-root-systemos-uuid-refused", index); return false;
       }
     }
     record("verified-root-policy-pass", index, verified_[index].block_count, window.size);
