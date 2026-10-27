@@ -364,6 +364,11 @@ jobs:
         run: |
           set -euo pipefail
           df -h "$GITHUB_WORKSPACE"
+          output_dir="$GITHUB_WORKSPACE/UniXNU/build/DarwinBoot/DEBUG_CLANGPDB/AARCH64"
+          mkdir -p "$output_dir"
+          test -d "$output_dir"
+          test -w "$output_dir"
+          ls -ld "$output_dir"
           cd UniXNU
           bash scripts/build-darwinboot.sh
 
