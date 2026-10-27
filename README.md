@@ -20,6 +20,10 @@ keeps a raw copy; a valid record does not by itself prove physical writes or
 cross-reboot persistence. Never commit raw images, device identifiers, IPSW,
 kernelcache, vendor firmware or other private input.
 
+The proposed v2 schema, bounded slot scan, and oldest-safe-pair rotation rules
+are recorded in [`docs/unixnu-logs-v2-design.md`](docs/unixnu-logs-v2-design.md).
+Automatic writes and the XNU storage owner remain unimplemented.
+
 The pinned OS profile separates the nearest public XNU source tag from the
 23G90 runtime kernelcache. The tag does not match the runtime XNU version; ABI,
 prelink and target component compatibility remain open. See
