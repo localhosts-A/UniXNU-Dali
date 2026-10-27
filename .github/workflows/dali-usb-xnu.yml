@@ -20,6 +20,7 @@ on:
       - 'scripts/build-dali-usb-storage.py'
       - 'scripts/build-dali-usb-hid.py'
       - 'scripts/fetch-usb-references.py'
+      - 'tests/test_dali_usb_host_builder.py'
       - 'tests/test_dali_usb_storage_builder.py'
       - 'tests/test_dali_usb_gadget_builder.py'
       - 'tests/test_dali_usb_hid_builder.py'

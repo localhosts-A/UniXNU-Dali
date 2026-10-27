@@ -14,7 +14,8 @@ OBJECTS = ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837"
 OUT = ROOT / "build/dali-usb-host"
 ARCHIVE = OUT / "libDaliUsbHost.a"
 SOURCES = (ROOT / "drivers/UsbCore/UsbCore.c", ROOT / "drivers/UsbCore/UsbHost.c",
-           ROOT / "drivers/UsbCore/UsbStorage.c", ROOT / "drivers/UsbCore/UsbXhci.c")
+           ROOT / "drivers/UsbCore/UsbStorage.c", ROOT / "drivers/UsbCore/UsbXhci.c",
+           ROOT / "drivers/UsbCore/UsbXhciController.c")
 REQUIRED_SYMBOLS = (
     "usb_host_enumerate", "usb_host_start_storage", "usb_host_poll_input",
     "usb_host_stop_device", "usb_host_release_stopped_device", "usb_host_disconnect",
@@ -32,6 +33,7 @@ REQUIRED_SYMBOLS = (
     "usb_xhci_event_ring_read", "usb_xhci_event_ring_dequeue_address",
     "usb_xhci_event_ring_erst_address", "usb_xhci_event_ring_halted",
     "usb_xhci_event_ring_destroy",
+    "usb_xhci_controller_start", "usb_xhci_controller_stop",
 )
 
 
