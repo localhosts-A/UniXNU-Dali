@@ -318,6 +318,8 @@ jobs:
           name: dali-ipados-root-inputs
           path: |
             ${{ runner.temp }}/dali-ipados-data-seed/seed-candidate.json
+            ${{ runner.temp }}/dali-ipados-data-seed/base/seed.json
+            ${{ runner.temp }}/dali-ipados-data-seed/data-seed-skip-setup.json
             ${{ runner.temp }}/dali-ipados-data-seed/data-seed-skip-setup.dbr
             UniXNU/out/dali/userdata/userdata-root.json
             UniXNU/out/dali/tree/build/dali-verified-root/build-report.json

@@ -53,6 +53,11 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertEqual(windows["OS"], self.board["payload"]["adt"]["root_match_volume_uuid"])
         self.assertEqual(windows["SystemOS"], "8846FE78-2910-4297-AF97-D59BB6F8FC16")
 
+    def test_root_input_artifact_uploads_both_data_seed_reports(self):
+        workflow = (ROOT / ".github/workflows/dali-xnu.yml").read_text()
+        self.assertIn("${{ runner.temp }}/dali-ipados-data-seed/base/seed.json", workflow)
+        self.assertIn("${{ runner.temp }}/dali-ipados-data-seed/data-seed-skip-setup.json", workflow)
+
     def test_pinned_prelink_is_an_explicit_audit_only_candidate(self):
         prelink = self.board["kernel"]["prelink"]
         self.assertEqual(prelink["tool"], "scripts/emit-source-interface-prelink.py")
