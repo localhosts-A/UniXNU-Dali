@@ -161,7 +161,7 @@ jobs:
           python3 "$tree/scripts/build-dali-usb-hid.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-msdosfs.py" --verify-kernel "$kernel"
 
-      - name: Build UEFI package and DarwinBoot for the QEMU VFS test
+      - name: Build UEFI package and locate pinned Mu Basecore
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -169,6 +169,16 @@ jobs:
           set -euo pipefail
           cd UniXNU
           ./unixnu build package -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
+
+          EDK2=$(find "$UNIXNU_OUT/feeds" -maxdepth 1 -type d -name 'mu_basecore-*' -print -quit)
+          test -n "$EDK2"
+          echo "UNIXNU_EDK2=$EDK2" >> "$GITHUB_ENV"
+
+      - name: Build DarwinBoot for the QEMU VFS test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
           bash scripts/build-darwinboot.sh
 
       - name: Test production XNU msdosfs FAT32 mount and read in QEMU
