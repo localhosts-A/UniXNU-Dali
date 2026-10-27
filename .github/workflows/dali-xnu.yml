@@ -252,6 +252,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           KERNEL_CACHE_HIT: ${{ steps.kernel_cache.outputs.cache-hit }}
           KERNEL_INPUT_KEY: ${{ steps.cache_inputs.outputs.kernel }}
+          UNIXNU_SOURCE_ROOT: ${{ github.workspace }}/UniXNU
         run: |
           set -euo pipefail
           cd UniXNU
