@@ -14,6 +14,7 @@ SPEC.loader.exec_module(DALI_QEMU)
 
 class PrelinkQemuTests(unittest.TestCase):
     STORAGE_SYMBOL = '__ZN7IOMedia13attachToChildEP15IORegistryEntryPK15IORegistryPlane'
+    STORAGE_SYNCHRONIZE_SYMBOL = '__ZN7IOMedia11synchronizeEP9IOServiceyyj'
 
     def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
@@ -56,18 +57,34 @@ class PrelinkQemuTests(unittest.TestCase):
                 "runtime_qualified": False,
                 "loadable": False,
                 "source_interfaces": ["com.apple.iokit.IOStorageFamily"],
-                "source_interface_bindings": [{
-                    "bundle": "com.apple.iokit.IOStorageFamily",
-                    "donor_va": 0xfffffff0059762a8,
-                    "symbol": self.STORAGE_SYMBOL,
-                    "native_va": 0xfffffff00bf9c704,
-                    "reference_count": 1,
-                }],
-                "bindings": [{
-                    "target": 0xfffffff0059762a8,
-                    "new_target": 0xfffffff00bf9c704,
-                    "kind": "source_interface",
-                }],
+                "source_interface_bindings": [
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff0059762a8,
+                        "symbol": self.STORAGE_SYMBOL,
+                        "native_va": 0xfffffff00bf9c704,
+                        "reference_count": 1,
+                    },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff005976eb0,
+                        "symbol": self.STORAGE_SYNCHRONIZE_SYMBOL,
+                        "native_va": 0xfffffff00bf9d3a8,
+                        "reference_count": 1,
+                    },
+                ],
+                "bindings": [
+                    {
+                        "target": 0xfffffff0059762a8,
+                        "new_target": 0xfffffff00bf9c704,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff005976eb0,
+                        "new_target": 0xfffffff00bf9d3a8,
+                        "kind": "source_interface",
+                    },
+                ],
                 "codeless_components": ["com.apple.iokit.IOStorageFamily"],
                 "components": [],
                 "source_interface_transform": {
@@ -100,18 +117,34 @@ class PrelinkQemuTests(unittest.TestCase):
                 "runtime_qualified": False,
                 "loadable": False,
                 "source_interfaces": ["com.apple.iokit.IOStorageFamily"],
-                "source_interface_bindings": [{
-                    "bundle": "com.apple.iokit.IOStorageFamily",
-                    "donor_va": 0xfffffff0059762a8,
-                    "symbol": self.STORAGE_SYMBOL,
-                    "native_va": 0xfffffff00bf9c704,
-                    "reference_count": 1,
-                }],
-                "bindings": [{
-                    "target": 0xfffffff0059762a8,
-                    "new_target": 0xfffffff00bf9c704,
-                    "kind": "source_interface",
-                }],
+                "source_interface_bindings": [
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff0059762a8,
+                        "symbol": self.STORAGE_SYMBOL,
+                        "native_va": 0xfffffff00bf9c704,
+                        "reference_count": 1,
+                    },
+                    {
+                        "bundle": "com.apple.iokit.IOStorageFamily",
+                        "donor_va": 0xfffffff005976eb0,
+                        "symbol": self.STORAGE_SYNCHRONIZE_SYMBOL,
+                        "native_va": 0xfffffff00bf9d3a8,
+                        "reference_count": 1,
+                    },
+                ],
+                "bindings": [
+                    {
+                        "target": 0xfffffff0059762a8,
+                        "new_target": 0xfffffff00bf9c704,
+                        "kind": "source_interface",
+                    },
+                    {
+                        "target": 0xfffffff005976eb0,
+                        "new_target": 0xfffffff00bf9d3a8,
+                        "kind": "source_interface",
+                    },
+                ],
                 "codeless_components": ["com.apple.iokit.IOStorageFamily"],
                 "components": [],
                 "source_interface_transform": {
@@ -149,7 +182,7 @@ class PrelinkQemuTests(unittest.TestCase):
 
             contradictory = [base["bindings"][0], {
                 **base["bindings"][0], "new_target": 0xfffffff00bf9c708,
-            }]
+            }, base["bindings"][1]]
             report.write_text(json.dumps({**base, "bindings": contradictory}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
