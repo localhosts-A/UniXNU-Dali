@@ -129,7 +129,7 @@ def build_policies(image, entries, private_key, public_key, out, make, profile):
 
 
 def compile_xnu_object(unixnu, source, output):
-    record_path = unixnu / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json"
+    record_path = SCRIPT_ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json"
     try:
         record = json.loads(record_path.read_text().strip().rstrip(","))
     except (OSError, ValueError) as error:

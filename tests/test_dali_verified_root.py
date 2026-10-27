@@ -7,6 +7,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 DEVICE = Path(__file__).resolve().parents[1]
@@ -52,6 +53,15 @@ def make_container(path):
 
 
 class DaliVerifiedRootPolicyTests(unittest.TestCase):
+    def test_compile_record_is_read_from_the_build_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary) / "tree"
+            source = Path(temporary) / "verified_root.c"
+            output = Path(temporary) / "verified_root.o"
+            with patch.object(builder, "SCRIPT_ROOT", tree):
+                with self.assertRaisesRegex(SystemExit, str(tree / "build/xnu/ios-obj")):
+                    builder.compile_xnu_object(UNIXNU, source, output)
+
     def test_policy_manifests_bind_both_verified_windows_and_share_one_owner_key(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
