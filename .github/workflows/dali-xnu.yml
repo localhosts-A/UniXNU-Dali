@@ -229,7 +229,7 @@ jobs:
           mkdir -p "$mount_point"
           trap 'sudo hdiutil detach "$mount_point" >/dev/null 2>&1 || true' EXIT
           sudo hdiutil attach -readonly -nobrowse -owners on -mountpoint "$mount_point" "$os_dmg"
-          sudo "$python3_path" "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/build-dali-ipados-data-seed.py" \
+          sudo env PYTHONDONTWRITEBYTECODE=1 "$python3_path" "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/build-dali-ipados-data-seed.py" \
             --os-root "$mount_point" \
             --os-dmg "$os_dmg" \
             --output-dir "$seed_output" \

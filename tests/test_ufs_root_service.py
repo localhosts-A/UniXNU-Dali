@@ -126,6 +126,7 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn('defconfig = "dali_ipados_root_boot_defconfig"', self.workflow)
         self.assertIn("Build pinned OS and SystemOS root windows", self.workflow)
         self.assertIn("Build metadata-preserving skip-setup Data seed candidate", self.workflow)
+        self.assertIn('sudo env PYTHONDONTWRITEBYTECODE=1', self.workflow)
         self.assertGreaterEqual(self.workflow.count("env.VALIDATION_PROFILE != 'ipados-root-compile'"), 5)
 
 
