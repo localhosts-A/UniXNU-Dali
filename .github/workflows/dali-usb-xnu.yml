@@ -11,6 +11,7 @@ on:
       - 'drivers/DaliUsbHid/**'
       - 'drivers/DaliUsbXhciResources/**'
       - 'drivers/DaliUsbXhciOwner/**'
+      - 'drivers/DaliUsbXhciDma/**'
       - 'drivers/DaliUsbGadgetLog/**'
       - 'drivers/DaliUsb/**'
       - 'patches/xnu/**'
@@ -21,10 +22,13 @@ on:
       - 'scripts/build-dali-usb-storage.py'
       - 'scripts/build-dali-usb-hid.py'
       - 'scripts/fetch-usb-references.py'
+      - 'scripts/test-source-storage-qemu.py'
       - 'tests/test_dali_usb_host_builder.py'
       - 'tests/test_dali_usb_storage_builder.py'
       - 'tests/test_dali_usb_gadget_builder.py'
       - 'tests/test_dali_usb_hid_builder.py'
+      - 'tests/test_source_storage_qemu.py'
+      - 'tests/test_dali_usb_xhci_integration_builder.py'
       - 'tests/test_dali_usb_xhci_resources_builder.py'
       - 'tests/fixtures/usb_xhci_resource_v1_test.c'
       - 'tests/fixtures/usb_typec_test.c'
@@ -114,6 +118,7 @@ jobs:
           python3 -m unittest discover -s tests/usb -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-core-tests.log"
           python3 -m unittest discover -s tests/unixnu -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/source-builder-tests.log"
           python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_dali_usb_*builder.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-builder-tests.log"
+          python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_source_storage_qemu.py' -v 2>&1 | tee "$RUNNER_TEMP/source-storage-qemu-tests.log"
           UNIXNU_ROOT="$GITHUB_WORKSPACE/UniXNU" python3 "$GITHUB_WORKSPACE/UniXNU-Dali/tests/test_usb_typec.py" 2>&1 | tee "$RUNNER_TEMP/usb-typec-role-worker-tests.log"
 
       - name: Fetch fixed USB and storage source references
@@ -156,6 +161,27 @@ jobs:
           python3 "$tree/scripts/build-dali-usb-hid.py" --verify-kernel "$kernel"
           python3 "$tree/scripts/build-source-msdosfs.py" --verify-kernel "$kernel"
 
+      - name: Build UEFI package and DarwinBoot for the QEMU VFS test
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          ./unixnu build package -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
+          bash scripts/build-darwinboot.sh
+
+      - name: Test production XNU msdosfs FAT32 mount and read in QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/test-source-storage-qemu.py" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
+            --output-dir "$RUNNER_TEMP/dali-source-msdosfs-qemu" \
+            --msdosfs-mount-test
+
       - name: Summarize source build scope
         if: always()
         shell: bash
@@ -180,6 +206,8 @@ jobs:
             ${{ runner.temp }}/usb-core-tests.log
             ${{ runner.temp }}/usb-builder-tests.log
             ${{ runner.temp }}/source-builder-tests.log
+            ${{ runner.temp }}/source-storage-qemu-tests.log
+            ${{ runner.temp }}/dali-source-msdosfs-qemu/**
             ${{ runner.temp }}/usb-reference-manifest.json
             UniXNU/build/source-hid/input-audit.json
             UniXNU/out/dali/logs/kernel-bootstrap.log

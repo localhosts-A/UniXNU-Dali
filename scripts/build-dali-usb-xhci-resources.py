@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build/dali-usb-xhci-resources"
 SOURCE = ROOT / "drivers/DaliUsbXhciResources/DaliUsbXhciResources.cpp"
 OWNER_SOURCE = ROOT / "drivers/DaliUsbXhciOwner/DaliUsbXhciOwner.cpp"
-SOURCES = (SOURCE, OWNER_SOURCE)
+DMA_SOURCE = ROOT / "drivers/DaliUsbXhciDma/DaliUsbXhciDma.cpp"
+SOURCES = (SOURCE, OWNER_SOURCE, DMA_SOURCE)
 ARCHIVE = OUT / "libDaliUsbXhciResources.a"
 SYMBOLS = (
     "DaliUsbXhciResources10gMetaClassE",
@@ -21,6 +22,9 @@ SYMBOLS = (
     "DaliUsbXhciOwner10gMetaClassE",
     "ZN16DaliUsbXhciOwner5startEP9IOService",
     "ZN16DaliUsbXhciOwner4stopEP9IOService",
+    "dali_usb_xhci_dma_init",
+    "dali_usb_xhci_dma_get_ops",
+    "dali_usb_xhci_dma_stop",
 )
 
 
@@ -54,7 +58,12 @@ def build():
     record_path, record = helper.compiler_record(
         ROOT / "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837")
     xnu = ROOT / ".cache/xnu-work"
-    includes = [SOURCE.parent, OWNER_SOURCE.parent, xnu / "iokit"]
+    core_include = ROOT / "UniXNU/drivers/UsbCore/include"
+    if not core_include.is_dir():
+        core_include = ROOT.parent / "UniXNU/drivers/UsbCore/include"
+    if not core_include.is_dir():
+        raise ValueError("pinned generic UsbCore headers are missing: " + str(core_include))
+    includes = [SOURCE.parent, OWNER_SOURCE.parent, DMA_SOURCE.parent, core_include, xnu / "iokit"]
     OUT.mkdir(parents=True, exist_ok=True)
     ARCHIVE.unlink(missing_ok=True)
     (OUT / "build-report.json").unlink(missing_ok=True)
@@ -89,6 +98,8 @@ def build():
         "source_sha256": helper.digest(SOURCE),
         "owner_source": str(OWNER_SOURCE.relative_to(ROOT)),
         "owner_source_sha256": helper.digest(OWNER_SOURCE),
+        "dma_source": str(DMA_SOURCE.relative_to(ROOT)),
+        "dma_source_sha256": helper.digest(DMA_SOURCE),
         "objects": object_rows,
         "public_header_sha256": helper.digest(SOURCE.with_suffix(".hpp")),
         "wire_header_sha256": helper.digest(SOURCE.with_name("DaliUsbXhciResourceV1.h")),
@@ -100,12 +111,13 @@ def build():
         "kernel_link_verified": False,
         "resource_consumer_runtime_qualified": False,
         "owner_runtime_qualified": False,
+        "dma_runtime_qualified": False,
         "mmio_register_accessed": False,
         "host_runtime_qualified": False,
         "hardware_qualified": False,
     }
     (OUT / "build-report.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("PASS: xhci0 resource/mapping-owner archive built; controller runtime qualification remains separate")
+    print("PASS: xhci0 resource, mapping-owner and fail-closed DMA adapter archives built; runtime remains unqualified")
 
 
 def verify_kernel(kernel):
@@ -116,7 +128,8 @@ def verify_kernel(kernel):
     if (report.get("source_archive_built") is not True or
             report.get("archive_sha256") != helper.digest(ARCHIVE) or
             report.get("source_sha256") != helper.digest(SOURCE) or
-            report.get("owner_source_sha256") != helper.digest(OWNER_SOURCE)):
+            report.get("owner_source_sha256") != helper.digest(OWNER_SOURCE) or
+            report.get("dma_source_sha256") != helper.digest(DMA_SOURCE)):
         raise ValueError("Dali xHCI resource archive/report mismatch")
     defined = subprocess.check_output(["xcrun", "nm", "-gU", str(kernel)], text=True)
     undefined = subprocess.check_output(["xcrun", "nm", "-u", str(kernel)], text=True)
@@ -134,12 +147,13 @@ def verify_kernel(kernel):
         kernel_symbol_checks=list(kernel_symbols),
         resource_consumer_runtime_qualified=False,
         owner_runtime_qualified=False,
+        dma_runtime_qualified=False,
         mmio_register_accessed=False,
         host_runtime_qualified=False,
         hardware_qualified=False,
     )
     (OUT / "kernel-link-report.json").write_text(json.dumps(result, indent=2) + "\n")
-    print("PASS: xhci0 resource and MMIO mapping owner linked in the source XNU kernel; controller runtime remains unqualified")
+    print("PASS: xhci0 resource, MMIO mapping owner and DMA adapter linked in source XNU; runtime remains unqualified")
 
 
 def main(argv=None):

@@ -11,6 +11,9 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CORE_INCLUDE = ROOT / "UniXNU/drivers/UsbCore/include"
+if not CORE_INCLUDE.is_dir():
+    CORE_INCLUDE = ROOT.parent / "UniXNU/drivers/UsbCore/include"
 SPEC = importlib.util.spec_from_file_location(
     "dali_usb_xhci_resources_builder",
     ROOT / "scripts/build-dali-usb-xhci-resources.py")
@@ -39,7 +42,7 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
                     BUILDER, "build", side_effect=AssertionError("disabled builder must not run")):
             BUILDER.main([])
 
-    def test_builder_uses_kernel_cpp_compile_record_for_both_services(self):
+    def test_builder_uses_kernel_cpp_compile_record_for_all_xhci_units(self):
         helper = BUILDER.helpers()
         with tempfile.TemporaryDirectory(prefix="dali-usb-xhci-compile-record-") as temporary:
             root = Path(temporary)
@@ -73,6 +76,9 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
             "00000000 S __ZN16DaliUsbXhciOwner10gMetaClassE\n"
             "00000000 T __ZN16DaliUsbXhciOwner5startEP9IOService\n"
             "00000000 T __ZN16DaliUsbXhciOwner4stopEP9IOService\n"
+            "00000000 T _dali_usb_xhci_dma_init\n"
+            "00000000 T _dali_usb_xhci_dma_get_ops\n"
+            "00000000 T _dali_usb_xhci_dma_stop\n"
         )
         BUILDER.require_symbols(symbols, BUILDER.SYMBOLS, "fixture")
         with self.assertRaisesRegex(ValueError, "DaliUsbXhciOwner"):
@@ -101,15 +107,26 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
             self.assertIn("PASS: production Dali xHCI resources-v1 decoder", ran.stdout)
 
             service = out / "service-lifecycle"
+            core_object = out / "usb-core.o"
             cxxflags = ["-O1", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion",
                         "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                         "-I", str(model), "-I", str(ROOT / "drivers/DaliUsbXhciResources"),
-                        "-I", str(ROOT / "drivers/DaliUsbXhciOwner")]
+                        "-I", str(ROOT / "drivers/DaliUsbXhciOwner"),
+                        "-I", str(ROOT / "drivers/DaliUsbXhciDma"),
+                        "-I", str(CORE_INCLUDE)]
+            core_built = subprocess.run(
+                [cc, "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion",
+                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                 "-I", str(CORE_INCLUDE), "-c", str(CORE_INCLUDE.parent / "UsbCore.c"),
+                 "-o", str(core_object)],
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(core_built.returncode, 0, core_built.stderr)
             built = subprocess.run(
                 [cpp, "-std=c++17", *cxxflags,
                  str(ROOT / "drivers/DaliUsbXhciResources/DaliUsbXhciResources.cpp"),
                  str(ROOT / "drivers/DaliUsbXhciOwner/DaliUsbXhciOwner.cpp"),
-                 str(model / "lifecycle.cpp"), "-o", str(service)],
+                 str(ROOT / "drivers/DaliUsbXhciDma/DaliUsbXhciDma.cpp"),
+                 str(model / "lifecycle.cpp"), str(core_object), "-o", str(service)],
                 capture_output=True, text=True, timeout=60)
             self.assertEqual(built.returncode, 0, built.stderr)
             ran = subprocess.run([str(service)], capture_output=True, text=True, timeout=30)

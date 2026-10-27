@@ -1,6 +1,7 @@
 #include "IOKitModel.h"
 #include "DaliUsbXhciResources.hpp"
 #include "DaliUsbXhciOwner.hpp"
+#include "DaliUsbXhciDma.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -33,8 +34,143 @@ static std::vector<uint8_t> valid_wire()
     return bytes;
 }
 
+static void test_dma_adapter()
+{
+    IOService device;
+    gIOKitDmaModel = {};
+    gIOKitDmaModel.no_mapper = true;
+    dali_usb_xhci_dma_context noMapper = {};
+    assert(!dali_usb_xhci_dma_init(&noMapper, &device));
+    assert(!noMapper.active && noMapper.mapper == nullptr);
+
+    gIOKitDmaModel = {};
+    gIOKitDmaModel.no_cpu_mapping = true;
+    dali_usb_xhci_dma_context noCpuMapping = {};
+    assert(dali_usb_xhci_dma_init(&noCpuMapping, &device));
+    usb_dma_ops ops = {};
+    assert(dali_usb_xhci_dma_get_ops(&noCpuMapping, &ops));
+    usb_dma_buffer buffer = {};
+    assert(usb_dma_alloc32(&ops, 512, 64, &buffer) == USB_RANGE);
+    assert(!buffer.cpu && !buffer.cookie && !noCpuMapping.allocations);
+    assert(gIOKitDmaModel.memory_allocations == 1 && gIOKitDmaModel.memory_releases == 1);
+    assert(gIOKitDmaModel.command_allocations == 1 && gIOKitDmaModel.command_releases == 1);
+    assert(gIOKitDmaModel.clear_calls == 0);
+    assert(dali_usb_xhci_dma_stop(&noCpuMapping));
+
+    gIOKitDmaModel = {};
+    dali_usb_xhci_dma_context dma = {};
+    assert(dali_usb_xhci_dma_init(&dma, &device));
+    assert(dali_usb_xhci_dma_get_ops(&dma, &ops));
+    assert(ops.qualified && ops.allocate && ops.release && ops.sync);
+
+    buffer = {};
+    assert(usb_dma_alloc32(&ops, 1024, 64, &buffer) == USB_OK);
+    assert(buffer.cpu && buffer.address == gIOKitDmaModel.dma_address);
+    assert(buffer.size == 1024 && buffer.coherent);
+    assert((reinterpret_cast<uintptr_t>(buffer.cpu) & 63u) == 0);
+    assert(gIOKitDmaModel.cpu_alignment == 64);
+    assert((gIOKitDmaModel.memory_options & kIOMemoryPhysicallyContiguous) != 0);
+    assert((gIOKitDmaModel.memory_options & kIOMapInhibitCache) != 0);
+    assert(gIOKitDmaModel.address_bits == 32 &&
+           gIOKitDmaModel.mapping_options == IODMACommand::kMapped &&
+           gIOKitDmaModel.alignment == 64);
+    const auto *bytes = static_cast<const uint8_t *>(buffer.cpu);
+    for (size_t i = 0; i < buffer.size; ++i) assert(bytes[i] == 0);
+    assert(usb_dma_sync(&ops, &buffer, 0, 512, USB_DMA_TO_DEVICE, true) == USB_OK);
+    assert(usb_dma_sync(&ops, &buffer, 1023, 2, USB_DMA_FROM_DEVICE, false) == USB_RANGE);
+    usb_dma_free(&ops, &buffer);
+    assert(buffer.cpu == nullptr && gIOKitDmaModel.clear_calls == 1);
+    assert(gIOKitDmaModel.memory_releases == 1 && gIOKitDmaModel.command_releases == 1);
+    assert(dali_usb_xhci_dma_stop(&dma));
+    assert(gIOKitDmaModel.mapper_releases == 1);
+
+    gIOKitDmaModel = {};
+    dali_usb_xhci_dma_context aligned64k = {};
+    assert(dali_usb_xhci_dma_init(&aligned64k, &device));
+    assert(dali_usb_xhci_dma_get_ops(&aligned64k, &ops));
+    buffer = {};
+    assert(usb_dma_alloc32(&ops, 4096, 65536, &buffer) == USB_OK);
+    assert((reinterpret_cast<uintptr_t>(buffer.cpu) & 0xffffu) == 0);
+    assert((buffer.address & 0xffffu) == 0);
+    assert(gIOKitDmaModel.cpu_alignment == 65536);
+    assert(gIOKitDmaModel.address_bits == 32 &&
+           gIOKitDmaModel.mapping_options == IODMACommand::kMapped &&
+           gIOKitDmaModel.alignment == 65536);
+    usb_dma_free(&ops, &buffer);
+    assert(dali_usb_xhci_dma_stop(&aligned64k));
+
+    gIOKitDmaModel = {};
+    dali_usb_xhci_dma_context misalignedIova = {};
+    assert(dali_usb_xhci_dma_init(&misalignedIova, &device));
+    assert(dali_usb_xhci_dma_get_ops(&misalignedIova, &ops));
+    gIOKitDmaModel.dma_address = 0x00100001u;
+    gIOKitDmaModel.ignore_iova_alignment = true;
+    buffer = {};
+    assert(usb_dma_alloc32(&ops, 512, 64, &buffer) == USB_RANGE);
+    assert(!buffer.cpu && !buffer.cookie && gIOKitDmaModel.memory_releases == 1);
+    assert(gIOKitDmaModel.command_releases == 1);
+    assert(dali_usb_xhci_dma_stop(&misalignedIova));
+
+    gIOKitDmaModel = {};
+    dali_usb_xhci_dma_context split = {};
+    assert(dali_usb_xhci_dma_init(&split, &device));
+    assert(dali_usb_xhci_dma_get_ops(&split, &ops));
+    gIOKitDmaModel.segment_count = 2;
+    buffer = {};
+    assert(usb_dma_alloc32(&ops, 512, 64, &buffer) == USB_RANGE);
+    assert(buffer.cpu == nullptr && gIOKitDmaModel.memory_releases == 1);
+    assert(gIOKitDmaModel.command_releases == 1);
+    gIOKitDmaModel.segment_count = 1;
+    gIOKitDmaModel.dma_address = 0x100000000ULL;
+    gIOKitDmaModel.next_dma_address = 0;
+    assert(usb_dma_alloc32(&ops, 64, 16, &buffer) == USB_RANGE);
+    assert(buffer.cpu == nullptr && gIOKitDmaModel.memory_releases == 2);
+    assert(gIOKitDmaModel.command_releases == 2);
+    gIOKitDmaModel.segment_count = 1;
+    gIOKitDmaModel.dma_address = 0xfffffff0u;
+    gIOKitDmaModel.next_dma_address = 0;
+    assert(usb_dma_alloc32(&ops, 64, 16, &buffer) == USB_RANGE);
+    assert(buffer.cpu == nullptr && gIOKitDmaModel.memory_releases == 3);
+    assert(gIOKitDmaModel.command_releases == 3);
+    gIOKitDmaModel.dma_address = 0x00100000u;
+    gIOKitDmaModel.next_dma_address = 0;
+    gIOKitDmaModel.fail_prepare = true;
+    assert(usb_dma_alloc32(&ops, 512, 64, &buffer) == USB_IO);
+    assert(buffer.cpu == nullptr && gIOKitDmaModel.memory_releases == 4);
+    assert(gIOKitDmaModel.active_prepares == 0 && gIOKitDmaModel.complete_calls == 4);
+    assert(dali_usb_xhci_dma_stop(&split));
+
+    gIOKitDmaModel = {};
+    dali_usb_xhci_dma_context descriptorFailure = {};
+    assert(dali_usb_xhci_dma_init(&descriptorFailure, &device));
+    assert(dali_usb_xhci_dma_get_ops(&descriptorFailure, &ops));
+    gIOKitDmaModel.fail_set_descriptor = true;
+    buffer = {};
+    assert(usb_dma_alloc32(&ops, 128, 64, &buffer) == USB_IO);
+    assert(!buffer.cpu && !buffer.cookie && !descriptorFailure.allocations);
+    assert(gIOKitDmaModel.clear_calls == 0);
+    assert(gIOKitDmaModel.memory_releases == 1 && gIOKitDmaModel.command_releases == 1);
+    assert(dali_usb_xhci_dma_stop(&descriptorFailure));
+
+    gIOKitDmaModel = {};
+    dali_usb_xhci_dma_context retained = {};
+    assert(dali_usb_xhci_dma_init(&retained, &device));
+    assert(dali_usb_xhci_dma_get_ops(&retained, &ops));
+    assert(usb_dma_alloc32(&ops, 256, 64, &buffer) == USB_OK);
+    gIOKitDmaModel.fail_clear = true;
+    usb_dma_free(&ops, &buffer);
+    assert(buffer.cpu == nullptr && retained.faulted && retained.allocations != nullptr);
+    assert(!dali_usb_xhci_dma_get_ops(&retained, &ops));
+    assert(!dali_usb_xhci_dma_stop(&retained));
+    gIOKitDmaModel.fail_clear = false;
+    assert(dali_usb_xhci_dma_stop(&retained));
+    assert(gIOKitDmaModel.memory_releases == 1 && gIOKitDmaModel.command_releases == 1);
+}
+
 int main()
 {
+    test_dma_adapter();
+
     auto bytes = valid_wire();
     OSData property(bytes.data(), bytes.size());
     static constexpr char compatibleName[] = "mediatek,mtk-xhci";

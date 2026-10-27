@@ -216,12 +216,15 @@ local-args support; the generated msdosfs build copy uses `bcopy` only when the
 mount carries that per-mount marker and preserves `copyin` for ordinary user
 mounts. The fixed upstream source checkout stays unmodified. The generic tests
 cover the exact source transform, drift refusal and copyin preservation, and
-the VFS patch applies to the pinned XNU d8 source files. This local-args change
-still needs its own macOS compile/link run. No runtime registration, USB mount
-or FAT32 file operation is qualified. The registration hook performs no mount
-or media I/O. The pre-user FAT32 fixture remains pending because the current
-source-XNU QEMU runner has no USB mass-storage device path; its input disk is
-read-only virtio, not a USB fixture. No physical media test is claimed.
+the VFS patch applies to the pinned XNU d8 source files. A boot-arg-gated QEMU
+test is now wired to mount a FAT32-sized volatile `SourceStorageFixture` volume
+through its published `/dev/diskN` path and read `/mnt/README.TXT` with
+production VFS/msdosfs before launchd. Its mockfs `/mnt` node and runtime hook
+have not yet passed the macOS compile/link or QEMU run, so production FAT32
+runtime remains unqualified. This exercises XNU VFS/msdosfs over a RAM-backed
+IOStorage device; it does not traverse the Dali USB host/controller path or
+qualify USB storage, DMA, physical media, persistence or hardware. No physical
+media test is claimed.
 
 The device tree contains a production SID14 PMIF-M transport with actual identity
 gating, atomic shared-lock operations, bounded completion/error handling,
