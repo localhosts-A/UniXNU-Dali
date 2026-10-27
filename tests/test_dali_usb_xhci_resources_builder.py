@@ -51,7 +51,8 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
             source_tree.mkdir(parents=True)
             with patch.dict(os.environ, {"UNIXNU_OUT": str(checkout / "out")}):
                 self.assertEqual(
-                    BUILDER.generic_usb_core_include(source_tree), core_include)
+                    BUILDER.generic_usb_core_include(source_tree).resolve(),
+                    core_include.resolve())
 
     def test_builder_uses_kernel_cpp_compile_record_for_all_xhci_units(self):
         helper = BUILDER.helpers()
