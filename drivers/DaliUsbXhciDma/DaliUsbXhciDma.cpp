@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
+/* The pinned XNU headers expose OSPtr as a raw pointer unless a translation
+ * unit opts into the shared-pointer API. This adapter relies on the owning
+ * factory results to release temporary DMA objects on every early return. */
+#define IOKIT_ENABLE_EXPERIMENTAL_SHARED_PTR_IN_API
+#define IOKIT_ENABLE_SHARED_PTR
+
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODMACommand.h>
