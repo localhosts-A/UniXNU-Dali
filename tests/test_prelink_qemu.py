@@ -48,10 +48,24 @@ class PrelinkQemuTests(unittest.TestCase):
             report = root / "kernel.json"
             report.write_text(json.dumps({
                 "candidate_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+                "original_sha256": "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7",
                 "instruction_relocation_complete": False,
                 "abi_qualified": False,
                 "runtime_qualified": False,
                 "loadable": False,
+                "source_interfaces": ["com.apple.iokit.IOStorageFamily"],
+                "codeless_components": ["com.apple.iokit.IOStorageFamily"],
+                "components": [],
+                "source_interface_transform": {
+                    "version": 1,
+                    "original_kernelcache_sha256": "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7",
+                    "rewritten_prelink_input_sha256": "1" * 64,
+                    "entries": {"com.apple.iokit.IOStorageFamily": {
+                        "dependencies": ["com.apple.kpi.iokit"],
+                        "personalities": ["StorageFixture"],
+                        "segments": [{"name": "__TEXT", "va": 0x1000, "size": 0x1000}],
+                    }},
+                },
             }))
 
             parsed = DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
@@ -66,16 +80,40 @@ class PrelinkQemuTests(unittest.TestCase):
             report = root / "kernel.json"
             base = {
                 "candidate_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+                "original_sha256": "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7",
                 "instruction_relocation_complete": False,
                 "abi_qualified": False,
                 "runtime_qualified": False,
                 "loadable": False,
+                "source_interfaces": ["com.apple.iokit.IOStorageFamily"],
+                "codeless_components": ["com.apple.iokit.IOStorageFamily"],
+                "components": [],
+                "source_interface_transform": {
+                    "version": 1,
+                    "original_kernelcache_sha256": "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7",
+                    "rewritten_prelink_input_sha256": "1" * 64,
+                    "entries": {"com.apple.iokit.IOStorageFamily": {
+                        "dependencies": ["com.apple.kpi.iokit"],
+                        "personalities": ["StorageFixture"],
+                        "segments": [{"name": "__TEXT", "va": 0x1000, "size": 0x1000}],
+                    }},
+                },
             }
             report.write_text(json.dumps({**base, "candidate_sha256": "0" * 64}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
 
+            report.write_text(json.dumps({**base, "source_interfaces": []}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
             report.write_text(json.dumps({**base, "loadable": True}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+            report.write_text(json.dumps({**base, "source_interface_transform": {
+                **base["source_interface_transform"], "rewritten_prelink_input_sha256": "invalid",
+            }}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
 

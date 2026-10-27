@@ -55,11 +55,14 @@ class IpadosProfileTests(unittest.TestCase):
 
     def test_pinned_prelink_is_an_explicit_audit_only_candidate(self):
         prelink = self.board["kernel"]["prelink"]
+        self.assertEqual(prelink["tool"], "scripts/emit-source-interface-prelink.py")
         self.assertEqual(prelink["kernelcache_sha256"],
                          "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7")
         self.assertEqual(prelink["slide"], "-0x1000000")
         self.assertEqual(prelink["early_security_init"],
                          "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0")
+        self.assertEqual(prelink["source_interfaces"], ["com.apple.iokit.IOStorageFamily"])
+        self.assertNotIn("com.apple.iokit.IOStorageFamily", prelink["roots"])
         self.assertIn("com.apple.filesystems.apfs", prelink["roots"])
         self.assertIn("com.apple.security.AppleImage4", prelink["roots"])
         self.assertIn("com.apple.iokit.IOSurface", prelink["roots"])

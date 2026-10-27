@@ -36,7 +36,7 @@ windows = [
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-unixnu_commit = "9bc5d641b8740d7a6c9b8f8e09d558813b062451"
+unixnu_commit = "261b9670eed9df7277b3fea6e1e292a68458ad4e"
 uefi_commit = "0f82a6a85d28660cbaa5db662507ea2a78891c44"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
@@ -71,11 +71,15 @@ archives = [
 # the compressed IPSW member hash above. NativePrelink currently reports its
 # ABI, relocation and runtime gates as false; this must never imply loadability.
 [kernel.prelink]
-tool = "kits/NativePrelink/emit_prelink.py"
+tool = "scripts/emit-source-interface-prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
 kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
 slide = "-0x1000000"
 early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+# The native kernel links the pinned public IOStorageFamily classes. Keep its
+# donor bundle identity/personality metadata as codeless so dependents resolve
+# without registering a second IOUserBlockStorageDevice class.
+source_interfaces = ["com.apple.iokit.IOStorageFamily"]
 roots = [
   "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
   "com.apple.driver.AppleARMPlatform",
@@ -98,7 +102,6 @@ roots = [
   "com.apple.iokit.IOMobileGraphicsFamily",
   "com.apple.iokit.IOReportFamily",
   "com.apple.iokit.IOSlowAdaptiveClockingFamily",
-  "com.apple.iokit.IOStorageFamily",
   "com.apple.iokit.IOSurface",
   "com.apple.kec.Libm",
   "com.apple.kec.corecrypto",

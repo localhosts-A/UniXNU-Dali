@@ -70,6 +70,25 @@ def validate_prelink_audit_candidate(kernel, report_path):
     if any(report.get(key) is not False for key in (
             'instruction_relocation_complete', 'abi_qualified', 'runtime_qualified', 'loadable')):
         raise SystemExit('This QEMU path only accepts an explicitly non-loadable prelink audit candidate')
+    board = tomllib.loads((DEVICE_ROOT / 'board.toml').read_text())
+    prelink = board['kernel']['prelink']
+    transform = report.get('source_interface_transform', {})
+    expected_interfaces = sorted(prelink.get('source_interfaces', []))
+    if report.get('original_sha256') != prelink.get('kernelcache_sha256') or \
+            transform.get('version') != 1 or \
+            transform.get('original_kernelcache_sha256') != prelink.get('kernelcache_sha256') or \
+            not re.fullmatch(r'[0-9a-f]{64}', transform.get('rewritten_prelink_input_sha256', '')) or \
+            report.get('source_interfaces') != expected_interfaces:
+        raise SystemExit('Prelink report does not bind the source-interface transform to the pinned kernelcache')
+    storage = 'com.apple.iokit.IOStorageFamily'
+    storage_record = transform.get('entries', {}).get(storage, {})
+    if storage not in report.get('source_interfaces', []) or \
+            storage not in report.get('codeless_components', []) or \
+            storage in report.get('components', []) or \
+            not storage_record.get('dependencies') or \
+            not storage_record.get('personalities') or \
+            not storage_record.get('segments'):
+        raise SystemExit('Prelink must use the source-linked IOStorageFamily as codeless metadata')
     return report
 
 
