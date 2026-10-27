@@ -143,6 +143,8 @@ jobs:
 
       - name: Test device runner and actual XNU entry instructions
         shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
         run: |
           set -euo pipefail
           python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -v
