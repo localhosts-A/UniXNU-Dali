@@ -1,6 +1,6 @@
 # `unixnu_logs` automatic logging design
 
-**Status:** v1/v2 offline decoding is implemented. UEFI source now has an empty-pair-only read scanner, selected-slot grant rebinding, and a PCD-gated automatic call to the existing v1 writer; eight synthetic C host cases pass and the DEBUG firmware build compiles. No device validation has occurred. Full v1/v2 classification, runtime boot identity, rotation, v2 writes, and XNU ownership remain incomplete.
+**Status:** v1/v2 offline decoding is implemented. UEFI source has an empty-pair-only read scanner, selected-slot grant rebinding, and a PCD-gated automatic call to the v1 writer. BDS requests a 128-bit token from EFI RNG and passes it separately as record identity; the storage grant remains unchanged. Three synthetic BlockIo host cases pass, and a DEBUG build compiled RngDxe, BaseRngLib, BDS and UFS logging code using a temporary non-bootable payload fixture. The build kept logging disabled and did not verify runtime entropy or device behavior. Full v1/v2 classification, generation, rotation, v2 writes, target RNG availability, and XNU ownership remain incomplete.
 
 ## Existing partition and records
 
@@ -18,10 +18,11 @@ pairs. Each pair has one 4 MiB UEFI slot followed by one 4 MiB XNU slot:
 
 The v1 header uses `DALIUFSLOG1`, owner 1/2, and `Sequence` 1–4 to identify
 the physical pair. It has SHA-256 body and record digests but no boot
-generation or timestamp. The 32-byte ASCII token is currently a build input.
-Consequently v1 records cannot be ordered by age from their contents. Preserve
-the verified raw backup and keep v1 records readable; do not infer their order
-from pair number.
+generation or timestamp. Existing records use a build-time token. The updated
+UEFI call path supplies a separate runtime record token for new writes; it does
+not alter the build-time grant token. V1 records still cannot be ordered by age
+from their contents. Preserve the verified raw backup and keep v1 records
+readable; do not infer their order from pair number.
 
 ## Version 2 record identity
 
@@ -53,6 +54,14 @@ value to the later XNU capture. Do not derive the token from `Generation` alone:
 an interrupted, uncommitted attempt may reuse the next generation on a later
 boot. If runtime entropy is unavailable, skip the persistent UFS write and
 leave early diagnostics in ramoops.
+
+The current Dali integration adds `RngDxe` with the CPU `BaseRngLib` RNDR
+source. The provider checks the runtime CPU capability before exposing RNDR;
+BDS skips persistent logging when the protocol or entropy request is unavailable
+and rejects an all-zero result. The DEBUG firmware build compiles this provider and token path, but logging
+was disabled in that build, so it did not request a token or write a record.
+Target-device entropy availability remains unverified. The existing BDS recovery token
+is a separate value and is not used as log identity.
 
 Increment `Generation` from the highest fully committed v2 generation found
 among all records. Use checked addition and refuse to wrap. The UEFI and XNU
@@ -128,11 +137,16 @@ quiesce. The source now uses the read-only scan result to publish a grant for
 exactly one UEFI slot and calls the existing v1 writer automatically when the
 log PCD is explicitly enabled. The default PCD remains disabled. The 240-byte
 build-time authorization wire still provides a preferred physical sequence and
-build-time token; authorization rebinds the sequence/window after scanning.
-That token is not unique per boot, and this path has no v2 generation, safe
-rotation, or XNU writer. The code has passed eight synthetic host cases and a
-DEBUG compile using a temporary payload fixture; neither proves device behavior
-or produces a bootable image.
+build-time grant token; authorization rebinds the sequence/window after
+scanning. The runtime record token is passed independently and does not change
+the grant. The writer still emits v1, with no generation or safe rotation, and
+there is no XNU writer or token handoff. The prior scanner code passed eight
+synthetic host cases and a DEBUG compile using a temporary payload fixture;
+neither proves device behavior or produces a bootable image. Three token-focused
+synthetic BlockIo cases also pass. The DEBUG build compiled RngDxe, BaseRngLib,
+BDS and UFS logging objects with the log PCD disabled; it did not exercise a
+runtime write or prove target entropy availability. No device behavior has been
+validated.
 
 XNU persistence is a separate milestone. The current UEFI logger rejects the
 XNU owner, the `msgbuf` snapshot helper has no caller, and storage quiesce does
@@ -147,7 +161,7 @@ Keep the default log PCD disabled until all of the following exist. The current
 explicit build profile is experimental and can exercise the v1 auto-call path;
 it is not a device-validated persistent logging configuration.
 
-1. Runtime entropy source and v2 boot token generation.
+1. Runtime entropy source verified on the target and shared-token handoff to XNU; v2 token/generation encoding.
 2. Shared v1/v2 offline decoding and bounded read-only slot classification.
 3. Dynamic per-slot grants and an oldest-safe-v2 pair allocator.
 4. Interrupted-write recovery, fail-closed handling, and explicit truncation
