@@ -1,0 +1,18 @@
+# Development profile for the Dali owner-root provider path.
+# Do not select this for a device boot until the signed OS/SystemOS policy
+# archive, APFS Data seed, prelink and display gates are qualified.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_SOURCE_STORAGE_FAMILY=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+# MT6991 implements PAN; copyin/copyout must bracket access.
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_VERIFIED_ROOT_PROVIDER=y
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliUfs.a"
+CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-xnu-platform/libDaliUfs.a"

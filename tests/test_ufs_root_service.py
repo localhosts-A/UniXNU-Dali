@@ -32,6 +32,16 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("IOClass'         = DaliUfsRoot", self.personality)
         self.assertIn("IOMatchCategory' = DaliUfsRoot", self.personality)
 
+    def test_owner_root_profile_is_separate_and_does_not_enable_virtio_or_mockfs(self):
+        profile = (ROOT / "configs/dali_ipados_root_defconfig").read_text()
+        self.assertIn("CONFIG_XNU_VERIFIED_ROOT_PROVIDER=y", profile)
+        self.assertIn("CONFIG_XNU_OWNER_ROOT_AUDIT=y", profile)
+        self.assertIn("CONFIG_XNU_OWNER_ROOT_TRUST=y", profile)
+        self.assertNotIn("CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y", profile)
+        self.assertNotIn("CONFIG_XNU_SOURCE_MOCKFS=y", profile)
+        self.assertNotIn("CONFIG_XNU_TRUST_CACHE_RUNTIME=y", profile)
+        self.assertNotIn("dali-ipados-root", (ROOT / "board.toml").read_text())
+
     def test_diagnostic_service_refuses_to_compete_for_root_controller(self):
         start = self.diagnostic[self.diagnostic.index("bool DaliUfs::start("):]
         guard = start.index('PE_parse_boot_argn("dali-ipados-root"')
@@ -71,6 +81,7 @@ class UfsRootServiceTests(unittest.TestCase):
         for header in ("RootWindowRead.h", "RootPublication.h",
                        "VerifiedBlockPolicy.h", "verified_root.h"):
             self.assertIn(header, self.builder)
+        self.assertNotIn('ROOT.parent / "UniXNU"', self.builder)
         self.assertIn('"root_service_default_off": True', self.builder)
         self.assertIn('"boot_root_authenticated": False', self.builder)
 

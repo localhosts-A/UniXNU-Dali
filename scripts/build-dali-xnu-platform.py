@@ -75,9 +75,9 @@ def compile_source(source, output):
         raise SystemExit(f"Could not replace compile-record source {record_source} in {record_path}")
     command += ["-I", str(ROOT / "build/storage-abi/include"),
                 "-I", str(ROOT / "refer/IOStorageFamily"), "-I", str(ROOT / "drivers/UfsTransport"),
-                "-I", str(ROOT.parent / "UniXNU/drivers/NativeUfs"),
-                "-I", str(ROOT.parent / "UniXNU/drivers/NativeVirtioBlock"),
-                "-I", str(ROOT.parent / "UniXNU/kits/VerifiedRoot/include")]
+                "-I", str(ROOT / "drivers/NativeUfs"),
+                "-I", str(ROOT / "drivers/NativeVirtioBlock"),
+                "-I", str(ROOT / "kits/VerifiedRoot/include")]
     result = subprocess.run(command, cwd=record_directory, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
     output.with_suffix(output.suffix + ".log").write_text(result.stdout)
@@ -129,20 +129,20 @@ def ufs_archive():
                    "DaliUfsRoot10gMetaClassE", "DaliUfsRootBlock10gMetaClassE"):
         if not any(symbol in line and " U " not in line for line in symbols.splitlines()):
             raise SystemExit(f"Dali UFS archive lacks actual metaclass {symbol}")
-    headers = {str(p.relative_to(ROOT.parent)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
+    headers = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
                sorted((ROOT / "drivers/DaliUfs").glob("*.h"))}
     generic_headers = (
-        ROOT.parent / "UniXNU/drivers/NativeUfs/RootDiagnostics.h",
-        ROOT.parent / "UniXNU/drivers/NativeUfs/RootPublication.h",
-        ROOT.parent / "UniXNU/drivers/NativeUfs/RootWindowRead.h",
-        ROOT.parent / "UniXNU/drivers/NativeVirtioBlock/VerifiedBlockPolicy.h",
-        ROOT.parent / "UniXNU/kits/VerifiedRoot/include/verified_root.h",
-        ROOT.parent / "UniXNU/drivers/UfsTransport/UfsTransport.h",
+        ROOT / "drivers/NativeUfs/RootDiagnostics.h",
+        ROOT / "drivers/NativeUfs/RootPublication.h",
+        ROOT / "drivers/NativeUfs/RootWindowRead.h",
+        ROOT / "drivers/NativeVirtioBlock/VerifiedBlockPolicy.h",
+        ROOT / "kits/VerifiedRoot/include/verified_root.h",
+        ROOT / "drivers/UfsTransport/UfsTransport.h",
     )
     for path in generic_headers:
         if not path.is_file():
             raise SystemExit(f"Dali root UFS build input is missing: {path}")
-        headers[str(path.relative_to(ROOT.parent))] = hashlib.sha256(path.read_bytes()).hexdigest()
+        headers[str(path.relative_to(ROOT))] = hashlib.sha256(path.read_bytes()).hexdigest()
     return {"sources": entries, "headers": headers, "archive_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
             "compiled_source_pins": SOURCE_PINS,
             "effective_xnu_source": XNU_SOURCE_PROOF,
