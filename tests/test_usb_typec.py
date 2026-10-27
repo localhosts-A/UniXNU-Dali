@@ -20,7 +20,9 @@ class UsbTypecTests(unittest.TestCase):
                        "-Wconversion", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                        "-I", str(ROOT / "drivers/DaliUsb/include"),
                        "-I", str(GENERIC / "drivers/UsbCore/include"),
+                       str(GENERIC / "drivers/UsbCore/UsbCore.c"),
                        str(ROOT / "drivers/DaliUsb/DaliUsbTypec.c"),
+                       str(ROOT / "drivers/DaliUsb/DaliUsbRoleWorker.c"),
                        str(ROOT / "tests/fixtures/usb_typec_test.c"), "-o", str(binary)]
             built = subprocess.run(command, text=True, capture_output=True, timeout=60)
             self.assertEqual(built.returncode, 0, built.stderr)

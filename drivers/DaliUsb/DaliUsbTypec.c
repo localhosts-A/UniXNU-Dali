@@ -225,6 +225,7 @@ int dali_usb_typec_stop(struct dali_usb_typec *t)
     if (!result) result = write16(t, 0x12, 0);
     if (!result) result = update8(t, 0x1c, 1, 0);
     if (result) return fault(t, result);
+    t->mode = DALI_CC_OPEN;
     t->started = false; t->have_candidate = false; t->published = (struct dali_typec_sample){0};
     return USB_OK;
 }

@@ -223,14 +223,26 @@ or media I/O. The pre-user FAT32 fixture remains pending because the current
 source-XNU QEMU runner has no USB mass-storage device path; its input disk is
 read-only virtio, not a USB fixture. No physical media test is claimed.
 
-The device tree also contains a production SID14 PMIF-M transport under
-`drivers/DaliUsb`, with actual identity gating, atomic shared-lock operations,
-bounded completion/error handling, late-response ownership and explicit write
-uncertainty. Its host register model passes Clang/GCC ASan/UBSan and AArch64
-compilation. Runtime keypad/shared-lock wiring, TCPC, both repeaters and port
-power/PHY initialization remain pending; the transport alone enables no port.
-`docs/usb-platform-contract.md` records the fixed source locations and unresolved
-platform dependencies for that work.
+The device tree contains a production SID14 PMIF-M transport with actual identity
+gating, atomic shared-lock operations, bounded completion/error handling,
+late-response ownership and explicit write uncertainty. Production TCPCI/MT6379
+VBUS, both USB2 repeaters, GPIO72/I2C6, clock/domain/PHY and IPPC primitives are
+also present with Clang/GCC register-model coverage. These pieces are not yet
+assembled by an installed MT6991 UEFI provider. The shared PMIF/resource
+acquisition, IRQ/DMA qualification and ownership leases still must be supplied
+before any controller start. `docs/usb-platform-contract.md` records fixed source
+locations and unresolved platform dependencies.
+
+`DaliUsbRoleWorker` connects debounced TCPCI polling to the generic
+`usb_role_switch()` stop/sync/cancel/DMA/VBUS/start sequence. It latches the
+fresh CC orientation before configuring a role, turns off host source VBUS only
+after filesystem sync, request cancellation and DMA stop all succeed, and keeps
+the current termination and VBUS on after a failed stop proof. Its explicit
+`stop()` retries cleanup while retaining dependencies. The actual production C
+worker runs in the Clang/GCC Type-C fixture and its object and three exports are
+verified in the AArch64 EDK2 `DaliUsbLib` archive. This remains a polling API:
+there is no installed DXE timer/provider or production host/gadget lifecycle
+caller, and the callback model does not establish hardware qualification.
 
 ## Fixed inputs
 

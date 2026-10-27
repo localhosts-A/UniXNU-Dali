@@ -9,6 +9,7 @@
   DaliUsbPmif.c
   DaliUsbVusb.c
   DaliUsbTypec.c
+  DaliUsbRoleWorker.c
   DaliUsbMt6379Repeater.c
   DaliUsbNxpRepeater.c
   DaliUsbGpio.c
