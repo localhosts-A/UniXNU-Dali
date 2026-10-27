@@ -18,7 +18,24 @@ class PrelinkQemuTests(unittest.TestCase):
 
         self.assertIn('"--prelink-report", args.prelink_report.resolve()', source)
         self.assertIn('"--skip-initializer-traces"', source)
+        self.assertIn('"--trace-symbol", "_register_and_init_prng"', source)
         self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
+
+    def test_prelink_requires_the_target_crypto_table_owner(self):
+        valid = {
+            "crypto14_initialization_observed": True,
+            "original_crypto_table_owner_observed": True,
+            "original_crypto_initialized_observed": True,
+        }
+        DALI_QEMU.validate_corecrypto_state(valid, True)
+
+        for field in ("original_crypto_table_owner_observed", "original_crypto_initialized_observed"):
+            invalid = {**valid, field: False}
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_corecrypto_state(invalid, True)
+
+        with self.assertRaises(SystemExit):
+            DALI_QEMU.validate_corecrypto_state({**valid, "crypto14_initialization_observed": False}, False)
 
     def test_candidate_must_match_report_and_stay_explicitly_non_loadable(self):
         with tempfile.TemporaryDirectory() as temp:

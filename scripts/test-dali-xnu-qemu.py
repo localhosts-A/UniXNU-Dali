@@ -73,6 +73,15 @@ def validate_prelink_audit_candidate(kernel, report_path):
     return report
 
 
+def validate_corecrypto_state(report, require_prelinked_provider):
+    if not report.get("crypto14_initialization_observed"):
+        raise SystemExit("QEMU did not observe initialized corecrypto and PRNG state")
+    if require_prelinked_provider and (
+            not report.get("original_crypto_table_owner_observed") or
+            not report.get("original_crypto_initialized_observed")):
+        raise SystemExit("QEMU crypto table is not owned by the pinned iPadOS corecrypto component")
+
+
 def validate_reset_instructions(kernel, output):
     """Require the real compiled call chain; source/compile success is insufficient."""
     output.mkdir(parents=True, exist_ok=True)
@@ -141,9 +150,10 @@ def main():
     common = [sys.executable, probe, "--kernel", kernel, "--uefi-efi", args.uefi_efi.resolve(),
               "--timeout", "90", "--armvirt", "--armcpu", "--nvram-proxy"]
     if args.prelink_report:
-        # Preserve the checkpoint's live crypto-state checks while keeping
-        # the prelink report's optional per-initializer breakpoints out of QEMU.
-        common += ["--prelink-report", args.prelink_report.resolve(), "--skip-initializer-traces"]
+        # Keep the optional component-initializer breakpoint fan-out disabled,
+        # but trace the actual PRNG registration to catch duplicate startup calls.
+        common += ["--prelink-report", args.prelink_report.resolve(), "--skip-initializer-traces",
+                   "--trace-symbol", "_register_and_init_prng"]
     cases = {
         "platform": "__ZN13ArmDTPlatform9configureEP9IOService",
         "cpu": "__ZN6ArmCpu5startEP9IOService",
@@ -171,9 +181,9 @@ def main():
     if len(hashes) != 1 or None in hashes:
         raise SystemExit("all checkpoints must use the same source XNU Mach-O")
     for name, report in reports.items():
-        if report.get("bounded_timeout_interrupted") or not report.get("native_4k_mmu_observed") or \
-                not report.get("crypto14_initialization_observed"):
+        if report.get("bounded_timeout_interrupted") or not report.get("native_4k_mmu_observed"):
             raise SystemExit(f"{name}: native XNU initialization or bounded handoff failed")
+        validate_corecrypto_state(report, prelink_report is not None)
         if report.get("pc") != report.get("function_return_target"):
             raise SystemExit(f"{name}: QEMU stopped before returning from the selected XNU checkpoint")
         pthread = report.get("pthread_globals", {})
