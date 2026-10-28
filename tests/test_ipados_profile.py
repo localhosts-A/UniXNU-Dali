@@ -12,6 +12,7 @@ EXPECTED_MEMBER_HASHES = {
     "044-76034-038.dmg.trustcache": "9742f3d566369e6c48f63b3dc0740b06c243d13c6650e25bbf44616e13d6d097",
 }
 TRUST_BUNDLE = "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7"
+STAGED_UEFI_COMMIT = "b53c48dd0664cb2a945eb6b8ca1194a0bae0fe84"
 
 
 class IpadosProfileTests(unittest.TestCase):
@@ -23,6 +24,7 @@ class IpadosProfileTests(unittest.TestCase):
     def test_donor_selector_is_pinned_without_changing_dali_identity(self):
         board, ipsw = self.board["board"], self.board["ipsw"]
         self.assertEqual((board["name"], board["soc"]), ("dali", "MT6991"))
+        self.assertEqual(self.board["firmware"]["uefi_commit"], STAGED_UEFI_COMMIT)
         self.assertEqual((ipsw["product"], ipsw["device_class"], ipsw["version"], ipsw["build"]),
                          ("iPad7,1", "j120ap", "17.7.11", "21H461"))
         self.assertEqual((ipsw["chip_id"], ipsw["board_id"]), (0x8011, 12))
