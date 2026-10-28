@@ -115,6 +115,7 @@ class PrelinkQemuTests(unittest.TestCase):
     def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
         probe_source = (ROOT.parent / "UniXNU/scripts/probe-darwinboot-xnu.py").read_text()
+        gdb_stop_source = (ROOT.parent / "UniXNU/scripts/qemu-entry/gdb-stop.py").read_text()
 
         self.assertEqual(DALI_QEMU.IMAGE4_CRYPTO_HASH_METHOD, "sha2-384")
         self.assertIn('["--crypto-hash-method", IMAGE4_CRYPTO_HASH_METHOD,', source)
@@ -129,6 +130,7 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn('validate_trust_cache_runtime(reports["trust-cache"], trust_cache["sha256"])', source)
         self.assertIn('command += amfi_pmgr_trace_args(prelink_report)', source)
         self.assertIn('inspect_amfi_pmgr_runtime(probe_report, prelink_report)', source)
+        self.assertIn("'x8': hex(current[8])", gdb_stop_source)
         self.assertIn('"amfi_pmgr_runtime_observation": (', source)
         self.assertIn('"trust_cache_runtime_consumed": bool(trust_cache_runtime)', source)
         self.assertIn('command += source_storage_metaclass_read_args(kernel)', source)
@@ -197,7 +199,7 @@ class PrelinkQemuTests(unittest.TestCase):
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__TEXT_EXEC",
                 "va": first - 0x20,
-                "size": 0x100,
+                "size": 0x400,
             }, {
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__DATA_CONST",
@@ -206,13 +208,13 @@ class PrelinkQemuTests(unittest.TestCase):
             }],
         }
         arguments = DALI_QEMU.amfi_pmgr_trace_args(report)
-        self.assertEqual(arguments.count("--trace-address"), len(DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS))
+        self.assertEqual(arguments.count("--trace-address"), len(DALI_QEMU.AMFI_PMGRAUDIT_ALL_TRACE_POINTS))
         self.assertEqual(arguments.count("--trace-read-register-offset"),
                          len(DALI_QEMU.AMFI_PMGRAUDIT_PROVIDER_READS))
         self.assertIn("--trace-read-register-offset", arguments)
         self.assertEqual(arguments.count("--read-memory"), 1)
         self.assertIn(f"{DALI_QEMU.AMFI_PMGRAUDIT_GATE_ADDRESS:x}:2", arguments)
-        for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS:
+        for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_ALL_TRACE_POINTS:
             self.assertIn(hex(address), arguments)
 
         wrong = dict(report, original_sha256="0" * 64)
@@ -239,7 +241,7 @@ class PrelinkQemuTests(unittest.TestCase):
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__TEXT_EXEC",
                 "va": DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS[0][0] - 0x20,
-                "size": 0x100,
+                "size": 0x400,
             }, {
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__DATA_CONST",
@@ -248,8 +250,9 @@ class PrelinkQemuTests(unittest.TestCase):
             }],
         }
         events = []
-        for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS:
-            event = {"pc": hex(address), "x0": "0xfffffff004000100", "x1": "0x4"}
+        for address, label in DALI_QEMU.AMFI_PMGRAUDIT_ALL_TRACE_POINTS:
+            event = {"pc": hex(address), "x0": "0xfffffff004000100", "x1": "0x4",
+                     "x8": "0x0" if label == "outer-guard-branch" else "0x1"}
             request = f"{address:x}:x0:88:8"
             if any(address == read_address for read_address, _ in DALI_QEMU.AMFI_PMGRAUDIT_PROVIDER_READS):
                 event["register_memory_reads"] = {
@@ -261,6 +264,12 @@ class PrelinkQemuTests(unittest.TestCase):
         observation = DALI_QEMU.inspect_amfi_pmgr_runtime(report, prelink)
         self.assertTrue(observation["trace_complete"])
         self.assertEqual(observation["missing_trace_points"], [])
+        self.assertEqual(observation["gate_branch_events"], {
+            "outer-guard-branch": {
+                "pc": hex(DALI_QEMU.AMFI_PMGRAUDIT_GATE_TRACE_POINTS[0][0]), "x8": "0x0"},
+            "inner-guard-branch": {
+                "pc": hex(DALI_QEMU.AMFI_PMGRAUDIT_GATE_TRACE_POINTS[1][0]), "x8": "0x1"},
+        })
         self.assertTrue(observation["safe_meta_cast_succeeded"])
         self.assertEqual(observation["provider_field_reads"]["read-entry-provider"]["provider_pointer"],
                          "0xfffffff004000200")
@@ -294,7 +303,7 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertEqual(
             partial["missing_trace_points"],
             [{"pc": hex(address), "event": label}
-             for address, label in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS[4:]],
+             for address, label in DALI_QEMU.AMFI_PMGRAUDIT_ALL_TRACE_POINTS[4:]],
         )
         self.assertIsNone(partial["provider_field_reads"]["read-entry-provider"].get("provider_pointer"))
 

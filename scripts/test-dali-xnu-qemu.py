@@ -32,6 +32,11 @@ AMFI_PMGRAUDIT_TRACE_POINTS = (
     (0xfffffff004aaeb50, "provider-write-entry"),
     (0xfffffff004aaeb54, "provider-write-return"),
 )
+AMFI_PMGRAUDIT_GATE_TRACE_POINTS = (
+    (0xfffffff004aaee14, "outer-guard-branch"),
+    (0xfffffff004aaeafc, "inner-guard-branch"),
+)
+AMFI_PMGRAUDIT_ALL_TRACE_POINTS = AMFI_PMGRAUDIT_TRACE_POINTS + AMFI_PMGRAUDIT_GATE_TRACE_POINTS
 AMFI_PMGRAUDIT_GATE_ADDRESS = 0xfffffff005cfc470
 AMFI_PMGRAUDIT_GATE_LENGTH = 2
 AMFI_PMGRAUDIT_PROVIDER_READS = (
@@ -707,7 +712,7 @@ def amfi_pmgr_trace_args(prelink_report):
             AMFI_PMGRAUDIT_COMPONENT_SHA256:
         raise SystemExit("AMFI PMGR trace candidate has an unexpected original AMFI executable hash")
     if any(not extent["va"] <= address < extent["va"] + extent["size"]
-           for address, _ in AMFI_PMGRAUDIT_TRACE_POINTS):
+           for address, _ in AMFI_PMGRAUDIT_ALL_TRACE_POINTS):
         raise SystemExit("Pinned AMFI PMGR trace PC escaped its executable text extent")
     component_data_const = [extent for extent in prelink_report.get("extents", [])
                             if extent.get("module") == AMFI_PMGRAUDIT_COMPONENT and
@@ -720,7 +725,7 @@ def amfi_pmgr_trace_args(prelink_report):
             gate_end > data_extent["va"] + data_extent["size"]:
         raise SystemExit("Pinned AMFI PMGR gate bytes escaped the __DATA_CONST extent")
     arguments = []
-    for address, _ in AMFI_PMGRAUDIT_TRACE_POINTS:
+    for address, _ in AMFI_PMGRAUDIT_ALL_TRACE_POINTS:
         arguments += ["--trace-address", hex(address)]
     for address, _ in AMFI_PMGRAUDIT_PROVIDER_READS:
         arguments += ["--trace-read-register-offset", f"{address:x}:x0:88:8"]
@@ -739,12 +744,17 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
     by_pc = {int(event["pc"], 16): event for event in raw_events
              if isinstance(event, dict) and isinstance(event.get("pc"), str)}
     events = {}
-    for address, label in AMFI_PMGRAUDIT_TRACE_POINTS:
+    for address, label in AMFI_PMGRAUDIT_ALL_TRACE_POINTS:
         event = by_pc.get(address)
         if event is not None:
             event["symbol"] = f"AMFI PMGR: {label}"
             events[label] = dict(pc=hex(address), x0=event.get("x0"), x1=event.get("x1"),
+                                 x8=event.get("x8"),
                                  register_memory_reads=event.get("register_memory_reads", {}))
+    gate_branch_events = {
+        label: {"pc": hex(address), "x8": by_pc[address].get("x8")}
+        for address, label in AMFI_PMGRAUDIT_GATE_TRACE_POINTS if address in by_pc
+    }
     provider_fields = {}
     for address, label in AMFI_PMGRAUDIT_PROVIDER_READS:
         event = by_pc.get(address, {})
@@ -758,7 +768,7 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
     safe_cast = events.get("safeMetaCast-return", {}).get("x0")
     missing_trace_points = [
         {"pc": hex(address), "event": label}
-        for address, label in AMFI_PMGRAUDIT_TRACE_POINTS if address not in by_pc
+        for address, label in AMFI_PMGRAUDIT_ALL_TRACE_POINTS if address not in by_pc
     ]
     memory = report.get("memory", {})
     if not isinstance(memory, dict):
@@ -786,6 +796,7 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
         "original_kernelcache_sha256": prelink_report.get("original_sha256"),
         "original_amfi_component_sha256": AMFI_PMGRAUDIT_COMPONENT_SHA256,
         "events": events,
+        "gate_branch_events": gate_branch_events,
         "missing_trace_points": missing_trace_points,
         "provider_field_reads": provider_fields,
         "control_gate_read": gate_read,
