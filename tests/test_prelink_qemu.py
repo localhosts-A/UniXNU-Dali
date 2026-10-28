@@ -189,7 +189,8 @@ class PrelinkQemuTests(unittest.TestCase):
                 DALI_QEMU.validate_source_xnu_config(config, require_trust_cache_runtime=True)
 
     def test_amfi_pmgr_trace_addresses_are_bound_to_the_pinned_component_extent(self):
-        first = DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS[0][0]
+        trace_addresses = [address for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_ALL_TRACE_POINTS]
+        text_start = min(trace_addresses) - 0x20
         report = {
             "original_sha256": DALI_QEMU.AMFI_PMGRAUDIT_KERNELCACHE_SHA256,
             "original_executable_sha256": {
@@ -198,8 +199,8 @@ class PrelinkQemuTests(unittest.TestCase):
             "extents": [{
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__TEXT_EXEC",
-                "va": first - 0x20,
-                "size": 0x400,
+                "va": text_start,
+                "size": max(trace_addresses) - text_start + 4,
             }, {
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__DATA_CONST",
@@ -231,6 +232,8 @@ class PrelinkQemuTests(unittest.TestCase):
 
     def test_amfi_pmgr_trace_reports_partial_state_without_qualification(self):
         candidate_sha = "a" * 64
+        trace_addresses = [address for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_ALL_TRACE_POINTS]
+        text_start = min(trace_addresses) - 0x20
         prelink = {
             "candidate_sha256": candidate_sha,
             "original_sha256": DALI_QEMU.AMFI_PMGRAUDIT_KERNELCACHE_SHA256,
@@ -240,8 +243,8 @@ class PrelinkQemuTests(unittest.TestCase):
             "extents": [{
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__TEXT_EXEC",
-                "va": DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS[0][0] - 0x20,
-                "size": 0x400,
+                "va": text_start,
+                "size": max(trace_addresses) - text_start + 4,
             }, {
                 "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
                 "segment": "__DATA_CONST",
@@ -250,8 +253,10 @@ class PrelinkQemuTests(unittest.TestCase):
             }],
         }
         events = []
+        entitlement_labels = {name for _, name in DALI_QEMU.AMFI_PMGRAUDIT_ENTITLEMENT_TRACE_POINTS}
         for address, label in DALI_QEMU.AMFI_PMGRAUDIT_ALL_TRACE_POINTS:
-            event = {"pc": hex(address), "x0": "0xfffffff004000100", "x1": "0x4",
+            x0 = "0x1" if label in entitlement_labels else "0xfffffff004000100"
+            event = {"pc": hex(address), "x0": x0, "x1": "0x4",
                      "x8": "0x0" if label == "outer-guard-branch" else "0x1"}
             request = f"{address:x}:x0:88:8"
             if any(address == read_address for read_address, _ in DALI_QEMU.AMFI_PMGRAUDIT_PROVIDER_READS):
@@ -270,6 +275,17 @@ class PrelinkQemuTests(unittest.TestCase):
             "inner-guard-branch": {
                 "pc": hex(DALI_QEMU.AMFI_PMGRAUDIT_GATE_TRACE_POINTS[1][0]), "x8": "0x1"},
         })
+        result_pc, result_label = DALI_QEMU.AMFI_PMGRAUDIT_ENTITLEMENT_TRACE_POINTS[0]
+        accepted_pc, accepted_label = DALI_QEMU.AMFI_PMGRAUDIT_ENTITLEMENT_TRACE_POINTS[1]
+        self.assertEqual(observation["entitlement_gate"], {
+            "required_entitlement": DALI_QEMU.AMFI_PMGRAUDIT_ENTITLEMENT,
+            "events": {
+                result_label: {"pc": hex(result_pc), "x0": "0x1"},
+                accepted_label: {"pc": hex(accepted_pc), "x0": "0x1"},
+            },
+            "result_nonzero": True,
+            "accepted_path_observed": True,
+        })
         self.assertTrue(observation["safe_meta_cast_succeeded"])
         self.assertEqual(observation["provider_field_reads"]["read-entry-provider"]["provider_pointer"],
                          "0xfffffff004000200")
@@ -282,6 +298,19 @@ class PrelinkQemuTests(unittest.TestCase):
         })
         self.assertFalse(observation["abi_qualified"])
         self.assertFalse(observation["hardware_qualified"])
+
+        zero_result = DALI_QEMU.inspect_amfi_pmgr_runtime(
+            {"kernel_sha256": candidate_sha,
+             "trace_events": [{"pc": hex(result_pc), "x0": "0x0"}],
+             "memory": {}}, prelink)
+        self.assertFalse(zero_result["entitlement_gate"]["result_nonzero"])
+        self.assertFalse(zero_result["entitlement_gate"]["accepted_path_observed"])
+
+        malformed_result = DALI_QEMU.inspect_amfi_pmgr_runtime(
+            {"kernel_sha256": candidate_sha,
+             "trace_events": [{"pc": hex(result_pc), "x0": "not-hex"}],
+             "memory": {}}, prelink)
+        self.assertIsNone(malformed_result["entitlement_gate"]["result_nonzero"])
 
         read_cases = (("0000", None), ("E14", "gdb-read-error"),
                       ("00", "short-or-malformed-read"))

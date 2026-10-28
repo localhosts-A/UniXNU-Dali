@@ -22,6 +22,7 @@ AMFI_ONLY_PLATFORM_CODE = True
 AMFI_PMGRAUDIT_COMPONENT = "com.apple.driver.AppleMobileFileIntegrity"
 AMFI_PMGRAUDIT_COMPONENT_SHA256 = "a1088aaabc259418ed503d08df29b6146470b8c962696c688122a1f60a141db6"
 AMFI_PMGRAUDIT_KERNELCACHE_SHA256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
+AMFI_PMGRAUDIT_ENTITLEMENT = "com.apple.private.amfi.developer-mode-control"
 AMFI_PMGRAUDIT_TRACE_POINTS = (
     (0xfffffff004aaeb10, "serviceMatching-return"),
     (0xfffffff004aaeb24, "waitForMatchingService-return"),
@@ -36,7 +37,14 @@ AMFI_PMGRAUDIT_GATE_TRACE_POINTS = (
     (0xfffffff004aaee14, "outer-guard-branch"),
     (0xfffffff004aaeafc, "inner-guard-branch"),
 )
-AMFI_PMGRAUDIT_ALL_TRACE_POINTS = AMFI_PMGRAUDIT_TRACE_POINTS + AMFI_PMGRAUDIT_GATE_TRACE_POINTS
+AMFI_PMGRAUDIT_ENTITLEMENT_TRACE_POINTS = (
+    (0xfffffff004aaa9e0, "developer-mode-entitlement-result"),
+    (0xfffffff004aaa9e8, "developer-mode-entitlement-accepted-path"),
+)
+AMFI_PMGRAUDIT_ALL_TRACE_POINTS = (
+    AMFI_PMGRAUDIT_TRACE_POINTS + AMFI_PMGRAUDIT_GATE_TRACE_POINTS +
+    AMFI_PMGRAUDIT_ENTITLEMENT_TRACE_POINTS
+)
 AMFI_PMGRAUDIT_GATE_ADDRESS = 0xfffffff005cfc470
 AMFI_PMGRAUDIT_GATE_LENGTH = 2
 AMFI_PMGRAUDIT_PROVIDER_READS = (
@@ -755,6 +763,17 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
         label: {"pc": hex(address), "x8": by_pc[address].get("x8")}
         for address, label in AMFI_PMGRAUDIT_GATE_TRACE_POINTS if address in by_pc
     }
+    entitlement_gate_events = {
+        label: {"pc": hex(address), "x0": by_pc[address].get("x0")}
+        for address, label in AMFI_PMGRAUDIT_ENTITLEMENT_TRACE_POINTS if address in by_pc
+    }
+    entitlement_result = entitlement_gate_events.get(
+        "developer-mode-entitlement-result", {}).get("x0")
+    try:
+        entitlement_result_nonzero = bool(int(entitlement_result, 16) & 0xffffffff)
+    except (TypeError, ValueError):
+        entitlement_result_nonzero = None
+    accepted_path_address = AMFI_PMGRAUDIT_ENTITLEMENT_TRACE_POINTS[1][0]
     provider_fields = {}
     for address, label in AMFI_PMGRAUDIT_PROVIDER_READS:
         event = by_pc.get(address, {})
@@ -797,6 +816,12 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
         "original_amfi_component_sha256": AMFI_PMGRAUDIT_COMPONENT_SHA256,
         "events": events,
         "gate_branch_events": gate_branch_events,
+        "entitlement_gate": {
+            "required_entitlement": AMFI_PMGRAUDIT_ENTITLEMENT,
+            "events": entitlement_gate_events,
+            "result_nonzero": entitlement_result_nonzero,
+            "accepted_path_observed": accepted_path_address in by_pc,
+        },
         "missing_trace_points": missing_trace_points,
         "provider_field_reads": provider_fields,
         "control_gate_read": gate_read,
