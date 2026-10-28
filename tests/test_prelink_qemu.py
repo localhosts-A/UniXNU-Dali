@@ -198,6 +198,11 @@ class PrelinkQemuTests(unittest.TestCase):
                 "segment": "__TEXT_EXEC",
                 "va": first - 0x20,
                 "size": 0x100,
+            }, {
+                "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
+                "segment": "__DATA_CONST",
+                "va": DALI_QEMU.AMFI_PMGRAUDIT_GATE_ADDRESS - 1,
+                "size": DALI_QEMU.AMFI_PMGRAUDIT_GATE_LENGTH + 2,
             }],
         }
         arguments = DALI_QEMU.amfi_pmgr_trace_args(report)
@@ -205,17 +210,43 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertEqual(arguments.count("--trace-read-register-offset"),
                          len(DALI_QEMU.AMFI_PMGRAUDIT_PROVIDER_READS))
         self.assertIn("--trace-read-register-offset", arguments)
+        self.assertEqual(arguments.count("--read-memory"), 1)
+        self.assertIn(f"{DALI_QEMU.AMFI_PMGRAUDIT_GATE_ADDRESS:x}:2", arguments)
         for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS:
             self.assertIn(hex(address), arguments)
 
         wrong = dict(report, original_sha256="0" * 64)
         with self.assertRaises(SystemExit):
             DALI_QEMU.amfi_pmgr_trace_args(wrong)
+        wrong_data = dict(report, extents=[report["extents"][0], {
+            "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
+            "segment": "__DATA_CONST",
+            "va": DALI_QEMU.AMFI_PMGRAUDIT_GATE_ADDRESS + 1,
+            "size": DALI_QEMU.AMFI_PMGRAUDIT_GATE_LENGTH,
+        }])
+        with self.assertRaises(SystemExit):
+            DALI_QEMU.amfi_pmgr_trace_args(wrong_data)
 
     def test_amfi_pmgr_trace_reports_partial_state_without_qualification(self):
         candidate_sha = "a" * 64
-        prelink = {"candidate_sha256": candidate_sha,
-                   "original_sha256": DALI_QEMU.AMFI_PMGRAUDIT_KERNELCACHE_SHA256}
+        prelink = {
+            "candidate_sha256": candidate_sha,
+            "original_sha256": DALI_QEMU.AMFI_PMGRAUDIT_KERNELCACHE_SHA256,
+            "original_executable_sha256": {
+                DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT: DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT_SHA256},
+            "components": [DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT],
+            "extents": [{
+                "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
+                "segment": "__TEXT_EXEC",
+                "va": DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS[0][0] - 0x20,
+                "size": 0x100,
+            }, {
+                "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
+                "segment": "__DATA_CONST",
+                "va": DALI_QEMU.AMFI_PMGRAUDIT_GATE_ADDRESS - 1,
+                "size": DALI_QEMU.AMFI_PMGRAUDIT_GATE_LENGTH + 2,
+            }],
+        }
         events = []
         for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS:
             event = {"pc": hex(address), "x0": "0xfffffff004000100", "x1": "0x4"}
@@ -224,19 +255,42 @@ class PrelinkQemuTests(unittest.TestCase):
                 event["register_memory_reads"] = {
                     request: {"raw_hex": struct.pack("<Q", 0xfffffff004000200).hex()}}
             events.append(event)
-        report = {"kernel_sha256": candidate_sha, "trace_events": events}
+        gate_request = f"{DALI_QEMU.AMFI_PMGRAUDIT_GATE_ADDRESS:x}:2"
+        report = {"kernel_sha256": candidate_sha, "trace_events": events,
+                  "memory": {gate_request: "0100"}}
         observation = DALI_QEMU.inspect_amfi_pmgr_runtime(report, prelink)
         self.assertTrue(observation["trace_complete"])
         self.assertEqual(observation["missing_trace_points"], [])
         self.assertTrue(observation["safe_meta_cast_succeeded"])
         self.assertEqual(observation["provider_field_reads"]["read-entry-provider"]["provider_pointer"],
                          "0xfffffff004000200")
+        self.assertEqual(observation["control_gate_read"], {
+            "address": hex(DALI_QEMU.AMFI_PMGRAUDIT_GATE_ADDRESS),
+            "length_bytes": 2,
+            "available": True,
+            "raw_hex": "0100",
+            "bytes": [1, 0],
+        })
         self.assertFalse(observation["abi_qualified"])
         self.assertFalse(observation["hardware_qualified"])
 
+        read_cases = (("0000", None), ("E14", "gdb-read-error"),
+                      ("00", "short-or-malformed-read"))
+        for response, unavailable in read_cases:
+            result = DALI_QEMU.inspect_amfi_pmgr_runtime(
+                {"kernel_sha256": candidate_sha, "trace_events": [],
+                 "memory": {gate_request: response}}, prelink)
+            if unavailable is None:
+                self.assertTrue(result["control_gate_read"]["available"])
+                self.assertEqual(result["control_gate_read"]["bytes"], [0, 0])
+            else:
+                self.assertFalse(result["control_gate_read"]["available"])
+                self.assertEqual(result["control_gate_read"]["unavailable"], unavailable)
+
         partial = DALI_QEMU.inspect_amfi_pmgr_runtime(
-            {"kernel_sha256": candidate_sha, "trace_events": events[:4]}, prelink)
+            {"kernel_sha256": candidate_sha, "trace_events": events[:4], "memory": {}}, prelink)
         self.assertFalse(partial["trace_complete"])
+        self.assertEqual(partial["control_gate_read"]["unavailable"], "not-captured")
         self.assertEqual(
             partial["missing_trace_points"],
             [{"pc": hex(address), "event": label}

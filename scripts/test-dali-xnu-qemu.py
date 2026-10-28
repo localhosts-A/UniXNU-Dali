@@ -32,6 +32,8 @@ AMFI_PMGRAUDIT_TRACE_POINTS = (
     (0xfffffff004aaeb50, "provider-write-entry"),
     (0xfffffff004aaeb54, "provider-write-return"),
 )
+AMFI_PMGRAUDIT_GATE_ADDRESS = 0xfffffff005cfc470
+AMFI_PMGRAUDIT_GATE_LENGTH = 2
 AMFI_PMGRAUDIT_PROVIDER_READS = (
     (0xfffffff004aaeb38, "safeMetaCast-result-provider"),
     (0xfffffff004aaeb40, "read-entry-provider"),
@@ -690,7 +692,7 @@ def validate_source_xnu_config(path, require_trust_cache_runtime):
 
 
 def amfi_pmgr_trace_args(prelink_report):
-    """Bind raw AMFI observation PCs to the exact 21H461 component extent."""
+    """Bind AMFI probes and gate bytes to exact 21H461 component extents."""
     if not isinstance(prelink_report, dict) or \
             prelink_report.get("original_sha256") != AMFI_PMGRAUDIT_KERNELCACHE_SHA256 or \
             AMFI_PMGRAUDIT_COMPONENT not in prelink_report.get("components", []):
@@ -707,16 +709,28 @@ def amfi_pmgr_trace_args(prelink_report):
     if any(not extent["va"] <= address < extent["va"] + extent["size"]
            for address, _ in AMFI_PMGRAUDIT_TRACE_POINTS):
         raise SystemExit("Pinned AMFI PMGR trace PC escaped its executable text extent")
+    component_data_const = [extent for extent in prelink_report.get("extents", [])
+                            if extent.get("module") == AMFI_PMGRAUDIT_COMPONENT and
+                            extent.get("segment") == "__DATA_CONST"]
+    if len(component_data_const) != 1:
+        raise SystemExit("AMFI PMGR gate read requires one exact AMFI __DATA_CONST extent")
+    data_extent = component_data_const[0]
+    gate_end = AMFI_PMGRAUDIT_GATE_ADDRESS + AMFI_PMGRAUDIT_GATE_LENGTH
+    if not data_extent["va"] <= AMFI_PMGRAUDIT_GATE_ADDRESS or \
+            gate_end > data_extent["va"] + data_extent["size"]:
+        raise SystemExit("Pinned AMFI PMGR gate bytes escaped the __DATA_CONST extent")
     arguments = []
     for address, _ in AMFI_PMGRAUDIT_TRACE_POINTS:
         arguments += ["--trace-address", hex(address)]
     for address, _ in AMFI_PMGRAUDIT_PROVIDER_READS:
         arguments += ["--trace-read-register-offset", f"{address:x}:x0:88:8"]
+    arguments += ["--read-memory", f"{AMFI_PMGRAUDIT_GATE_ADDRESS:x}:{AMFI_PMGRAUDIT_GATE_LENGTH:x}"]
     return arguments
 
 
 def inspect_amfi_pmgr_runtime(report, prelink_report):
     """Summarize bounded original-AMFI trace events without elevating qualification."""
+    amfi_pmgr_trace_args(prelink_report)
     if not isinstance(report, dict) or report.get("kernel_sha256") != prelink_report.get("candidate_sha256"):
         raise SystemExit("AMFI PMGR runtime trace does not match the exact source candidate")
     raw_events = report.get("trace_events", [])
@@ -746,6 +760,27 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
         {"pc": hex(address), "event": label}
         for address, label in AMFI_PMGRAUDIT_TRACE_POINTS if address not in by_pc
     ]
+    memory = report.get("memory", {})
+    if not isinstance(memory, dict):
+        raise SystemExit("AMFI PMGR gate memory report is malformed")
+    gate_request = f"{AMFI_PMGRAUDIT_GATE_ADDRESS:x}:{AMFI_PMGRAUDIT_GATE_LENGTH:x}"
+    gate_response = memory.get(gate_request)
+    gate_read = {
+        "address": hex(AMFI_PMGRAUDIT_GATE_ADDRESS),
+        "length_bytes": AMFI_PMGRAUDIT_GATE_LENGTH,
+        "available": False,
+    }
+    if isinstance(gate_response, str):
+        if re.fullmatch(r"[0-9a-fA-F]{4}", gate_response):
+            gate_bytes = bytes.fromhex(gate_response)
+            gate_read.update(available=True,
+                             raw_hex=gate_response.lower(),
+                             bytes=list(gate_bytes))
+        else:
+            reason = "gdb-read-error" if gate_response.startswith("E") else "short-or-malformed-read"
+            gate_read.update(unavailable=reason, raw_response=gate_response[:32])
+    else:
+        gate_read["unavailable"] = "not-captured"
     return {
         "candidate_sha256": report["kernel_sha256"],
         "original_kernelcache_sha256": prelink_report.get("original_sha256"),
@@ -753,6 +788,7 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
         "events": events,
         "missing_trace_points": missing_trace_points,
         "provider_field_reads": provider_fields,
+        "control_gate_read": gate_read,
         "safe_meta_cast_succeeded": (int(safe_cast, 16) != 0) if isinstance(safe_cast, str) else None,
         "trace_complete": not missing_trace_points,
         "amfi_modified": False,
