@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import struct
 import subprocess
@@ -23,8 +24,9 @@ class SourceKernelCacheTests(unittest.TestCase):
             pins, _ = module.build_source_identity(tree)
             kernel.write_bytes(struct.pack("<8I2I", 0xfeedfacf, 0x100000c, 0, 2, 1, 8, 0, 0, 1, 8) + source_record(pins))
 
-            def run(mode, key="a" * 64):
-                return subprocess.run(["python3", SCRIPT, mode, "--tree", tree, "--key", key],
+            def run(mode, key="a" * 64, profile="reset-qualification"):
+                return subprocess.run(["python3", SCRIPT, mode, "--tree", tree, "--key", key,
+                                       "--profile", profile],
                                       capture_output=True, text=True)
 
             self.assertNotEqual(run("verify").returncode, 0, "missing stamp must rebuild")
@@ -38,3 +40,28 @@ class SourceKernelCacheTests(unittest.TestCase):
             self.assertNotEqual(run("verify").returncode, 0, "corrupted bytes must rebuild")
             kernel.write_bytes(b"invalid Mach-O")
             self.assertNotEqual(run("record").returncode, 0, "invalid output cannot create a cache stamp")
+
+    def test_donor_runtime_profile_records_pins_without_an_unlinked_ufs_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tree, _, _, _ = tree_fixture(Path(directory))
+            kernel = tree / module.KERNEL
+            kernel.parent.mkdir(parents=True)
+            kernel.write_bytes(struct.pack("<8I2I", 0xfeedfacf, 0x100000c, 0, 2, 1, 8, 0, 0, 1, 8))
+
+            def run(mode, profile="ipados-donor-runtime-audit"):
+                return subprocess.run(["python3", SCRIPT, mode, "--tree", tree, "--key", "a" * 64,
+                                      "--profile", profile], capture_output=True, text=True)
+
+            self.assertEqual(run("record").returncode, 0)
+            self.assertEqual(run("verify").returncode, 0)
+            stamp = json.loads((tree / ".cache/source-kernel-cache.json").read_text())
+            self.assertEqual(stamp["schema"], 3)
+            self.assertEqual(stamp["profile"], "ipados-donor-runtime-audit")
+            self.assertEqual(stamp["source_identity_mode"], "exact-build-input-pins-not-embedded-audit-only")
+            self.assertNotEqual(run("verify", profile="reset-qualification").returncode, 0,
+                                "audit-only stamp cannot authorize another profile")
+
+            source = tree / "drivers/DaliUfs/DaliUfs.cpp"
+            source.write_text(source.read_text() + "\n// dirty source\n")
+            self.assertNotEqual(run("verify").returncode, 0,
+                                "audit mode still requires every pinned source tree to be clean")

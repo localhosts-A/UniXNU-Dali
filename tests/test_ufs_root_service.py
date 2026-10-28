@@ -157,6 +157,7 @@ class UfsRootServiceTests(unittest.TestCase):
         xnu_step = self.workflow.split("- name: Build and validate source-only XNU", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("UNIXNU_SOURCE_ROOT: ${{ github.workspace }}/UniXNU", xnu_step)
         self.assertIn("PYTHONDONTWRITEBYTECODE: '1'", xnu_step)
+        self.assertGreaterEqual(xnu_step.count('--profile "$VALIDATION_PROFILE"'), 2)
         self.assertGreaterEqual(self.workflow.count("env.VALIDATION_PROFILE != 'ipados-root-compile'"), 5)
 
 

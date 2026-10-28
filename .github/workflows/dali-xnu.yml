@@ -284,11 +284,11 @@ jobs:
           cd UniXNU
           cache_script="$GITHUB_WORKSPACE/UniXNU-Dali/scripts/source-kernel-cache.py"
           if [[ "$KERNEL_CACHE_HIT" == true ]] && \
-              python3 "$cache_script" verify --tree "$UNIXNU_OUT/dali/tree" --key "$KERNEL_INPUT_KEY"; then
+              python3 "$cache_script" verify --tree "$UNIXNU_OUT/dali/tree" --key "$KERNEL_INPUT_KEY" --profile "$VALIDATION_PROFILE"; then
             echo "Reusing SHA-256-verified source XNU for identical sources and toolchain; QEMU validation follows."
           else
             ./unixnu build kernel --source-only -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
-            python3 "$cache_script" record --tree "$UNIXNU_OUT/dali/tree" --key "$KERNEL_INPUT_KEY"
+            python3 "$cache_script" record --tree "$UNIXNU_OUT/dali/tree" --key "$KERNEL_INPUT_KEY" --profile "$VALIDATION_PROFILE"
           fi
 
       - name: Audit pinned 21H461 prelink candidate
