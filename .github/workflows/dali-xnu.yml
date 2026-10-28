@@ -430,6 +430,8 @@ jobs:
             ${{ runner.temp }}/dali-ipados-prelink-qemu/summary.json
             ${{ runner.temp }}/dali-ipados-prelink-qemu/*.log
             ${{ runner.temp }}/dali-ipados-prelink-qemu/*/gdb-stop.json
+            ${{ runner.temp }}/dali-ipados-prelink-qemu/*/gdb-uart.log
+            ${{ runner.temp }}/dali-ipados-prelink-qemu/*/gdb-stderr.log
             ${{ runner.temp }}/dali-ipados-prelink-qemu/reset-instructions.json
           if-no-files-found: warn
           retention-days: 1

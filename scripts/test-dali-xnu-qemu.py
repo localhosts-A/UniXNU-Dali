@@ -153,6 +153,38 @@ def validate_prelink_audit_candidate(kernel, report_path):
     return report
 
 
+def format_qemu_probe_failure(name, stdout, report_path, log_path):
+    """Prefer the stop report's cause when a probe exits after its deadline."""
+    try:
+        report = json.loads(report_path.read_text()) if report_path.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        report = {}
+    if isinstance(report, dict) and report.get("bounded_timeout_interrupted") is True:
+        registers = report.get("system_registers", {})
+        if not isinstance(registers, dict):
+            registers = {}
+        details = ", ".join(
+            f"{register}={registers.get(register, 'unknown')}"
+            for register in ("ELR_EL1", "TTBR0_EL1", "TTBR1_EL1")
+        )
+        firmware = report.get("qemu_firmware", {})
+        if isinstance(firmware, dict) and firmware.get("code_sha256"):
+            details += f", firmware_code_sha256={firmware['code_sha256']}"
+        message = (f"QEMU probe {name} timed out before reaching its requested XNU checkpoint "
+                   f"(PC={report.get('pc', 'unknown')}, {details}); "
+                   f"see {report_path} and {log_path}")
+        uart_path = report_path.with_name("gdb-uart.log")
+        if uart_path.is_file():
+            try:
+                uart = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", uart_path.read_text(errors="replace"))[-2000:]
+            except OSError:
+                uart = ""
+            if uart.strip():
+                message += f"\nUEFI UART tail ({uart_path}):\n{uart.rstrip()}"
+        return message
+    return f"QEMU probe {name} failed; see {log_path}\n{stdout[-5000:]}"
+
+
 def validate_prelink_structure_audit(kernel, report, verification_path):
     """Require the separate verifier's exact-image structural audit for QEMU diagnostics."""
     verification = json.loads(verification_path.read_text())
@@ -293,8 +325,12 @@ def main():
     parser.add_argument("--trust-cache", type=Path,
                         help="Exact board-pinned original iPadOS trust-cache bundle for DarwinBoot handoff")
     parser.add_argument("--uefi-efi", type=Path, required=True)
+    parser.add_argument("--qemu-firmware", type=Path,
+                        help="Local AArch64 UEFI code FD for QEMU; defaults to the QEMU share directory")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
+    if args.qemu_firmware and not args.qemu_firmware.is_file():
+        parser.error("QEMU firmware code FD does not exist")
     root = args.unixnu.resolve()
     output = args.output_dir.resolve()
     kernel = args.kernel.resolve()
@@ -326,6 +362,8 @@ def main():
     kernel_args = ' '.join([*board_args, 'serial=3', 'debug=0x14e'])
     common = [sys.executable, probe, "--kernel", kernel, "--uefi-efi", args.uefi_efi.resolve(),
               "--timeout", "90", "--armvirt", "--armcpu", "--nvram-proxy"]
+    if args.qemu_firmware:
+        common += ["--qemu-firmware", args.qemu_firmware.resolve()]
     if args.prelink_report:
         # This candidate is explicitly non-loadable, so keep the QEMU run
         # diagnostic-only and capture the real security-kext/class-registration
@@ -359,9 +397,10 @@ def main():
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
         (output / f"{name}.log").parent.mkdir(parents=True, exist_ok=True)
         (output / f"{name}.log").write_text(result.stdout)
-        if result.returncode:
-            raise SystemExit(f"QEMU probe {name} failed; see {output / f'{name}.log'}\n{result.stdout[-5000:]}")
         report_path = destination / "gdb-stop.json"
+        if result.returncode:
+            raise SystemExit(format_qemu_probe_failure(
+                name, result.stdout, report_path, output / f"{name}.log"))
         if not report_path.is_file():
             raise SystemExit(f"QEMU probe {name} did not produce {report_path}")
         reports[name] = json.loads(report_path.read_text())

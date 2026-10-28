@@ -113,6 +113,7 @@ class PrelinkQemuTests(unittest.TestCase):
 
     def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
+        probe_source = (ROOT.parent / "UniXNU/scripts/probe-darwinboot-xnu.py").read_text()
 
         self.assertEqual(DALI_QEMU.IMAGE4_CRYPTO_HASH_METHOD, "sha2-384")
         self.assertIn('["--crypto-hash-method", IMAGE4_CRYPTO_HASH_METHOD,', source)
@@ -127,6 +128,10 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn('validate_trust_cache_runtime(reports["trust-cache"], trust_cache["sha256"])', source)
         self.assertIn('"trust_cache_runtime_consumed": bool(trust_cache_runtime)', source)
         self.assertIn('"--kext-logs"', source)
+        self.assertIn('parser.add_argument("--qemu-firmware", type=Path', source)
+        self.assertIn('common += ["--qemu-firmware", args.qemu_firmware.resolve()]', source)
+        self.assertIn("parser.add_argument('--qemu-firmware', type=Path", probe_source)
+        self.assertIn("gdb_command += ['--firmware', args.qemu_firmware.resolve()]", probe_source)
         self.assertIn('"--trace-symbol", "_register_and_init_prng"', source)
         for symbol in ("_OSRuntimeInitializeCPP", "__ZN11OSMetaClass11postModLoadEPv",
                        "__ZN6OSKext5startEb", "__ZN12KLDBootstrap22loadSecurityExtensionsEv"):
@@ -308,6 +313,57 @@ class PrelinkQemuTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(SystemExit):
                 DALI_QEMU.validate_trust_cache_runtime(invalid, digest)
+
+    def test_qemu_timeout_error_uses_the_bounded_stop_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report_path = root / "gdb-stop.json"
+            log_path = root / "cpu.log"
+            report_path.write_text(json.dumps({
+                "bounded_timeout_interrupted": True,
+                "pc": "0x7fd65e04",
+                "qemu_firmware": {"code_sha256": "a" * 64},
+                "system_registers": {
+                    "ELR_EL1": "0x7ca63f74",
+                    "TTBR0_EL1": "0x47fff000",
+                    "TTBR1_EL1": "0x0",
+                },
+            }))
+            (root / "gdb-uart.log").write_text("\x1b[2JUEFI boot\nSynchronous Exception at 0x45a64548\n")
+
+            message = DALI_QEMU.format_qemu_probe_failure(
+                "cpu", "FAIL: active translation bases are missing", report_path, log_path)
+
+            self.assertIn("timed out before reaching its requested XNU checkpoint", message)
+            self.assertIn("PC=0x7fd65e04", message)
+            self.assertIn("TTBR1_EL1=0x0", message)
+            self.assertIn("firmware_code_sha256=" + "a" * 64, message)
+            self.assertIn("Synchronous Exception at 0x45a64548", message)
+            self.assertNotIn("\x1b[", message)
+            self.assertNotIn("active translation bases are missing", message)
+
+    def test_qemu_failure_without_timeout_keeps_probe_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report_path = root / "missing-gdb-stop.json"
+            log_path = root / "cpu.log"
+            message = DALI_QEMU.format_qemu_probe_failure(
+                "cpu", "FAIL: assertion in guest", report_path, log_path)
+
+            self.assertIn("QEMU probe cpu failed", message)
+            self.assertIn("FAIL: assertion in guest", message)
+            self.assertIn(str(log_path), message)
+
+    def test_qemu_firmware_and_uart_diagnostics_are_retained_by_the_runner(self):
+        source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
+        qemu_entry = (ROOT.parent / "UniXNU/scripts/qemu-entry/gdb-stop.py").read_text()
+        workflow = (ROOT / ".github/workflows/dali-xnu.yml").read_text()
+
+        self.assertIn("firmware_info = dict(code_file=code.name", qemu_entry)
+        self.assertIn("report['qemu_firmware'] = firmware_info", qemu_entry)
+        self.assertIn("message += f\"\\nUEFI UART tail", source)
+        self.assertIn("*/gdb-uart.log", workflow)
+        self.assertIn("*/gdb-stderr.log", workflow)
 
 
 if __name__ == "__main__":
