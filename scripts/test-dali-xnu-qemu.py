@@ -19,6 +19,23 @@ from dali_ipados_trust_cache import parse_bundle
 
 IMAGE4_CRYPTO_HASH_METHOD = "sha2-384"
 AMFI_ONLY_PLATFORM_CODE = True
+AMFI_PMGRAUDIT_COMPONENT = "com.apple.driver.AppleMobileFileIntegrity"
+AMFI_PMGRAUDIT_COMPONENT_SHA256 = "a1088aaabc259418ed503d08df29b6146470b8c962696c688122a1f60a141db6"
+AMFI_PMGRAUDIT_KERNELCACHE_SHA256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
+AMFI_PMGRAUDIT_TRACE_POINTS = (
+    (0xfffffff004aaeb10, "serviceMatching-return"),
+    (0xfffffff004aaeb24, "waitForMatchingService-return"),
+    (0xfffffff004aaeb34, "safeMetaCast-entry"),
+    (0xfffffff004aaeb38, "safeMetaCast-return"),
+    (0xfffffff004aaeb40, "provider-read-entry"),
+    (0xfffffff004aaeb44, "provider-read-return"),
+    (0xfffffff004aaeb50, "provider-write-entry"),
+    (0xfffffff004aaeb54, "provider-write-return"),
+)
+AMFI_PMGRAUDIT_PROVIDER_READS = (
+    (0xfffffff004aaeb38, "safeMetaCast-result-provider"),
+    (0xfffffff004aaeb40, "read-entry-provider"),
+)
 OSMETA_CLASS_OBJECT_BYTES = 0x28
 OSMETA_CLASS_NAME_FIELD_OFFSET = 0x18
 OSSTRING_METADATA_OFFSET = 0x10
@@ -654,6 +671,84 @@ def validate_trust_cache_runtime(report, expected_sha256):
     }
 
 
+def validate_source_xnu_config(path, require_trust_cache_runtime):
+    """Bind runtime-loader expectations to the effective source-XNU config."""
+    data = path.read_bytes()
+    text = data.decode("utf-8")
+    enabled = re.search(r"(?m)^CONFIG_XNU_TRUST_CACHE_RUNTIME=y$", text) is not None
+    if require_trust_cache_runtime and not enabled:
+        raise SystemExit("The iPadOS trust-cache QEMU case requires CONFIG_XNU_TRUST_CACHE_RUNTIME=y")
+    return {"sha256": hashlib.sha256(data).hexdigest(),
+            "trust_cache_runtime_enabled": enabled}
+
+
+def amfi_pmgr_trace_args(prelink_report):
+    """Bind raw AMFI observation PCs to the exact 21H461 component extent."""
+    if not isinstance(prelink_report, dict) or \
+            prelink_report.get("original_sha256") != AMFI_PMGRAUDIT_KERNELCACHE_SHA256 or \
+            AMFI_PMGRAUDIT_COMPONENT not in prelink_report.get("components", []):
+        raise SystemExit("AMFI PMGR trace requires the pinned 21H461 prelink candidate")
+    component_text = [extent for extent in prelink_report.get("extents", [])
+                      if extent.get("module") == AMFI_PMGRAUDIT_COMPONENT and
+                      extent.get("segment") == "__TEXT_EXEC"]
+    if len(component_text) != 1:
+        raise SystemExit("AMFI PMGR trace requires one exact AMFI executable text extent")
+    extent = component_text[0]
+    if prelink_report.get("original_executable_sha256", {}).get(AMFI_PMGRAUDIT_COMPONENT) != \
+            AMFI_PMGRAUDIT_COMPONENT_SHA256:
+        raise SystemExit("AMFI PMGR trace candidate has an unexpected original AMFI executable hash")
+    if any(not extent["va"] <= address < extent["va"] + extent["size"]
+           for address, _ in AMFI_PMGRAUDIT_TRACE_POINTS):
+        raise SystemExit("Pinned AMFI PMGR trace PC escaped its executable text extent")
+    arguments = []
+    for address, _ in AMFI_PMGRAUDIT_TRACE_POINTS:
+        arguments += ["--trace-address", hex(address)]
+    for address, _ in AMFI_PMGRAUDIT_PROVIDER_READS:
+        arguments += ["--trace-read-register-offset", f"{address:x}:x0:88:8"]
+    return arguments
+
+
+def inspect_amfi_pmgr_runtime(report, prelink_report):
+    """Summarize bounded original-AMFI trace events without elevating qualification."""
+    if not isinstance(report, dict) or report.get("kernel_sha256") != prelink_report.get("candidate_sha256"):
+        raise SystemExit("AMFI PMGR runtime trace does not match the exact source candidate")
+    raw_events = report.get("trace_events", [])
+    if not isinstance(raw_events, list):
+        raise SystemExit("AMFI PMGR runtime trace has malformed trace events")
+    by_pc = {int(event["pc"], 16): event for event in raw_events
+             if isinstance(event, dict) and isinstance(event.get("pc"), str)}
+    events = {}
+    for address, label in AMFI_PMGRAUDIT_TRACE_POINTS:
+        event = by_pc.get(address)
+        if event is not None:
+            event["symbol"] = f"AMFI PMGR: {label}"
+            events[label] = dict(pc=hex(address), x0=event.get("x0"), x1=event.get("x1"),
+                                 register_memory_reads=event.get("register_memory_reads", {}))
+    provider_fields = {}
+    for address, label in AMFI_PMGRAUDIT_PROVIDER_READS:
+        event = by_pc.get(address, {})
+        key = f"{address:x}:x0:88:8"
+        capture = event.get("register_memory_reads", {}).get(key)
+        record = dict(capture) if isinstance(capture, dict) else {"unavailable": "trace read was not captured"}
+        raw = record.get("raw_hex")
+        if isinstance(raw, str) and len(raw) == 16:
+            record["provider_pointer"] = hex(int.from_bytes(bytes.fromhex(raw), "little"))
+        provider_fields[label] = record
+    safe_cast = events.get("safeMetaCast-return", {}).get("x0")
+    return {
+        "candidate_sha256": report["kernel_sha256"],
+        "original_kernelcache_sha256": prelink_report.get("original_sha256"),
+        "original_amfi_component_sha256": AMFI_PMGRAUDIT_COMPONENT_SHA256,
+        "events": events,
+        "provider_field_reads": provider_fields,
+        "safe_meta_cast_succeeded": (int(safe_cast, 16) != 0) if isinstance(safe_cast, str) else None,
+        "trace_complete": all(label in events for _, label in AMFI_PMGRAUDIT_TRACE_POINTS),
+        "amfi_modified": False,
+        "hardware_qualified": False,
+        "abi_qualified": False,
+    }
+
+
 def validate_reset_instructions(kernel, output):
     """Require the real compiled call chain; source/compile success is insufficient."""
     output.mkdir(parents=True, exist_ok=True)
@@ -713,7 +808,7 @@ def main():
     parser.add_argument("--native-kernel", type=Path,
                         help="Exact source-only XNU input for the donor-runtime audit")
     parser.add_argument("--config", type=Path,
-                        help="Selected source-XNU defconfig for the donor-runtime audit")
+                        help="Effective source-XNU .config used to build this QEMU candidate")
     parser.add_argument("--trust-cache", type=Path,
                         help="Exact board-pinned original iPadOS trust-cache bundle for DarwinBoot handoff")
     parser.add_argument("--uefi-efi", type=Path, required=True)
@@ -730,6 +825,7 @@ def main():
     prelink_report_sha256 = None
     prelink_verification = None
     prelink_verification_sha256 = None
+    xnu_config = None
     if args.donor_runtime_audit:
         if not args.prelink_report or not args.prelink_verification:
             parser.error("the donor-runtime audit requires the exact prelink report and structural verification")
@@ -737,6 +833,7 @@ def main():
             parser.error("the donor-runtime audit does not consume or qualify a trust-cache input")
         if not args.native_kernel or not args.native_kernel.is_file() or not args.config or not args.config.is_file():
             parser.error("the donor-runtime audit requires the exact native kernel and selected defconfig")
+        xnu_config = validate_source_xnu_config(args.config.resolve(), require_trust_cache_runtime=False)
         prelink_report = validate_donor_runtime_audit_candidate(
             kernel, args.prelink_report.resolve(), args.native_kernel.resolve(), args.config.resolve())
         prelink_report_sha256 = hashlib.sha256(args.prelink_report.read_bytes()).hexdigest()
@@ -755,6 +852,9 @@ def main():
         prelink_verification_sha256 = hashlib.sha256(verification_path.read_bytes()).hexdigest()
         if not args.trust_cache:
             parser.error("the pinned iPadOS prelink probe requires the board trust-cache bundle")
+        if not args.config or not args.config.is_file():
+            parser.error("the pinned iPadOS trust-cache QEMU probe requires the effective source-XNU .config")
+        xnu_config = validate_source_xnu_config(args.config.resolve(), require_trust_cache_runtime=True)
     elif args.prelink_verification:
         parser.error("an independent prelink verification requires its candidate report")
     elif args.native_kernel or args.config:
@@ -805,6 +905,7 @@ def main():
                         "--trace-symbol", "_trust_cache_runtime_init",
                         "--trace-symbol", "_load_static_trust_cache"]
             command += source_storage_metaclass_read_args(kernel)
+            command += amfi_pmgr_trace_args(prelink_report)
         if name == "donor-runtime":
             command += donor_storage_metaclass_read_args()
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
@@ -814,10 +915,13 @@ def main():
         probe_report = None
         metaclass_observation = None
         donor_runtime_observation = None
+        amfi_pmgr_observation = None
         expected_donor_stop = False
         if report_path.is_file():
             probe_report = json.loads(report_path.read_text())
             if name == "trust-cache" and prelink_report:
+                amfi_pmgr_observation = inspect_amfi_pmgr_runtime(probe_report, prelink_report)
+                probe_report["amfi_pmgr_runtime_observation"] = amfi_pmgr_observation
                 metaclass_observation = inspect_source_storage_metaclasses(probe_report, kernel)
                 probe_report["source_storage_metaclass_observation"] = metaclass_observation
                 report_path.write_text(json.dumps(probe_report, indent=2) + "\n")
@@ -836,6 +940,9 @@ def main():
                 if metaclass_observation is not None:
                     message += "\nSource storage metaclass observation: " + json.dumps(
                         metaclass_observation, sort_keys=True)
+                if amfi_pmgr_observation is not None:
+                    message += "\nAMFI PMGR runtime observation: " + json.dumps(
+                        amfi_pmgr_observation, sort_keys=True)
                 if donor_runtime_observation is not None:
                     message += "\nDonor storage metaclass observation: " + json.dumps(
                         donor_runtime_observation, sort_keys=True)
@@ -932,6 +1039,8 @@ def main():
         "kernel_kind": "prelink-audit-candidate" if prelink_report else "source-xnu",
         "prelink_report_sha256": prelink_report_sha256,
         "prelink_verification_sha256": prelink_verification_sha256,
+        "xnu_config_sha256": xnu_config["sha256"] if xnu_config else None,
+        "trust_cache_runtime_enabled": xnu_config["trust_cache_runtime_enabled"] if xnu_config else False,
         "prelink_structure_verified": bool(prelink_verification),
         "candidate_loadable": prelink_report.get("loadable") if prelink_report else None,
         "diagnostic_only": bool(prelink_report),
@@ -944,6 +1053,9 @@ def main():
         "trust_cache_runtime_checkpoint": trust_cache_runtime,
         "source_storage_metaclass_observation": (
             reports.get("trust-cache", {}).get("source_storage_metaclass_observation")
+            if trust_cache and prelink_report else None),
+        "amfi_pmgr_runtime_observation": (
+            reports.get("trust-cache", {}).get("amfi_pmgr_runtime_observation")
             if trust_cache and prelink_report else None),
         "donor_runtime_metaclass_observation": (
             reports.get("donor-runtime", {}).get("donor_storage_metaclass_observation")

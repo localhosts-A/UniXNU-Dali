@@ -424,6 +424,7 @@ jobs:
             --kernel "$UNIXNU_OUT/dali/kernel/kernel.macho" \
             --prelink-report "$UNIXNU_OUT/dali/kernel/kernel.json" \
             --prelink-verification "$UNIXNU_OUT/dali/kernel/kernel.verification.json" \
+            --config "$UNIXNU_OUT/dali/.config" \
             --trust-cache "$UNIXNU_OUT/dali/ipados-trust-cache/trust-cache.bundle" \
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
             --output-dir "$RUNNER_TEMP/dali-ipados-prelink-qemu"

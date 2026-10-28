@@ -127,6 +127,9 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn('report.get("trust_cache_bundle_sha256") != trust_cache["sha256"]', source)
         self.assertIn('cases["trust-cache"] = "_load_static_trust_cache"', source)
         self.assertIn('validate_trust_cache_runtime(reports["trust-cache"], trust_cache["sha256"])', source)
+        self.assertIn('command += amfi_pmgr_trace_args(prelink_report)', source)
+        self.assertIn('inspect_amfi_pmgr_runtime(probe_report, prelink_report)', source)
+        self.assertIn('"amfi_pmgr_runtime_observation": (', source)
         self.assertIn('"trust_cache_runtime_consumed": bool(trust_cache_runtime)', source)
         self.assertIn('command += source_storage_metaclass_read_args(kernel)', source)
         self.assertIn('"source_storage_metaclass_observation": (', source)
@@ -160,10 +163,80 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn("parser.add_argument('--read-indirect-optional', action='append'", probe_source)
         self.assertIn('for value in args.read_indirect_optional:', probe_source)
         self.assertIn("gdb_command += ['--read-indirect-optional', request]", probe_source)
+        self.assertIn("parser.add_argument('--trace-address', action='append'", probe_source)
+        self.assertIn("parser.add_argument('--trace-read-register-offset', action='append'", probe_source)
+        self.assertIn("--trace-read-register-offset", probe_source)
         self.assertIn("expected_donor_runtime_terminal", source)
         self.assertIn('validate_donor_runtime_audit_candidate(', source)
         self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
         self.assertIn("validate_prelink_structure_audit(kernel, prelink_report, verification_path)", source)
+        workflow = (ROOT / ".github/workflows/dali-xnu.yml").read_text()
+        qemu_step = workflow[workflow.index("- name: Probe non-loadable 21H461 prelink candidate in QEMU"):
+                             workflow.index("- name: Probe donor IOStorageFamily runtime metaclasses in QEMU")]
+        self.assertIn('--config "$UNIXNU_OUT/dali/.config"', qemu_step)
+
+    def test_trust_cache_runtime_requires_the_effective_xnu_config(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / ".config"
+            config.write_text("CONFIG_XNU_TRUST_CACHE_RUNTIME=y\n")
+            result = DALI_QEMU.validate_source_xnu_config(config, require_trust_cache_runtime=True)
+            self.assertTrue(result["trust_cache_runtime_enabled"])
+            self.assertEqual(result["sha256"], hashlib.sha256(config.read_bytes()).hexdigest())
+            config.write_text("# CONFIG_XNU_TRUST_CACHE_RUNTIME is not set\n")
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_source_xnu_config(config, require_trust_cache_runtime=True)
+
+    def test_amfi_pmgr_trace_addresses_are_bound_to_the_pinned_component_extent(self):
+        first = DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS[0][0]
+        report = {
+            "original_sha256": DALI_QEMU.AMFI_PMGRAUDIT_KERNELCACHE_SHA256,
+            "original_executable_sha256": {
+                DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT: DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT_SHA256},
+            "components": [DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT],
+            "extents": [{
+                "module": DALI_QEMU.AMFI_PMGRAUDIT_COMPONENT,
+                "segment": "__TEXT_EXEC",
+                "va": first - 0x20,
+                "size": 0x100,
+            }],
+        }
+        arguments = DALI_QEMU.amfi_pmgr_trace_args(report)
+        self.assertEqual(arguments.count("--trace-address"), len(DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS))
+        self.assertEqual(arguments.count("--trace-read-register-offset"),
+                         len(DALI_QEMU.AMFI_PMGRAUDIT_PROVIDER_READS))
+        self.assertIn("--trace-read-register-offset", arguments)
+        for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS:
+            self.assertIn(hex(address), arguments)
+
+        wrong = dict(report, original_sha256="0" * 64)
+        with self.assertRaises(SystemExit):
+            DALI_QEMU.amfi_pmgr_trace_args(wrong)
+
+    def test_amfi_pmgr_trace_reports_partial_state_without_qualification(self):
+        candidate_sha = "a" * 64
+        prelink = {"candidate_sha256": candidate_sha,
+                   "original_sha256": DALI_QEMU.AMFI_PMGRAUDIT_KERNELCACHE_SHA256}
+        events = []
+        for address, _ in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS:
+            event = {"pc": hex(address), "x0": "0xfffffff004000100", "x1": "0x4"}
+            request = f"{address:x}:x0:88:8"
+            if any(address == read_address for read_address, _ in DALI_QEMU.AMFI_PMGRAUDIT_PROVIDER_READS):
+                event["register_memory_reads"] = {
+                    request: {"raw_hex": struct.pack("<Q", 0xfffffff004000200).hex()}}
+            events.append(event)
+        report = {"kernel_sha256": candidate_sha, "trace_events": events}
+        observation = DALI_QEMU.inspect_amfi_pmgr_runtime(report, prelink)
+        self.assertTrue(observation["trace_complete"])
+        self.assertTrue(observation["safe_meta_cast_succeeded"])
+        self.assertEqual(observation["provider_field_reads"]["read-entry-provider"]["provider_pointer"],
+                         "0xfffffff004000200")
+        self.assertFalse(observation["abi_qualified"])
+        self.assertFalse(observation["hardware_qualified"])
+
+        partial = DALI_QEMU.inspect_amfi_pmgr_runtime(
+            {"kernel_sha256": candidate_sha, "trace_events": events[:4]}, prelink)
+        self.assertFalse(partial["trace_complete"])
+        self.assertIsNone(partial["provider_field_reads"]["read-entry-provider"].get("provider_pointer"))
 
     def test_nonloadable_prelink_candidate_skips_source_allocator_negative_control(self):
         self.assertFalse(DALI_QEMU.should_run_default_budget_control({"loadable": False}))

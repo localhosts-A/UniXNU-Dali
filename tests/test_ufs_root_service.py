@@ -116,6 +116,8 @@ class UfsRootServiceTests(unittest.TestCase):
         boot_profile = (ROOT / "configs/dali_ipados_root_boot_defconfig").read_text()
         self.assertNotIn("libVerifiedRootDali.a", compile_profile)
         self.assertIn("libVerifiedRootDali.a", boot_profile)
+        self.assertNotIn("CONFIG_XNU_TRUST_CACHE_RUNTIME=y", compile_profile)
+        self.assertIn("CONFIG_XNU_TRUST_CACHE_RUNTIME=y", boot_profile)
         self.assertIn("CONFIG_XNU_DALI_OWNER_PRIVATE_KEY=", boot_profile)
         self.assertIn("CONFIG_XNU_DALI_OWNER_PUBLIC_KEY=", boot_profile)
 
