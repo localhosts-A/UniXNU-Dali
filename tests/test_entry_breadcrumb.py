@@ -151,11 +151,26 @@ breadcrumb:
                     process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     try:
                         deadline = time.monotonic() + 5
-                        while not qmp_path.exists() and process.poll() is None and time.monotonic() < deadline:
-                            time.sleep(0.01)
-                        with socket.socket(socket.AF_UNIX) as connection:
-                            connection.settimeout(5)
-                            connection.connect(str(qmp_path))
+                        connection = None
+                        connect_error = None
+                        while process.poll() is None and time.monotonic() < deadline:
+                            if not qmp_path.exists():
+                                time.sleep(0.01)
+                                continue
+                            candidate = socket.socket(socket.AF_UNIX)
+                            candidate.settimeout(min(1, max(0.01, deadline - time.monotonic())))
+                            try:
+                                candidate.connect(str(qmp_path))
+                            except (ConnectionRefusedError, FileNotFoundError) as error:
+                                connect_error = error
+                                candidate.close()
+                                time.sleep(0.01)
+                                continue
+                            connection = candidate
+                            break
+                        if connection is None:
+                            self.fail(f"QEMU QMP socket did not become connectable before deadline: {connect_error}")
+                        with connection:
                             stream = connection.makefile("rwb")
                             stream.readline()
 
