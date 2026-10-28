@@ -217,6 +217,29 @@ jobs:
           cd UniXNU
           ./unixnu build userdata -D "$GITHUB_WORKSPACE/UniXNU-Dali" -j "$JOBS"
 
+      - name: Fetch exact 21H461 original trust-cache components
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd UniXNU
+          cache_dir="$UNIXNU_OUT/ipsw/21H461"
+          rm -f "$cache_dir/044-76040-038.dmg.trustcache" \
+                "$cache_dir/044-76040-038.dmg.trustcache.json" \
+                "$cache_dir/044-76034-038.dmg.trustcache" \
+                "$cache_dir/044-76034-038.dmg.trustcache.json"
+          ./unixnu ipsw -D "$GITHUB_WORKSPACE/UniXNU-Dali" fetch StaticTrustCache Cryptex1,SystemTrustCache
+
+      - name: Assemble and validate the pinned DarwinBoot trust-cache bundle
+        if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/build-dali-ipados-trust-cache.py" \
+            --static-trust-cache "$UNIXNU_OUT/ipsw/21H461/044-76040-038.dmg.trustcache" \
+            --system-trust-cache "$UNIXNU_OUT/ipsw/21H461/044-76034-038.dmg.trustcache" \
+            --output-dir "$UNIXNU_OUT/dali/ipados-trust-cache"
+
       - name: Build metadata-preserving skip-setup Data seed candidate
         if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
         shell: bash
@@ -324,6 +347,8 @@ jobs:
             UniXNU/out/dali/userdata/userdata-root.json
             UniXNU/out/dali/tree/build/dali-verified-root/build-report.json
             UniXNU/out/dali/tree/build/dali-verified-root/libVerifiedRootDali.a
+            UniXNU/out/dali/ipados-trust-cache/trust-cache.bundle
+            UniXNU/out/dali/ipados-trust-cache/trust-cache.json
           if-no-files-found: warn
           retention-days: 1
 
@@ -389,6 +414,7 @@ jobs:
             --unixnu "$GITHUB_WORKSPACE/UniXNU" \
             --kernel "$UNIXNU_OUT/dali/kernel/kernel.macho" \
             --prelink-report "$UNIXNU_OUT/dali/kernel/kernel.json" \
+            --trust-cache "$UNIXNU_OUT/dali/ipados-trust-cache/trust-cache.bundle" \
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
             --output-dir "$RUNNER_TEMP/dali-ipados-prelink-qemu"
 

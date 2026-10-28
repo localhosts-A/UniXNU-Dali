@@ -13,6 +13,9 @@ import tomllib
 
 
 DEVICE_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(DEVICE_ROOT / "scripts"))
+from dali_ipados_trust_cache import parse_bundle
+
 IMAGE4_CRYPTO_HASH_METHOD = "sha2-384"
 AMFI_ONLY_PLATFORM_CODE = True
 
@@ -159,6 +162,18 @@ def validate_corecrypto_state(report, require_prelinked_provider):
         raise SystemExit("QEMU crypto table is not owned by the pinned iPadOS corecrypto component")
 
 
+def validate_trust_cache(path, expected_hashes):
+    data = Path(path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest not in expected_hashes:
+        raise SystemExit("QEMU trust-cache input is not one of the bundle hashes pinned by board.toml")
+    try:
+        modules = parse_bundle(data)
+    except ValueError as error:
+        raise SystemExit(f"QEMU trust-cache input is invalid: {error}") from None
+    return {"sha256": digest, "modules": modules}
+
+
 def validate_reset_instructions(kernel, output):
     """Require the real compiled call chain; source/compile success is insufficient."""
     output.mkdir(parents=True, exist_ok=True)
@@ -211,6 +226,8 @@ def main():
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--prelink-report", type=Path,
                         help="Exact report for a diagnostic-only, explicitly non-loadable candidate")
+    parser.add_argument("--trust-cache", type=Path,
+                        help="Exact board-pinned original iPadOS trust-cache bundle for DarwinBoot handoff")
     parser.add_argument("--uefi-efi", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -223,6 +240,11 @@ def main():
         report_path = args.prelink_report.resolve()
         prelink_report = validate_prelink_audit_candidate(kernel, report_path)
         prelink_report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        if not args.trust_cache:
+            parser.error("the pinned iPadOS prelink probe requires the board trust-cache bundle")
+    board = tomllib.loads((DEVICE_ROOT / "board.toml").read_text())
+    trust_cache = (validate_trust_cache(args.trust_cache.resolve(), board["payload"]["trust_cache_sha256"])
+                   if args.trust_cache else None)
     validate_reset_instructions(kernel, output)
     probe = root / "scripts/probe-darwinboot-xnu.py"
     board_args = hardware_arguments()
@@ -243,6 +265,8 @@ def main():
                    "--trace-symbol", "__ZN11OSMetaClass11postModLoadEPv",
                    "--trace-symbol", "__ZN6OSKext5startEb",
                    "--trace-symbol", "__ZN12KLDBootstrap22loadSecurityExtensionsEv"]
+    if trust_cache:
+        common += ["--trust-cache", args.trust_cache.resolve()]
     cases = {
         "platform": "__ZN13ArmDTPlatform9configureEP9IOService",
         "cpu": "__ZN6ArmCpu5startEP9IOService",
@@ -280,6 +304,8 @@ def main():
                 int(pthread.get("_pthread_functions", 0)) == 0 or \
                 int(pthread.get("_pthread519_pthread_kern", 0)) == 0:
             raise SystemExit(f"{name}: the real source pthread provider was not registered before this checkpoint")
+        if trust_cache and report.get("trust_cache_bundle_sha256") != trust_cache["sha256"]:
+            raise SystemExit(f"{name}: DarwinBoot QEMU probe did not report the exact pinned trust-cache sidecar")
 
     platform = reports["platform"]
     if int(platform.get("x0", "0"), 16) != 1:
@@ -337,6 +363,10 @@ def main():
         "diagnostic_only": bool(prelink_report),
         "image4_crypto_hash_method": IMAGE4_CRYPTO_HASH_METHOD if prelink_report else None,
         "amfi_only_platform_code": AMFI_ONLY_PLATFORM_CODE if prelink_report else None,
+        "trust_cache_bundle_sha256": trust_cache["sha256"] if trust_cache else None,
+        "trust_cache_module_count": len(trust_cache["modules"]) if trust_cache else None,
+        "trust_cache_adt_handoff_verified": False,
+        "trust_cache_runtime_consumed": False,
         "hardware_kernel_arguments": board_args,
         "default_kalloc_budget_assertion_reproduced": budget_control["assertion_reproduced"],
         "default_kalloc_budget_control": budget_control,

@@ -57,6 +57,11 @@ class IpadosProfileTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/dali-xnu.yml").read_text()
         self.assertIn("${{ runner.temp }}/dali-ipados-data-seed/base/seed.json", workflow)
         self.assertIn("${{ runner.temp }}/dali-ipados-data-seed/data-seed-skip-setup.json", workflow)
+        self.assertIn("Fetch exact 21H461 original trust-cache components", workflow)
+        self.assertIn('rm -f "$cache_dir/044-76040-038.dmg.trustcache"', workflow)
+        self.assertIn("Assemble and validate the pinned DarwinBoot trust-cache bundle", workflow)
+        self.assertIn("--trust-cache \"$UNIXNU_OUT/dali/ipados-trust-cache/trust-cache.bundle\"", workflow)
+        self.assertIn("UniXNU/out/dali/ipados-trust-cache/trust-cache.json", workflow)
 
     def test_pinned_prelink_is_an_explicit_audit_only_candidate(self):
         prelink = self.board["kernel"]["prelink"]

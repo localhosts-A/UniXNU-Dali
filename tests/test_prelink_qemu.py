@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import struct
 import tempfile
 import tomllib
 import unittest
@@ -96,6 +97,11 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertTrue(DALI_QEMU.AMFI_ONLY_PLATFORM_CODE)
         self.assertIn('"--amfi-platform-only",', source)
         self.assertIn('"--prelink-report", args.prelink_report.resolve()', source)
+        self.assertIn('"--trust-cache", args.trust_cache.resolve()', source)
+        self.assertIn('if not args.trust_cache:', source)
+        self.assertIn('report.get("trust_cache_bundle_sha256") != trust_cache["sha256"]', source)
+        self.assertIn('"trust_cache_adt_handoff_verified": False', source)
+        self.assertIn('"trust_cache_runtime_consumed": False', source)
         self.assertIn('"--kext-logs"', source)
         self.assertIn('"--trace-symbol", "_register_and_init_prng"', source)
         for symbol in ("_OSRuntimeInitializeCPP", "__ZN11OSMetaClass11postModLoadEPv",
@@ -212,6 +218,23 @@ class PrelinkQemuTests(unittest.TestCase):
             report.write_text(json.dumps({**base, "source_interface_transform": bad_transform}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
+    def test_qemu_trust_cache_input_must_be_pinned_and_well_formed(self):
+        module = (struct.pack("<I16sI", 2, bytes(range(16)), 1) +
+                  bytes([0x42]) * 20 + bytes([2, 0, 0, 0]))
+        bundle = struct.pack("<3I", 2, 12, 12 + len(module)) + module + module
+        digest = hashlib.sha256(bundle).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "trust-cache.bundle"
+            path.write_bytes(bundle)
+            report = DALI_QEMU.validate_trust_cache(path, [digest])
+            self.assertEqual(report["sha256"], digest)
+            self.assertEqual(len(report["modules"]), 2)
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_trust_cache(path, ["0" * 64])
+            path.write_bytes(b"invalid trust cache")
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_trust_cache(path, [hashlib.sha256(path.read_bytes()).hexdigest()])
 
 
 if __name__ == "__main__":
