@@ -467,13 +467,13 @@ public:
     }
     void setTestProperty(const char *key, OSObject *value) { mProperties[key] = value; }
     void removeTestProperty(const char *key) { if (key) mProperties.erase(key); }
-    static IORegistryEntry *fromPath(const char *path, const IORegistryPlane *)
+    static OSPtr<IORegistryEntry> fromPath(const char *path, const IORegistryPlane *)
     {
-        if (!path) return nullptr;
+        if (!path) return {};
         auto found = testPathEntries().find(path);
-        if (found == testPathEntries().end()) return nullptr;
+        if (found == testPathEntries().end()) return {};
         found->second->retain();
-        return found->second;
+        return OSPtr<IORegistryEntry>(found->second);
     }
     static void setTestPath(const char *path, IORegistryEntry *entry)
     {

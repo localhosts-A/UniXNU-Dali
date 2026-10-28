@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
+#define IOKIT_ENABLE_EXPERIMENTAL_SHARED_PTR_IN_API
+#define IOKIT_ENABLE_SHARED_PTR
+
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IODeviceTreeSupport.h>
@@ -67,7 +70,7 @@ DaliUsbQemuPciOwner::start(IOService *provider)
     mRegisterGuard = nullptr;
     mRegisterGuardContext = nullptr;
     mRegisterRefHeld = false;
-    IORegistryEntry *hostNode = nullptr;
+    OSPtr<IORegistryEntry> hostNode;
 
     if (provider == nullptr || !IOService::start(provider)) return false;
     if (mRegisterLock == nullptr) mRegisterLock = IOLockAlloc();
@@ -77,10 +80,7 @@ DaliUsbQemuPciOwner::start(IOService *provider)
     }
 
     auto failStart = [this, provider, &hostNode]() {
-        if (hostNode != nullptr) {
-            hostNode->release();
-            hostNode = nullptr;
-        }
+        hostNode = {};
         if (mEcamMap != nullptr) {
             mEcamMap->release();
             mEcamMap = nullptr;
@@ -102,7 +102,7 @@ DaliUsbQemuPciOwner::start(IOService *provider)
         return failStart();
     }
     hostNode = IORegistryEntry::fromPath(kQemuPciHostDtPath, gIODTPlane);
-    if (hostNode == nullptr || !hasQemuPciHostContract(hostNode)) {
+    if (!hostNode || !hasQemuPciHostContract(hostNode.get())) {
         IOLog("DaliUsbQemuPciOwner: missing or invalid nested QEMU PCI host node\n");
         return failStart();
     }
@@ -163,8 +163,7 @@ DaliUsbQemuPciOwner::start(IOService *provider)
     mHost = host;
     mXhci = xhci;
     mMapped = true;
-    hostNode->release();
-    hostNode = nullptr;
+    hostNode = {};
     IOLog("DaliUsbQemuPciOwner: assigned QEMU xHCI BAR0 mapped; controller untouched\n");
     registerService();
     return true;

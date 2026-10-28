@@ -54,7 +54,7 @@ qemu_host_contract(IOService *platform)
         __builtin_memcmp(platformType->getBytesNoCopy(), platform_device_type,
                          sizeof(platform_device_type) - 1u) != 0) return false;
 
-    IORegistryEntry *host = IORegistryEntry::fromPath(qemu_host_path, gIODTPlane);
+    OSPtr<IORegistryEntry> host = IORegistryEntry::fromPath(qemu_host_path, gIODTPlane);
     if (!host) return false;
     auto *deviceType = OSDynamicCast(OSData, host->getProperty("device_type"));
     auto *compatible = OSDynamicCast(OSData, host->getProperty("compatible"));
@@ -72,7 +72,6 @@ qemu_host_contract(IOService *platform)
         host->getProperty("iommu-map-mask") == nullptr &&
         host->getProperty("iommus") == nullptr &&
         host->getProperty("dma-ranges") == nullptr;
-    host->release();
     if (!hostPropertiesValid || !untranslated)
         return false;
 
