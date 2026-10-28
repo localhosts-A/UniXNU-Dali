@@ -77,6 +77,13 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertIn("--trust-cache \"$UNIXNU_OUT/dali/ipados-trust-cache/trust-cache.bundle\"", workflow)
         self.assertIn("UniXNU/out/dali/ipados-trust-cache/trust-cache.json", workflow)
 
+    def test_source_storage_evidence_uploads_archive_for_abi_audit(self):
+        workflow = (ROOT / ".github/workflows/dali-xnu.yml").read_text()
+        marker = "      - name: Upload bounded source storage build evidence\n"
+        self.assertIn(marker, workflow)
+        evidence_step = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("UniXNU/out/dali/tree/build/source-storage/libIOStorageFamily.a", evidence_step)
+
     def test_pinned_prelink_is_an_explicit_audit_only_candidate(self):
         prelink = self.board["kernel"]["prelink"]
         self.assertEqual(prelink["tool"], "scripts/emit-source-interface-prelink.py")

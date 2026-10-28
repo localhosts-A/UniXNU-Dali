@@ -317,6 +317,7 @@ jobs:
             UniXNU/out/dali/tree/build/source-storage/*.json
             UniXNU/out/dali/tree/build/source-storage/*.log
             UniXNU/out/dali/tree/build/source-storage/*symbols.txt
+            UniXNU/out/dali/tree/build/source-storage/libIOStorageFamily.a
           if-no-files-found: warn
           retention-days: 1
 
