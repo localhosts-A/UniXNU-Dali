@@ -158,6 +158,7 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn("parser.add_argument('--read-memory', action='append'", probe_source)
         self.assertIn("gdb_command += ['--read-memory', request]", probe_source)
         self.assertIn("parser.add_argument('--read-indirect-optional', action='append'", probe_source)
+        self.assertIn('for value in args.read_indirect_optional:', probe_source)
         self.assertIn("gdb_command += ['--read-indirect-optional', request]", probe_source)
         self.assertIn("expected_donor_runtime_terminal", source)
         self.assertIn('validate_donor_runtime_audit_candidate(', source)
