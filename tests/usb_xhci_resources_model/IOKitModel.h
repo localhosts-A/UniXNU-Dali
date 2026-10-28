@@ -12,7 +12,9 @@
 #include <new>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
+#include <kern/clock.h>
 
 using IOOptionBits = uint32_t;
 using vm_size_t = size_t;
@@ -24,6 +26,7 @@ static constexpr IOOptionBits kIOMemoryPhysicallyContiguous = 0x10u;
 struct IOKitMemoryModel {
     bool fail_range = false;
     bool fail_map = false;
+    unsigned fail_map_at = 0;
     uint64_t base = 0;
     uint64_t length = 0;
     IOOptionBits map_options = 0;
@@ -31,10 +34,42 @@ struct IOKitMemoryModel {
     unsigned memory_releases = 0;
     unsigned map_calls = 0;
     unsigned map_releases = 0;
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;
+    std::vector<IOOptionBits> map_options_history;
+    std::unordered_map<uint64_t, std::vector<uint8_t>> mapped_windows;
     uint8_t registers[0x1000] = {};
+
+    std::vector<uint8_t> &window(uint64_t window_base, uint64_t window_length)
+    {
+        auto &bytes = mapped_windows[window_base];
+        if (window_length <= SIZE_MAX && bytes.size() < static_cast<size_t>(window_length))
+            bytes.resize(static_cast<size_t>(window_length));
+        return bytes;
+    }
+
+    uintptr_t virtualAddress(uint64_t window_base, uint64_t window_length)
+    {
+        if (window_base == 0x16700000u && window_length <= sizeof(registers))
+            return reinterpret_cast<uintptr_t>(registers);
+        auto found = mapped_windows.find(window_base);
+        if (found == mapped_windows.end() || found->second.size() < window_length)
+            return 0;
+        return reinterpret_cast<uintptr_t>(found->second.data());
+    }
 };
 
 inline IOKitMemoryModel gIOKitMemoryModel;
+class IOWorkLoop;
+class IOTimerEventSource;
+inline IOTimerEventSource *gIOKitTimerEventSource = nullptr;
+struct IOKitTimerModel {
+    unsigned added = 0;
+    unsigned removed = 0;
+    unsigned scheduled = 0;
+    unsigned cancelled = 0;
+    unsigned fired = 0;
+};
+inline IOKitTimerModel gIOKitTimerModel;
 
 class OSObject {
     unsigned mReferences = 1;
@@ -77,6 +112,7 @@ using UInt8 = uint8_t;
 using UInt32 = uint32_t;
 using UInt64 = uint64_t;
 using mach_vm_size_t = uint64_t;
+using mach_vm_address_t = uint64_t;
 static constexpr IOReturn kIOReturnSuccess = 0;
 static constexpr IOReturn kIOReturnError = -1;
 static constexpr IOReturn kIOReturnBadArgument = -2;
@@ -95,6 +131,7 @@ static constexpr IODirection kIODirectionOut = 2u;
 
 struct IOKitDmaModel {
     bool no_mapper = false;
+    bool system_mapper = false;
     bool no_cpu_mapping = false;
     bool fail_memory = false;
     bool fail_command = false;
@@ -111,6 +148,7 @@ struct IOKitDmaModel {
     size_t capacity = 0;
     size_t cpu_alignment = 0;
     IOOptionBits memory_options = 0;
+    mach_vm_address_t physical_mask = 0;
     UInt8 address_bits = 0;
     UInt32 alignment = 0;
     uint32_t mapping_options = 0;
@@ -181,6 +219,7 @@ class IOBufferMemoryDescriptor : public IOMemoryDescriptor {
     bool mNoCpuMapping = false;
 
 public:
+    IOBufferMemoryDescriptor() : IOMemoryDescriptor(kIODirectionInOut, 0), mPhysicalAllocation(false) {}
     explicit IOBufferMemoryDescriptor(size_t size, bool no_cpu_mapping, size_t alignment)
         : IOMemoryDescriptor(kIODirectionInOut, size), mNoCpuMapping(no_cpu_mapping)
     {
@@ -214,6 +253,25 @@ public:
         }
         return OSPtr<IOBufferMemoryDescriptor>(memory);
     }
+    bool initWithPhysicalMask(void *, IOOptionBits options, mach_vm_size_t capacity,
+                              mach_vm_address_t alignment, mach_vm_address_t physicalMask)
+    {
+        ++gIOKitDmaModel.memory_allocations;
+        gIOKitDmaModel.memory_options = options;
+        gIOKitDmaModel.capacity = static_cast<size_t>(capacity);
+        gIOKitDmaModel.cpu_alignment = static_cast<size_t>(alignment);
+        gIOKitDmaModel.physical_mask = physicalMask;
+        if (gIOKitDmaModel.fail_memory || gIOKitDmaModel.no_cpu_mapping || !capacity || !alignment)
+            return false;
+        const size_t allocationAlignment = std::max(static_cast<size_t>(alignment), sizeof(void *));
+        if (posix_memalign(&mBytes, allocationAlignment, static_cast<size_t>(capacity)) != 0)
+            return false;
+        std::memset(mBytes, 0, static_cast<size_t>(capacity));
+        mStorage.resize(static_cast<size_t>(capacity));
+        mNoCpuMapping = false;
+        mPhysicalAllocation = true;
+        return true;
+    }
     static IOBufferMemoryDescriptor *withBytes(const void *bytes, size_t size, IODirection direction)
     {
         return bytes && size ? new (std::nothrow) IOBufferMemoryDescriptor(bytes, size, direction) : nullptr;
@@ -225,12 +283,18 @@ public:
     }
 };
 
+template <typename T>
+inline OSPtr<T> OSMakeShared()
+{
+    return OSPtr<T>(new (std::nothrow) T());
+}
+
 class IODMACommand : public OSObject {
 public:
     ~IODMACommand() override { ++gIOKitDmaModel.command_releases; }
     struct Segment32 { UInt32 fIOVMAddr = 0; UInt32 fLength = 0; };
     struct Segment64 { UInt64 fIOVMAddr = 0; UInt64 fLength = 0; };
-    enum MappingOptions { kMapped = 1 };
+    enum MappingOptions { kMapped = 1, kBypassed = 2 };
     using SegmentFunction = bool (*)(IODMACommand *, Segment64, void *, UInt32);
 
 private:
@@ -245,7 +309,10 @@ public:
     static OSPtr<IODMACommand> withSpecification(SegmentFunction, UInt8 address_bits,
         UInt64, MappingOptions mapping_options, UInt64, UInt32 alignment, IOMapper *mapper)
     {
-        if (gIOKitDmaModel.fail_command || !mapper) return OSPtr<IODMACommand>();
+        if (gIOKitDmaModel.fail_command ||
+            (mapping_options == kMapped && !mapper) ||
+            (mapping_options == kBypassed && (mapper || gIOKitDmaModel.system_mapper)))
+            return OSPtr<IODMACommand>();
         ++gIOKitDmaModel.command_allocations;
         gIOKitDmaModel.address_bits = address_bits;
         gIOKitDmaModel.alignment = alignment;
@@ -324,31 +391,42 @@ public:
 
 class IOMemoryMap : public OSObject {
     IOKitMemoryModel *mModel;
+    uint64_t mBase;
+    uint64_t mLength;
 
 public:
-    explicit IOMemoryMap(IOKitMemoryModel *model) : mModel(model) {}
+    IOMemoryMap(IOKitMemoryModel *model, uint64_t base, uint64_t length)
+        : mModel(model), mBase(base), mLength(length) {}
     uint64_t getVirtualAddress() const
-    { return reinterpret_cast<uintptr_t>(mModel->registers); }
+    { return mModel->virtualAddress(mBase, mLength); }
     void release() override { ++mModel->map_releases; OSObject::release(); }
 };
 
 class IODeviceMemory : public OSObject {
     IOKitMemoryModel *mModel;
+    uint64_t mBase;
+    uint64_t mLength;
 
 public:
-    explicit IODeviceMemory(IOKitMemoryModel *model) : mModel(model) {}
+    IODeviceMemory(IOKitMemoryModel *model, uint64_t base, uint64_t length)
+        : mModel(model), mBase(base), mLength(length) {}
     static IODeviceMemory *withRange(uint64_t base, uint64_t length)
     {
         ++gIOKitMemoryModel.range_calls;
         gIOKitMemoryModel.base = base;
         gIOKitMemoryModel.length = length;
-        return gIOKitMemoryModel.fail_range ? nullptr : new IODeviceMemory(&gIOKitMemoryModel);
+        gIOKitMemoryModel.ranges.emplace_back(base, length);
+        if (gIOKitMemoryModel.fail_range || length > SIZE_MAX) return nullptr;
+        gIOKitMemoryModel.window(base, length);
+        return new IODeviceMemory(&gIOKitMemoryModel, base, length);
     }
     IOMemoryMap *map(IOOptionBits options)
     {
         ++mModel->map_calls;
         mModel->map_options = options;
-        return mModel->fail_map ? nullptr : new IOMemoryMap(mModel);
+        mModel->map_options_history.push_back(options);
+        return mModel->fail_map || mModel->fail_map_at == mModel->map_calls ?
+            nullptr : new IOMemoryMap(mModel, mBase, mLength);
     }
     void release() override { ++mModel->memory_releases; OSObject::release(); }
 };
@@ -360,7 +438,7 @@ public:
     OSData(const void *bytes, size_t length)
     {
         const auto *source = static_cast<const uint8_t *>(bytes);
-        mBytes.assign(source, source + length);
+        if (source && length) mBytes.assign(source, source + length);
     }
 
     size_t getLength() const { return mBytes.size(); }
@@ -368,8 +446,49 @@ public:
 };
 
 class OSDictionary;
-class IOService : public OSObject {
+struct IORegistryPlane {};
+inline const IORegistryPlane gIOKitDeviceTreePlane;
+inline const IORegistryPlane *gIODTPlane = &gIOKitDeviceTreePlane;
+
+class IORegistryEntry : public OSObject {
     std::unordered_map<std::string, OSObject *> mProperties;
+
+    static std::unordered_map<std::string, IORegistryEntry *> &testPathEntries()
+    {
+        static std::unordered_map<std::string, IORegistryEntry *> entries;
+        return entries;
+    }
+
+public:
+    OSObject *getProperty(const char *key)
+    {
+        auto found = mProperties.find(key);
+        return found == mProperties.end() ? nullptr : found->second;
+    }
+    void setTestProperty(const char *key, OSObject *value) { mProperties[key] = value; }
+    void removeTestProperty(const char *key) { if (key) mProperties.erase(key); }
+    static IORegistryEntry *fromPath(const char *path, const IORegistryPlane *)
+    {
+        if (!path) return nullptr;
+        auto found = testPathEntries().find(path);
+        if (found == testPathEntries().end()) return nullptr;
+        found->second->retain();
+        return found->second;
+    }
+    static void setTestPath(const char *path, IORegistryEntry *entry)
+    {
+        if (path && entry) testPathEntries()[path] = entry;
+    }
+    static void removeTestPath(const char *path, IORegistryEntry *expected)
+    {
+        if (!path) return;
+        auto found = testPathEntries().find(path);
+        if (found != testPathEntries().end() && found->second == expected)
+            testPathEntries().erase(found);
+    }
+};
+
+class IOService : public IORegistryEntry {
     IOService *mProvider = nullptr;
     bool mInactive = false;
 
@@ -390,8 +509,9 @@ public:
         mProvider = nullptr;
         return true;
     }
-    virtual bool start(IOService *)
+    virtual bool start(IOService *provider)
     {
+        mProvider = provider;
         started = true;
         return true;
     }
@@ -406,17 +526,73 @@ public:
         return true;
     }
     bool isInactive() const { return mInactive; }
-    OSObject *getProperty(const char *key)
-    {
-        auto found = mProperties.find(key);
-        return found == mProperties.end() ? nullptr : found->second;
-    }
+    IOService *getProvider() const { return mProvider; }
     bool setProperty(const char *key, UInt64, unsigned)
     {
         return key != nullptr;
     }
-    void setTestProperty(const char *key, OSObject *value) { mProperties[key] = value; }
     void registerService() { registered = true; }
+};
+
+class IOEventSource : public OSObject {
+public:
+    bool enabled = false;
+    virtual void enable() { enabled = true; }
+    virtual void disable() { enabled = false; }
+};
+
+class IOWorkLoop : public OSObject {
+public:
+    bool fail_add = false;
+    bool fail_remove = false;
+    unsigned add_calls = 0;
+    unsigned remove_calls = 0;
+    static OSPtr<IOWorkLoop> workLoop()
+    { return OSPtr<IOWorkLoop>(new (std::nothrow) IOWorkLoop()); }
+    IOReturn addEventSource(IOEventSource *source)
+    {
+        ++add_calls;
+        return source && !fail_add ? kIOReturnSuccess : kIOReturnError;
+    }
+    IOReturn removeEventSource(IOEventSource *source)
+    {
+        ++remove_calls;
+        ++gIOKitTimerModel.removed;
+        return source && !fail_remove ? kIOReturnSuccess : kIOReturnError;
+    }
+};
+
+class IOTimerEventSource : public IOEventSource {
+public:
+    using Action = void (*)(OSObject *, IOTimerEventSource *);
+private:
+    OSObject *mOwner = nullptr;
+    Action mAction = nullptr;
+public:
+    uint32_t timeout_ms = 0;
+    static OSPtr<IOTimerEventSource> timerEventSource(OSObject *owner, Action action)
+    {
+        auto *timer = new (std::nothrow) IOTimerEventSource();
+        if (timer) { timer->mOwner = owner; timer->mAction = action; }
+        gIOKitTimerEventSource = timer;
+        return OSPtr<IOTimerEventSource>(timer);
+    }
+    IOReturn setTimeoutMS(uint32_t milliseconds)
+    {
+        timeout_ms = milliseconds;
+        ++gIOKitTimerModel.scheduled;
+        return kIOReturnSuccess;
+    }
+    void cancelTimeout() { ++gIOKitTimerModel.cancelled; timeout_ms = 0; }
+    void fire()
+    {
+        if (enabled && mOwner && mAction && timeout_ms) {
+            gIOKitTestUptimeNanoseconds += static_cast<uint64_t>(timeout_ms) * 1000000u;
+            timeout_ms = 0;
+            ++gIOKitTimerModel.fired;
+            mAction(mOwner, this);
+        }
+    }
 };
 
 class OSDictionary : public OSObject {};

@@ -167,9 +167,106 @@ static void test_dma_adapter()
     assert(gIOKitDmaModel.memory_releases == 1 && gIOKitDmaModel.command_releases == 1);
 }
 
+static void test_qemu_bypass_dma_adapter()
+{
+    static constexpr char compatibleBytes[] =
+        "qemu,virt-pcie-host\0pci-host-ecam-generic\0";
+    static constexpr char emptyProperty[] = "";
+    static constexpr char armIoTypeBytes[] = "qemu-virt";
+    static constexpr char pciTypeBytes[] = "pci";
+    OSData compatible(compatibleBytes, sizeof(compatibleBytes) - 1);
+    OSData coherent(emptyProperty, 0);
+    IOService host;
+    IORegistryEntry pciHost;
+    OSData armIoType(armIoTypeBytes, sizeof(armIoTypeBytes));
+    OSData pciType(pciTypeBytes, sizeof(pciTypeBytes));
+    host.setTestProperty("device_type", &armIoType);
+    pciHost.setTestProperty("device_type", &pciType);
+    pciHost.setTestProperty("compatible", &compatible);
+    pciHost.setTestProperty("dma-coherent", &coherent);
+    IORegistryEntry::setTestPath("/arm-io/qemu-pcie-host", &pciHost);
+
+    gIOKitDmaModel = {};
+    gIOKitDmaModel.no_mapper = true;
+    dali_usb_xhci_dma_context context = {};
+    assert(dali_usb_xhci_dma_init_qemu(&context, &host));
+    assert(context.active && context.qemu_bypass && !context.mapper);
+    usb_dma_ops ops = {};
+    assert(dali_usb_xhci_dma_get_ops(&context, &ops));
+    assert(ops.qualified && ops.allocate && ops.release && ops.sync);
+
+    usb_dma_buffer buffer = {};
+    assert(usb_dma_alloc32(&ops, 4096, 65536, &buffer) == USB_OK);
+    assert(buffer.cpu && buffer.size == 4096 && buffer.coherent);
+    assert((reinterpret_cast<uintptr_t>(buffer.cpu) & 0xffffu) == 0);
+    assert((buffer.address & 0xffffu) == 0 && buffer.address <= UINT32_MAX);
+    assert(gIOKitDmaModel.address_bits == 32 &&
+           gIOKitDmaModel.mapping_options == IODMACommand::kBypassed &&
+           gIOKitDmaModel.alignment == 65536);
+    assert(gIOKitDmaModel.cpu_alignment == 65536 && gIOKitDmaModel.physical_mask == 0);
+    assert((gIOKitDmaModel.memory_options & kIOMemoryPhysicallyContiguous) != 0);
+    assert((gIOKitDmaModel.memory_options & kIOMapInhibitCache) != 0);
+    usb_dma_free(&ops, &buffer);
+    assert(dali_usb_xhci_dma_stop(&context));
+    assert(!context.active && !context.qemu_bypass && !context.mapper);
+
+    gIOKitDmaModel = {};
+    gIOKitDmaModel.no_mapper = true;
+    gIOKitDmaModel.dma_address = 0x100000000ULL;
+    dali_usb_xhci_dma_context over32 = {};
+    assert(dali_usb_xhci_dma_init_qemu(&over32, &host));
+    assert(dali_usb_xhci_dma_get_ops(&over32, &ops));
+    buffer = {};
+    assert(usb_dma_alloc32(&ops, 512, 64, &buffer) == USB_RANGE);
+    assert(!buffer.cpu && !buffer.cookie && gIOKitDmaModel.memory_releases == 1);
+    assert(dali_usb_xhci_dma_stop(&over32));
+
+    gIOKitDmaModel = {};
+    gIOKitDmaModel.no_mapper = true;
+    gIOKitDmaModel.dma_address = 0x00100001u;
+    gIOKitDmaModel.ignore_iova_alignment = true;
+    dali_usb_xhci_dma_context misaligned = {};
+    assert(dali_usb_xhci_dma_init_qemu(&misaligned, &host));
+    assert(dali_usb_xhci_dma_get_ops(&misaligned, &ops));
+    buffer = {};
+    assert(usb_dma_alloc32(&ops, 512, 64, &buffer) == USB_RANGE);
+    assert(!buffer.cpu && !buffer.cookie && gIOKitDmaModel.memory_releases == 1);
+    assert(dali_usb_xhci_dma_stop(&misaligned));
+
+    gIOKitDmaModel = {};
+    gIOKitDmaModel.no_mapper = true;
+    gIOKitDmaModel.system_mapper = true;
+    dali_usb_xhci_dma_context systemMapper = {};
+    assert(!dali_usb_xhci_dma_init_qemu(&systemMapper, &host));
+    assert(!systemMapper.active && !systemMapper.qemu_bypass);
+
+    gIOKitDmaModel = {};
+    pciHost.setTestProperty("iommu-map", &coherent);
+    dali_usb_xhci_dma_context iommu = {};
+    assert(!dali_usb_xhci_dma_init_qemu(&iommu, &host));
+    assert(!iommu.active && gIOKitDmaModel.mapper_requests == 0);
+    pciHost.removeTestProperty("iommu-map");
+
+    gIOKitDmaModel = {};
+    IOService nonQemuHost;
+    nonQemuHost.setTestProperty("device_type", &coherent);
+    dali_usb_xhci_dma_context wrongHost = {};
+    assert(!dali_usb_xhci_dma_init_qemu(&wrongHost, &nonQemuHost));
+    assert(!wrongHost.active && gIOKitDmaModel.mapper_requests == 0);
+
+    gIOKitDmaModel = {};
+    gIOKitDmaModel.no_mapper = false;
+    dali_usb_xhci_dma_context perDeviceMapper = {};
+    assert(!dali_usb_xhci_dma_init_qemu(&perDeviceMapper, &host));
+    assert(!perDeviceMapper.active && gIOKitDmaModel.mapper_requests == 1 &&
+           gIOKitDmaModel.mapper_releases == 1);
+    IORegistryEntry::removeTestPath("/arm-io/qemu-pcie-host", &pciHost);
+}
+
 int main()
 {
     test_dma_adapter();
+    test_qemu_bypass_dma_adapter();
 
     auto bytes = valid_wire();
     OSData property(bytes.data(), bytes.size());

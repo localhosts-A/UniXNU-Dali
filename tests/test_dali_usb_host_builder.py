@@ -125,7 +125,8 @@ class DaliUsbHostBuilderTests(unittest.TestCase):
         self.assertIn("'tests/test_dali_usb_host_builder.py'", workflow)
         self.assertTrue({"usb_host_hub_start", "usb_host_hub_poll",
                          "usb_host_hub_child_route", "usb_host_hub_stop",
-                         "usb_host_stop_device", "usb_host_release_stopped_device",
+                         "usb_host_stop_device", "usb_host_confirm_controller_stopped",
+                         "usb_host_release_stopped_device",
                         "usb_bot_read_only", "usb_block_io_init", "usb_block_io_transfer",
                          "usb_block_io_sync", "usb_block_io_quiesce",
                          "usb_block_io_detach", "usb_xhci_read_capabilities",

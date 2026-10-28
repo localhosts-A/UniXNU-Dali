@@ -13,13 +13,17 @@ Clang/GCC ASan/UBSan, and the standalone EDK2 AArch64 archive builds all six
 portable/device C units. The combined
 host-driven model covers CDC enumeration/DTR/log DMA, legal ZLP, reset/disconnect,
 control abort/toggle preservation and retained DMA buffers after stop failure.
-Actual UEFI/XNU binding and PHY/power/PMIF/TCPC/DMA ownership establishment,
-native controller and hub child-service integration, source-XNU IOHID/storage
-consumers, final-map handoff and native-engine QEMU gates are still pending. The
-default-off and enabled firmware packages build, and the source PCI xHCI QEMU
-class-stack gate passes separately; neither result proves the Dali native MMIO
-controller. Nothing in this milestone enables USB in the ordinary boot profile.
-`hardware_qualified=false`.
+The source tree now contains a QEMU-only XNU xHCI runtime that connects the
+portable host coordinator to the HID and BOT child publishers. Its local
+production-body models pass, and a source-XNU test now mounts a disposable USB
+FAT32 volume read-only, then writes, syncs, unmounts, remounts and verifies a
+file from the image. The exact macOS compile and QEMU run remain pending.
+Asynchronous HID report polling, the MT6991 provider and post-EBS role ownership
+remain open.
+The default-off and enabled firmware packages build, and the source PCI xHCI
+QEMU class-stack gate passes separately; neither result proves the Dali native
+MMIO controller. Nothing in this milestone enables USB in the ordinary boot
+profile. `hardware_qualified=false`.
 
 The generic repository now contains an OS-independent USB host coordinator for
 xHCI-style address assignment, bounded configuration parsing, boot keyboard/mouse,
@@ -139,8 +143,9 @@ IOKit seam. Those models do not prove kernel ABI or real HID descriptor parsing.
 The opt-in builder compiles against the actual source-family headers and checks
 the linked kernel symbols. Action 40299886122 verifies this child and its report
 API in the final kernel. Action 40313584406 also verifies the corrected
-`xhci0` resource service in the final kernel. No production controller/child
-owner publishes the HID child yet.
+`xhci0` resource service in the final kernel. The later QEMU-only PCI runtime
+publishes this HID child in source; actual XNU/QEMU execution and HID report
+delivery remain pending.
 
 The generic USB core now contains `UsbXhci.c` for read-only xHCI capability and
 USB2 root-port discovery plus coherent DMA32 command/transfer/event-ring
@@ -181,12 +186,40 @@ the guard must be nonblocking and non-reentrant. Binding itself does not touch
 registers. Binding retains the owner until revocation, and `stop()` retains the
 mapping while callbacks are bound. Revocation requires a controller-stop proof
 while the platform lease is still valid. These callbacks are a production MMIO
-seam, not a controller owner: no production provider binds the guard, starts
-the xHCI core, acquires power/clocks/IRQ/qualified DMA, or enumerates devices.
+seam, not the MT6991 controller owner: no production board provider binds the
+guard, starts the xHCI core, or acquires qualified power/clocks/IRQ/DMA.
 The production-body model covers guarded MMIO and stop-proof retention; its
 controller/host path still uses synthetic MMIO. Source-XNU Action 40386387528
 verified the earlier resource service and mapping-owner link. Runtime enumeration
 and hardware qualification remain separate.
+
+The QEMU-only `DaliUsbQemuXhciRuntime` now binds the guarded PCI BAR and bypass
+DMA seams to the portable xHCI host adapter. Its workloop drains root-port events,
+resets powered USB2 ports, enumerates connected devices, publishes HID/BOT
+services, and scans external-hub port status through class control requests.
+Repeatedly polling a synchronous interrupt endpoint is unsafe in the current
+controller API: an idle transfer timeout fault-stops the controller. Therefore
+the runtime does not yet submit HID reports; an asynchronous completion and
+cancel path is still required. Root reset/enumeration and hub callback errors
+retry with a bounded 500 ms delay while the controller remains healthy. A PSC
+event for a port outside the USB2 bitmap fail-stops the runtime without calling
+USB2-only status/ack APIs; this owner does not manage USB3, and the supported
+QEMU profile uses `p3=0`. The local runtime fixture uses test stubs for the host adapter,
+enumeration and child services. Separate generic models exercise the real
+xHCI/host/BOT stack, but no single fixture runs that entire runtime stack through
+this new runtime owner.
+
+The source-XNU QEMU gate now builds a 66,584-sector FAT32 superfloppy with a
+known README, attaches it to the USB2 BOT device, and selects the unique
+`DaliUsbStorage` whole-media path without a RAM fallback. The kernel test first
+checks read-only mount/content/`EROFS`, then remounts writable, creates a file,
+calls `VNOP_FSYNC`, unmounts and remounts read-only, and reads the file back.
+After QEMU exits, the host verifies the file bytes in the raw image and requires
+the image hash to have changed. The checkpoint also binds to the exact BOT
+capacity/sector geometry and kernel/image hashes. The source, runner and host
+tests are present, but the current Linux host has no `xcrun`, so the source
+archive/kernel link and QEMU gate still require macOS CI. QEMU evidence does not
+qualify the MT6991 DMA path or physical hardware.
 
 The opt-in XNU profile also compiles the portable MTU3 gadget units for QMU,
 EP0, endpoint setup and the CDC device/log-ring lifecycle into
@@ -232,9 +265,12 @@ source-XNU compile/link, all post-link verifiers and the QEMU `rw4096`,
 with error 0, covering read-only mount, file content readback and write refusal;
 the final kernel and storage link reports bind to SHA-256
 `0b23b18df34dbe2493bf4845951f4240ff37da117a7c78faf4e75daf02e09691`. This
-validates XNU VFS/msdosfs over volatile RAM-backed IOStorage. It does not
-traverse the Dali USB host/controller path or qualify USB storage, DMA, physical
-media, persistence or hardware. No physical-media test is claimed.
+validates XNU VFS/msdosfs over volatile RAM-backed IOStorage. A separate new
+mode selects the Dali BOT whole-media, writes and syncs a disposable FAT32 file,
+unmounts/remounts and checks readback plus the changed image hash. Its source and
+host-side gates are implemented, but exact macOS compilation and QEMU execution
+remain pending. Neither gate qualifies MT6991 DMA, physical media or hardware;
+no physical-media test is claimed.
 
 The device tree contains a production SID14 PMIF-M transport with actual identity
 gating, atomic shared-lock operations, bounded completion/error handling,

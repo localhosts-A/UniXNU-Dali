@@ -23,11 +23,13 @@ on:
       - 'scripts/build-dali-usb-hid.py'
       - 'scripts/fetch-usb-references.py'
       - 'scripts/test-source-storage-qemu.py'
+      - 'scripts/test-source-xhci-runtime-qemu.py'
       - 'tests/test_dali_usb_host_builder.py'
       - 'tests/test_dali_usb_storage_builder.py'
       - 'tests/test_dali_usb_gadget_builder.py'
       - 'tests/test_dali_usb_hid_builder.py'
       - 'tests/test_source_storage_qemu.py'
+      - 'tests/test_source_xhci_runtime_qemu.py'
       - 'tests/test_dali_usb_xhci_integration_builder.py'
       - 'tests/test_dali_usb_xhci_resources_builder.py'
       - 'tests/fixtures/usb_xhci_resource_v1_test.c'
@@ -119,6 +121,7 @@ jobs:
           python3 -m unittest discover -s tests/unixnu -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/source-builder-tests.log"
           python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_dali_usb_*builder.py' -v 2>&1 | tee "$RUNNER_TEMP/usb-builder-tests.log"
           python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_source_storage_qemu.py' -v 2>&1 | tee "$RUNNER_TEMP/source-storage-qemu-tests.log"
+          python3 -m unittest discover -s "$GITHUB_WORKSPACE/UniXNU-Dali/tests" -p 'test_source_xhci_runtime_qemu.py' -v 2>&1 | tee "$RUNNER_TEMP/source-xhci-qemu-tests.log"
           UNIXNU_ROOT="$GITHUB_WORKSPACE/UniXNU" python3 "$GITHUB_WORKSPACE/UniXNU-Dali/tests/test_usb_typec.py" 2>&1 | tee "$RUNNER_TEMP/usb-typec-role-worker-tests.log"
 
       - name: Fetch fixed USB and storage source references
@@ -192,6 +195,16 @@ jobs:
             --output-dir "$RUNNER_TEMP/dali-source-msdosfs-qemu" \
             --msdosfs-mount-test
 
+      - name: Test source-XNU QEMU USB BOT FAT32 write, sync and remount
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/test-source-xhci-runtime-qemu.py" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --kernel "$UNIXNU_OUT/dali/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
+            --output-dir "$RUNNER_TEMP/dali-source-xhci-qemu"
+
       - name: Summarize source build scope
         if: always()
         shell: bash
@@ -217,7 +230,13 @@ jobs:
             ${{ runner.temp }}/usb-builder-tests.log
             ${{ runner.temp }}/source-builder-tests.log
             ${{ runner.temp }}/source-storage-qemu-tests.log
+            ${{ runner.temp }}/source-xhci-qemu-tests.log
             ${{ runner.temp }}/dali-source-msdosfs-qemu/**
+            ${{ runner.temp }}/dali-source-xhci-qemu/source-xhci-runtime.log
+            ${{ runner.temp }}/dali-source-xhci-qemu/native-user-build.log
+            ${{ runner.temp }}/dali-source-xhci-qemu/source-xhci-runtime.json
+            ${{ runner.temp }}/dali-source-xhci-qemu/source-xhci-runtime/**/gdb-stop.json
+            ${{ runner.temp }}/dali-source-xhci-qemu/source-xhci-runtime/**/gdb-uart.log
             ${{ runner.temp }}/usb-reference-manifest.json
             UniXNU/build/source-hid/input-audit.json
             UniXNU/out/dali/logs/kernel-bootstrap.log

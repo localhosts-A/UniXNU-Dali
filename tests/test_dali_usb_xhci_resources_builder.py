@@ -33,6 +33,8 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
         self.assertIn(archive, profile)
         self.assertIn("build-dali-usb-xhci-resources.py", board["kernel"]["archives"])
         self.assertTrue((ROOT / "drivers/DaliUsbXhciOwner/DaliUsbXhciOwner.cpp").is_file())
+        self.assertTrue((ROOT / "drivers/DaliUsbQemuPciOwner/DaliUsbQemuPciOwner.cpp").is_file())
+        self.assertTrue((ROOT / "drivers/DaliUsbQemuXhciRuntime/DaliUsbQemuXhciRuntime.cpp").is_file())
         self.assertIn("dali-usb-xhci-resources-personality.patch",
                       [path.name for path in (ROOT / "patches/xnu").glob("*.patch")])
 
@@ -80,22 +82,21 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
                 output_option = command.index("-o")
                 self.assertEqual(command[output_option + 1], str((root / (source.stem + ".o")).resolve()))
 
-    def test_kernel_verifier_requires_the_service_and_description_api(self):
-        symbols = (
-            "00000000 S __ZN20DaliUsbXhciResources10gMetaClassE\n"
-            "00000000 T __ZN20DaliUsbXhciResources5startEP9IOService\n"
-            "00000000 T __ZNK20DaliUsbXhciResources24copyResourceDescriptionEP31dali_usb_xhci_resource_v1\n"
-            "00000000 S __ZN16DaliUsbXhciOwner10gMetaClassE\n"
-            "00000000 T __ZN16DaliUsbXhciOwner5startEP9IOService\n"
-            "00000000 T __ZN16DaliUsbXhciOwner4stopEP9IOService\n"
-            "00000000 T _dali_usb_xhci_dma_init\n"
-            "00000000 T _dali_usb_xhci_dma_get_ops\n"
-            "00000000 T _dali_usb_xhci_dma_stop\n"
-        )
+    def test_kernel_verifier_requires_host_enumeration_and_child_lifecycle_apis(self):
+        symbols = "\n".join("00000000 T _" + symbol for symbol in BUILDER.SYMBOLS)
         BUILDER.require_symbols(symbols, BUILDER.SYMBOLS, "fixture")
+        self.assertIn("usb_xhci_read_capabilities", BUILDER.SYMBOLS)
+        self.assertIn("usb_xhci_controller_start", BUILDER.SYMBOLS)
+        self.assertIn("usb_xhci_controller_stop", BUILDER.SYMBOLS)
+        self.assertNotIn("usb_host_enumerate", BUILDER.ARCHIVE_SYMBOLS)
         with self.assertRaisesRegex(ValueError, "DaliUsbXhciOwner"):
             BUILDER.require_symbols(symbols.replace("DaliUsbXhciOwner", "WrongOwner"),
                                     BUILDER.SYMBOLS, "fixture")
+        qemu_dma_only = "\n".join(
+            "00000000 T _" + symbol for symbol in BUILDER.SYMBOLS
+            if symbol != "dali_usb_xhci_dma_init")
+        with self.assertRaisesRegex(ValueError, "dali_usb_xhci_dma_init"):
+            BUILDER.require_symbols(qemu_dma_only, BUILDER.SYMBOLS, "fixture")
 
     def test_resource_decoder_and_iokit_service_execute_production_code(self):
         cc = shutil.which(os.environ.get("CC", "clang"))
@@ -125,6 +126,8 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
                         "-I", str(model), "-I", str(ROOT / "drivers/DaliUsbXhciResources"),
                         "-I", str(ROOT / "drivers/DaliUsbXhciOwner"),
                         "-I", str(ROOT / "drivers/DaliUsbXhciDma"),
+                        "-I", str(ROOT / "drivers/DaliUsbHid"),
+                        "-I", str(ROOT / "drivers/DaliUsbStorage"),
                         "-I", str(CORE_INCLUDE)]
             core_built = subprocess.run(
                 [cc, "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-Wconversion",
@@ -144,6 +147,61 @@ class DaliUsbXhciResourcesBuilderTests(unittest.TestCase):
             ran = subprocess.run([str(service)], capture_output=True, text=True, timeout=30)
             self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
             self.assertIn("PASS: production Dali xHCI MMIO mapping owner", ran.stdout)
+
+    def test_qemu_pci_decoder_and_readonly_bar_discovery_execute_production_code(self):
+        cc = shutil.which(os.environ.get("CC", "clang"))
+        self.assertIsNotNone(cc)
+        cpp = shutil.which("g++" if Path(cc).name == "gcc" else "clang++")
+        self.assertIsNotNone(cpp)
+        with tempfile.TemporaryDirectory(prefix="dali-qemu-pci-discovery-") as temporary:
+            executable = Path(temporary) / "qemu-pci-discovery"
+            built = subprocess.run(
+                [cpp, "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                 "-Wconversion", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                 "-I", str(ROOT / "drivers/DaliUsbQemuPci"),
+                 str(ROOT / "drivers/DaliUsbQemuPci/DaliUsbQemuPci.cpp"),
+                 str(ROOT / "tests/usb_xhci_resources_model/qemu_pci.cpp"),
+                 "-o", str(executable)], capture_output=True, text=True, timeout=60)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            ran = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+            self.assertIn("PASS: QEMU PCI ECAM decode", ran.stdout)
+
+    def test_qemu_pci_owner_executes_production_service_and_guarded_bar_mapping(self):
+        cc = shutil.which(os.environ.get("CC", "clang"))
+        self.assertIsNotNone(cc)
+        default_cpp = "g++" if Path(cc).name in ("gcc", "cc") else "clang++"
+        cpp = shutil.which(os.environ.get("CXX", default_cpp))
+        self.assertIsNotNone(cpp)
+        with tempfile.TemporaryDirectory(prefix="dali-qemu-pci-owner-") as temporary:
+            executable = Path(temporary) / "qemu-pci-owner"
+            core_object = Path(temporary) / "usb-core.o"
+            model = ROOT / "tests/usb_xhci_resources_model"
+            core_built = subprocess.run(
+                [cc, "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                 "-Wconversion", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                 "-I", str(CORE_INCLUDE), "-c", str(CORE_INCLUDE.parent / "UsbCore.c"),
+                 "-o", str(core_object)], capture_output=True, text=True, timeout=60)
+            self.assertEqual(core_built.returncode, 0, core_built.stderr)
+            built = subprocess.run(
+                [cpp, "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                 "-Wconversion", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                 "-I", str(model), "-I", str(ROOT / "drivers/DaliUsbQemuPci"),
+                 "-I", str(ROOT / "drivers/DaliUsbQemuPciOwner"),
+                 "-I", str(ROOT / "drivers/DaliUsbQemuXhciRuntime"),
+                 "-I", str(ROOT / "drivers/DaliUsbXhciDma"),
+                 "-I", str(ROOT / "drivers/DaliUsbHid"),
+                 "-I", str(ROOT / "drivers/DaliUsbStorage"), "-I", str(CORE_INCLUDE),
+                 str(ROOT / "drivers/DaliUsbQemuPci/DaliUsbQemuPci.cpp"),
+                 str(ROOT / "drivers/DaliUsbQemuPciOwner/DaliUsbQemuPciOwner.cpp"),
+                 str(ROOT / "drivers/DaliUsbXhciDma/DaliUsbXhciDma.cpp"),
+                 str(ROOT / "drivers/DaliUsbQemuXhciRuntime/DaliUsbQemuXhciRuntime.cpp"),
+                 str(model / "qemu_pci_owner.cpp"), str(core_object), "-o", str(executable)],
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            ran = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+            self.assertIn("production QEMU PCI owner", ran.stdout)
 
 
 if __name__ == "__main__":

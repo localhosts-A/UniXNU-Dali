@@ -286,6 +286,10 @@ static void test_owner_host_children_and_readonly_fat32()
     assert(owner.hasMappedWindow());
     assert(gIOKitMemoryModel.map_releases == releasesBeforeBlockedStop);
 
+    usb_mmio controllerMmio = {};
+    assert(owner.bindGuardedMmio(register_guard, &registerGuard, &controllerMmio));
+    unsigned ownerGuardCallsBeforeController = registerGuard.calls.load(std::memory_order_acquire);
+
     dali_usb_xhci_dma_context dmaContext = {};
     assert(dali_usb_xhci_dma_init(&dmaContext, &owner));
     usb_dma_ops dmaOps = {};
@@ -293,8 +297,9 @@ static void test_owner_host_children_and_readonly_fat32()
 
     Controller controller;
     initialize_fat32(controller.media);
-    auto *xhci = usb_xhci_test_host_create(controller.media.data(), controller.media.size(),
-                                            controller.keyboardReport, &dmaOps);
+    auto *xhci = usb_xhci_test_host_create_with_mmio(
+        controller.media.data(), controller.media.size(), controller.keyboardReport,
+        &dmaOps, &controllerMmio);
     assert(xhci);
     usb_host_ops ops = {};
     assert(usb_xhci_test_host_get_ops(xhci, &ops) == USB_OK);
@@ -347,15 +352,41 @@ static void test_owner_host_children_and_readonly_fat32()
     assert(storage->doAsyncReadWrite(&attemptedWrite, 1058, 1, nullptr, &completion) == kIOReturnNotWritable);
     assert(usb_xhci_test_host_get_counters(xhci, &counters) == USB_OK &&
            counters.bot_write_commands == 0 && writeCompletion.calls == 0);
+    assert(registerGuard.calls.load(std::memory_order_acquire) > ownerGuardCallsBeforeController);
 
     assert(dali_usb_hid_quiesce(hid) == USB_OK);
     assert(gIOKitHidReports.back() == std::vector<uint8_t>(8, 0));
     assert(dali_usb_storage_quiesce(storageService) == USB_OK);
     assert(usb_xhci_test_host_get_counters(xhci, &counters) == USB_OK &&
            counters.bot_sync_commands == 1);
+    /* A failed Disable Slot must retain children and host state until the
+     * controller itself has a fresh, successful stop proof. */
+    unsigned dmaReleasesBeforeRecovery = gIOKitDmaModel.memory_releases;
+    assert(usb_xhci_test_host_inject_disable_slot_applied_error(xhci) == USB_OK);
+    assert(usb_host_stop_device(&device) == USB_IO && !device.stop_proven &&
+           device.state == USB_HOST_FAULTED);
+    assert(usb_xhci_test_host_get_counters(xhci, &counters) == USB_OK &&
+           counters.controller_state == USB_XHCI_CONTROLLER_FAULTED &&
+           counters.owned_slots == 1u &&
+           gIOKitDmaModel.memory_releases == dmaReleasesBeforeRecovery);
     assert(dali_usb_hid_detach(hid, false) == USB_BUSY);
     assert(dali_usb_storage_detach(storageService, false) == USB_BUSY);
-    assert(usb_host_stop_device(&device) == USB_OK && device.stop_proven);
+
+    assert(usb_xhci_test_host_set_stuck_halt(xhci, true) == USB_OK);
+    assert(usb_xhci_test_host_stop(xhci) == USB_TIMEOUT);
+    assert(usb_host_confirm_controller_stopped(&device) == USB_BUSY &&
+           !device.stop_proven);
+    assert(gIOKitDmaModel.memory_releases == dmaReleasesBeforeRecovery);
+    assert(usb_host_release_stopped_device(&device, nullptr, nullptr, nullptr) == USB_BUSY);
+    assert(dali_usb_hid_detach(hid, false) == USB_BUSY);
+    assert(dali_usb_storage_detach(storageService, false) == USB_BUSY);
+
+    assert(usb_xhci_test_host_set_stuck_halt(xhci, false) == USB_OK);
+    assert(usb_xhci_test_host_stop(xhci) == USB_OK);
+    assert(usb_xhci_test_host_get_counters(xhci, &counters) == USB_OK &&
+           counters.controller_state == USB_XHCI_CONTROLLER_EMPTY &&
+           counters.owned_slots == 0u);
+    assert(usb_host_confirm_controller_stopped(&device) == USB_OK && device.stop_proven);
     assert(dali_usb_hid_detach(hid, device.stop_proven) == USB_OK);
     assert(dali_usb_storage_detach(storageService, device.stop_proven) == USB_OK);
     assert(usb_host_release_stopped_device(&device, nullptr, nullptr, nullptr) == USB_OK);
@@ -365,7 +396,7 @@ static void test_owner_host_children_and_readonly_fat32()
     hid->release();
     storageService->release();
 
-    assert(usb_xhci_test_host_stop(xhci) == USB_OK);
+    assert(owner.releaseGuardedMmio(true));
     assert(usb_xhci_test_host_destroy(xhci) == USB_OK);
     assert(dali_usb_xhci_dma_stop(&dmaContext));
     assert(gIOKitDmaModel.memory_allocations == gIOKitDmaModel.memory_releases);
@@ -383,6 +414,6 @@ static void test_owner_host_children_and_readonly_fat32()
 int main()
 {
     test_owner_host_children_and_readonly_fat32();
-    std::puts("PASS: production xHCI controller/host adapter with synthetic MMIO, Dali DMA owner, HID/BOT children, and RAM FAT32-image read-only sector path; msdosfs runtime and hardware qualification unverified");
+    std::puts("PASS: production xHCI owner/host and HID/BOT children retain DMA through failed Disable Slot/controller-stop retries, then recover before RAM FAT32 reads; msdosfs runtime and hardware qualification unverified");
     return 0;
 }

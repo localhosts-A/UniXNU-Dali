@@ -74,9 +74,8 @@ class DaliUsbXhciIntegrationTests(unittest.TestCase):
 
             result = subprocess.run([str(binary)], text=True, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("production xHCI controller/host adapter with synthetic MMIO, "
-                          "Dali DMA owner, HID/BOT children, and RAM FAT32-image read-only sector path",
-                          result.stdout)
+            self.assertIn("production xHCI owner/host and HID/BOT children retain DMA through failed Disable Slot/"
+                          "controller-stop retries, then recover before RAM FAT32 reads", result.stdout)
             self.assertIn("msdosfs runtime and hardware qualification unverified",
                           result.stdout)
 

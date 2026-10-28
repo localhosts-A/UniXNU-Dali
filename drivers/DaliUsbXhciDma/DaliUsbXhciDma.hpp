@@ -16,10 +16,14 @@ struct dali_usb_xhci_dma_context {
     struct dali_usb_xhci_dma_allocation *allocations = nullptr;
     bool active = false;
     bool faulted = false;
+    bool qemu_bypass = false;
 };
 
 extern "C" {
 bool dali_usb_xhci_dma_init(struct dali_usb_xhci_dma_context *, IOService *device);
+/* QEMU virt PCI-host only: validates the coherent/no-IOMMU contract and uses
+ * bypassed physical DMA. This path is not a Dali/MT6991 DMA provider. */
+bool dali_usb_xhci_dma_init_qemu(struct dali_usb_xhci_dma_context *, IOService *host);
 bool dali_usb_xhci_dma_get_ops(struct dali_usb_xhci_dma_context *, struct usb_dma_ops *);
 /* Only after the controller has been stopped and every DMA allocation released. */
 bool dali_usb_xhci_dma_stop(struct dali_usb_xhci_dma_context *);

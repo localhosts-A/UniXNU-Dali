@@ -1,7 +1,7 @@
 diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 --- a/iokit/KernelConfigTables.cpp
 +++ b/iokit/KernelConfigTables.cpp
-@@ -58,6 +58,17 @@
+@@ -58,6 +58,28 @@
      "     'IOProbeScore'    = 2000:32;"
      "   },"
      "   {"
@@ -13,6 +13,17 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 +    "   {"
 +    "     'IOClass'         = DaliUsbXhciOwner;"
 +    "     'IOProviderClass' = DaliUsbXhciResources;"
++    "     'IOProbeScore'    = 2000:32;"
++    "   },"
++    "   {"
++    "     'IOClass'         = DaliUsbQemuPciOwner;"
++    "     'IOProviderClass' = IOPlatformDevice;"
++    "     'IONameMatch'     = 'arm-io';"
++    "     'IOProbeScore'    = 2000:32;"
++    "   },"
++    "   {"
++    "     'IOClass'         = DaliUsbQemuXhciRuntime;"
++    "     'IOProviderClass' = DaliUsbQemuPciOwner;"
 +    "     'IOProbeScore'    = 2000:32;"
 +    "   },"
 +    "   {"

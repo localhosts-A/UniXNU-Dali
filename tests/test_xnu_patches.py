@@ -98,6 +98,13 @@ class XnuPatchFormatTests(unittest.TestCase):
             self.assertIn("'IONameMatch'     = 'xhci0';", result)
             self.assertLess(result.index("DaliUsbXhciResources;"),
                             result.index("DaliUsbXhciOwner;"))
+            self.assertIn("'IOClass'         = DaliUsbQemuPciOwner;", result)
+            self.assertIn("'IOProviderClass' = IOPlatformDevice;", result)
+            self.assertIn("'IONameMatch'     = 'arm-io';", result)
+            self.assertIn("'IOClass'         = DaliUsbQemuXhciRuntime;", result)
+            self.assertIn("'IOProviderClass' = DaliUsbQemuPciOwner;", result)
+            self.assertLess(result.index("DaliUsbQemuPciOwner;"),
+                            result.index("DaliUsbQemuXhciRuntime;"))
 
 
 class BoardArchiveTests(unittest.TestCase):

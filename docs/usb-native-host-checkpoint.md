@@ -48,3 +48,47 @@ emulate the native controller. Native-path QEMU, CDC/platform role integration
 and source-only XNU work remain pending.
 Existing PCI xHCI QEMU coverage is a separate gate, not native-path proof.
 hardware_qualified=false; no physical device or medium was used.
+
+## Source-XNU QEMU DMA32 adapter
+
+The xHCI DMA archive now has a separate QEMU-only initializer. It accepts only
+the generated `qemu,virt-pcie-host` / `pci-host-ecam-generic` host description,
+requires the empty `dma-coherent` property, rejects `iommu-map`, `iommus` and
+`dma-ranges`, refuses a per-device mapper, and probes `IODMACommand::kBypassed`
+so a system mapper also makes initialization fail. Its allocations request
+contiguous cache-inhibited memory and the caller's alignment; `OutputHost32`
+must return one segment entirely inside 32 bits with the requested alignment
+before the buffer is exposed. This path is isolated from the MT6991
+mapper-backed adapter and cannot qualify Dali hardware.
+
+The production-body fixture passes under Clang and GCC, including rejection of
+mapper/IOMMU hosts, addresses above 4 GiB and misaligned segments. The source-XNU
+archive has not been compiled or run on macOS for this addition. The QEMU-only
+PCI/BAR owner is now implemented and model-tested, but controller start,
+enumeration, child publication and QEMU FAT32 persistence remain open. The full
+Dali suite passes 128/128. `qemu_dma_runtime_qualified`,
+`qemu_pci_bar_owner_runtime_qualified` and `hardware_qualified` stay false.
+
+## Source-XNU QEMU PCI/BAR owner
+
+`DaliUsbQemuPciOwner` matches the published `/arm-io` platform nub and resolves
+the nested `/arm-io/qemu-pcie-host` node from the device-tree plane. The local
+read-only XNU backup shows that the generic platform expert promotes root
+children to nubs but does not recursively promote arbitrary nested nodes, so
+matching the generated PCI child directly would never attach there. The exact
+pinned source-XNU/QEMU run must still verify this lookup. The owner requires the
+exact coherent, untranslated QEMU host contract, maps the 1-MiB bus-0 ECAM
+slice, scans config space by xHCI identity/class without writing it,
+and refuses a missing or disabled firmware-assigned BAR0. The BAR must be a
+64-bit, non-prefetchable, aligned 16-KiB memory range wholly contained in one
+validated PCI window. The service maps only that translated BAR and exposes
+guarded, aligned, bounds-checked MMIO callbacks; it does not start the
+controller. A bound callback retains the mapping until the caller proves the
+controller stopped and revokes the guard.
+
+The owner, PCI scanner, DMA bypass adapter, personality entry and archive symbol
+checks execute in host production-body models. Clang/GCC owner models, the
+personality replay test and the complete Dali suite pass. This remains model
+evidence: no macOS source-XNU compile/link or QEMU USB controller runtime has
+been run for the owner. The MT6991 mapper-backed path is unchanged, and no
+physical device was accessed.

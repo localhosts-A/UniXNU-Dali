@@ -9,6 +9,8 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODMACommand.h>
 #include <IOKit/IOMapper.h>
+#include <IOKit/IODeviceTreeSupport.h>
+#include <libkern/c++/OSData.h>
 
 #include "DaliUsbXhciDma.hpp"
 
@@ -21,6 +23,67 @@ struct dali_usb_xhci_dma_allocation {
     size_t size;
     bool descriptor_attached;
 };
+
+static bool
+contains_compatible(const OSData *property, const char *expected, size_t expected_length)
+{
+    if (!property || !expected || !expected_length || !property->getBytesNoCopy()) return false;
+    const auto *bytes = static_cast<const uint8_t *>(property->getBytesNoCopy());
+    const size_t length = property->getLength();
+    size_t offset = 0;
+    while (offset < length) {
+        size_t end = offset;
+        while (end < length && bytes[end] != 0) ++end;
+        if (end == length) return false;
+        if (end - offset == expected_length &&
+            __builtin_memcmp(bytes + offset, expected, expected_length) == 0) return true;
+        offset = end + 1;
+    }
+    return false;
+}
+
+static bool
+qemu_host_contract(IOService *platform)
+{
+    static constexpr char platform_device_type[] = "qemu-virt\0";
+    static constexpr char pci_device_type[] = "pci\0";
+    static constexpr char qemu_host_path[] = "/arm-io/qemu-pcie-host";
+    if (!platform) return false;
+    auto *platformType = OSDynamicCast(OSData, platform->getProperty("device_type"));
+    if (!platformType || platformType->getLength() != sizeof(platform_device_type) - 1u ||
+        __builtin_memcmp(platformType->getBytesNoCopy(), platform_device_type,
+                         sizeof(platform_device_type) - 1u) != 0) return false;
+
+    IORegistryEntry *host = IORegistryEntry::fromPath(qemu_host_path, gIODTPlane);
+    if (!host) return false;
+    auto *deviceType = OSDynamicCast(OSData, host->getProperty("device_type"));
+    auto *compatible = OSDynamicCast(OSData, host->getProperty("compatible"));
+    static constexpr char qemu_compatible[] = "qemu,virt-pcie-host";
+    static constexpr char generic_compatible[] = "pci-host-ecam-generic";
+    const bool hostPropertiesValid = deviceType &&
+        deviceType->getLength() == sizeof(pci_device_type) - 1u &&
+        __builtin_memcmp(deviceType->getBytesNoCopy(), pci_device_type,
+                         sizeof(pci_device_type) - 1u) == 0 &&
+        contains_compatible(compatible, qemu_compatible, sizeof(qemu_compatible) - 1) &&
+        contains_compatible(compatible, generic_compatible, sizeof(generic_compatible) - 1);
+    auto *coherent = OSDynamicCast(OSData, host->getProperty("dma-coherent"));
+    const bool untranslated = coherent && coherent->getLength() == 0 &&
+        host->getProperty("iommu-map") == nullptr &&
+        host->getProperty("iommu-map-mask") == nullptr &&
+        host->getProperty("iommus") == nullptr &&
+        host->getProperty("dma-ranges") == nullptr;
+    host->release();
+    if (!hostPropertiesValid || !untranslated)
+        return false;
+
+    /* Reject a host-specific mapper here. The bypass command probe below also
+     * rejects a system mapper, which IODMACommand will not bypass. */
+    auto mapper = IOMapper::copyMapperForDevice(platform);
+    if (mapper) return false;
+    auto probe = IODMACommand::withSpecification(
+        kIODMACommandOutputHost32, 32, 1, IODMACommand::kBypassed, 1, 1, nullptr);
+    return static_cast<bool>(probe);
+}
 
 static bool power_of_two(size_t value)
 {
@@ -92,7 +155,8 @@ static int allocate_dma(void *opaque, size_t size, size_t alignment, uint64_t li
 {
     auto *context = static_cast<struct dali_usb_xhci_dma_context *>(opaque);
     if (!out) return USB_INVALID;
-    if (!context || !context->active || context->faulted || !context->mapper) return USB_UNSUPPORTED;
+    if (!context || !context->active || context->faulted ||
+        (!context->mapper && !context->qemu_bypass)) return USB_UNSUPPORTED;
     if (!size || size > UINT32_MAX || !power_of_two(alignment) || alignment > UINT32_MAX ||
         limit != UINT32_MAX) return USB_RANGE;
 
@@ -101,11 +165,23 @@ static int allocate_dma(void *opaque, size_t size, size_t alignment, uint64_t li
     /* CPU virtual alignment and the controller's I/O bus address width are
      * separate constraints. Request CPU alignment here; the mapped DMA command
      * below independently enforces the 32-bit IOVA and bus alignment. */
-    auto memory = IOBufferMemoryDescriptor::withOptions(
-        memory_options, static_cast<vm_size_t>(size), static_cast<vm_offset_t>(alignment));
+    OSPtr<IOBufferMemoryDescriptor> memory;
+    if (context->qemu_bypass) {
+        /* Physical-mask allocation and large alignment are separate constraints
+         * in this XNU revision. Ask the allocator for contiguous aligned memory,
+         * then reject any segment outside the 32-bit window before exposing it. */
+        memory = OSMakeShared<IOBufferMemoryDescriptor>();
+        if (!memory || !memory->initWithPhysicalMask(nullptr, memory_options,
+                static_cast<mach_vm_size_t>(size), static_cast<mach_vm_address_t>(alignment), 0))
+            return USB_NO_MEMORY;
+    } else {
+        memory = IOBufferMemoryDescriptor::withOptions(
+            memory_options, static_cast<vm_size_t>(size), static_cast<vm_offset_t>(alignment));
+    }
     if (!memory) return USB_NO_MEMORY;
     auto command = IODMACommand::withSpecification(
-        kIODMACommandOutputHost32, 32, static_cast<UInt64>(size), IODMACommand::kMapped,
+        kIODMACommandOutputHost32, 32, static_cast<UInt64>(size),
+        context->qemu_bypass ? IODMACommand::kBypassed : IODMACommand::kMapped,
         static_cast<UInt64>(size), static_cast<UInt32>(alignment), context->mapper);
     if (!command) return USB_NO_MEMORY;
 
@@ -201,7 +277,8 @@ static int sync_dma(void *opaque, struct usb_dma_buffer *buffer, size_t offset,
 extern "C" bool
 dali_usb_xhci_dma_init(struct dali_usb_xhci_dma_context *context, IOService *device)
 {
-    if (!context || !device || context->active || context->mapper || context->allocations || context->faulted)
+    if (!context || !device || context->active || context->mapper || context->allocations ||
+        context->faulted || context->qemu_bypass)
         return false;
     auto mapper = IOMapper::copyMapperForDevice(device);
     if (!mapper) return false;
@@ -212,9 +289,20 @@ dali_usb_xhci_dma_init(struct dali_usb_xhci_dma_context *context, IOService *dev
 }
 
 extern "C" bool
+dali_usb_xhci_dma_init_qemu(struct dali_usb_xhci_dma_context *context, IOService *host)
+{
+    if (!context || !host || context->active || context->mapper || context->allocations ||
+        context->faulted || context->qemu_bypass || !qemu_host_contract(host)) return false;
+    context->qemu_bypass = true;
+    context->active = true;
+    return true;
+}
+
+extern "C" bool
 dali_usb_xhci_dma_get_ops(struct dali_usb_xhci_dma_context *context, struct usb_dma_ops *out)
 {
-    if (!context || !out || !context->active || context->faulted || !context->mapper) return false;
+    if (!context || !out || !context->active || context->faulted ||
+        (!context->mapper && !context->qemu_bypass)) return false;
     struct usb_dma_ops ops = {};
     ops.context = context;
     ops.qualified = true;
@@ -237,5 +325,6 @@ dali_usb_xhci_dma_stop(struct dali_usb_xhci_dma_context *context)
     context->mapper = nullptr;
     context->active = false;
     context->faulted = false;
+    context->qemu_bypass = false;
     return true;
 }
