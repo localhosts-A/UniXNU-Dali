@@ -123,8 +123,10 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertIn("com.apple.filesystems.apfs", prelink["roots"])
         self.assertIn("com.apple.security.AppleImage4", prelink["roots"])
         self.assertIn("com.apple.iokit.IOSurface", prelink["roots"])
-        self.assertIn("Audit pinned 21H461 prelink candidate", (ROOT / ".github/workflows/dali-xnu.yml").read_text())
-        self.assertIn("dali-ipados-prelink-audit-not-for-device", (ROOT / ".github/workflows/dali-xnu.yml").read_text())
+        self.assertIn("Audit pinned 21H461 prelink candidate",
+                      (ROOT / ".github/workflows/dali-xnu.yml").read_text())
+        self.assertIn("dali-ipados-prelink-audit-not-for-device",
+                      (ROOT / ".github/workflows/dali-xnu.yml").read_text())
         adt = self.board["payload"]["adt"]
         self.assertEqual(adt["root_match_volume_uuid"], "04769D26-2CA0-4825-B443-E2E5F88300F2")
         for key in ("unique_chip_id", "ipad_identity", "chip_id"):
@@ -134,6 +136,19 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertIn("CONFIG_XNU_SOURCE_STORAGE_FAMILY=y", config)
         self.assertNotIn("CONFIG_XNU_NATIVE_UFS=y", config)
         self.assertNotIn("CONFIG_XNU_TRUST_CACHE_RUNTIME=y", config)
+
+    def test_donor_runtime_profile_selects_the_original_executable_storage_bundle(self):
+        board = tomllib.loads((ROOT / "board.toml").read_text())
+        profile = board["kernel"]["prelink"]["profiles"]["donor-runtime-audit"]
+        self.assertEqual(profile["add_roots"], ["com.apple.iokit.IOStorageFamily"])
+        self.assertEqual(profile["source_interfaces"], [])
+        self.assertEqual(profile["source_interface_bindings"], [])
+
+        config = (ROOT / "configs/dali_ipados_donor_runtime_defconfig").read_text()
+        self.assertIn("# CONFIG_XNU_SOURCE_STORAGE_FAMILY is not set", config)
+        self.assertNotIn("libDaliUfs.a", config)
+        self.assertNotIn("libVerifiedRootDali.a", config)
+        self.assertIn("libDaliBootLog.a", config)
 
 
 if __name__ == "__main__":

@@ -120,10 +120,12 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("CONFIG_XNU_DALI_OWNER_PUBLIC_KEY=", boot_profile)
 
     def test_root_policy_action_adds_audit_qemu_but_no_device_artifact(self):
-        self.assertIn("options: [reset-qualification, pid1, ipados-root-compile, ipados-root-policy-compile]", self.workflow)
+        self.assertIn("options: [reset-qualification, pid1, ipados-root-compile, ipados-root-policy-compile, ipados-donor-runtime-audit]", self.workflow)
         self.assertIn('profile == "ipados-root-compile"', self.workflow)
         self.assertIn('profile == "ipados-root-policy-compile"', self.workflow)
         self.assertIn('defconfig = "dali_ipados_root_boot_defconfig"', self.workflow)
+        self.assertIn('profile == "ipados-donor-runtime-audit"', self.workflow)
+        self.assertIn('defconfig = "dali_ipados_donor_runtime_defconfig"', self.workflow)
         self.assertIn("Build pinned OS and SystemOS root windows", self.workflow)
         self.assertIn("Build metadata-preserving skip-setup Data seed candidate", self.workflow)
         self.assertIn('sudo env PYTHONDONTWRITEBYTECODE=1', self.workflow)
@@ -138,6 +140,10 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("--prelink-report", self.workflow)
         self.assertIn("--prelink-verification", self.workflow)
         self.assertIn("dali-ipados-prelink-qemu-not-for-device", self.workflow)
+        self.assertIn("Probe donor IOStorageFamily runtime metaclasses in QEMU", self.workflow)
+        self.assertIn("--donor-runtime-audit", self.workflow)
+        self.assertIn('--config "$UNIXNU_OUT/dali/.config"', self.workflow)
+        self.assertIn("dali-ipados-donor-runtime-audit-not-for-device", self.workflow)
         self.assertNotIn('rm -rf "$UNIXNU_OUT/ipsw', self.workflow)
         darwinboot_step = self.workflow.split("- name: Build DarwinBoot", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn('build_root="$GITHUB_WORKSPACE/UniXNU/build"', darwinboot_step)
@@ -147,6 +153,7 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertLess(darwinboot_step.index('sudo chown -R'), darwinboot_step.index('mkdir -p "$output_dir"'))
         device_artifact = self.workflow.split("- name: Validate and stage the one-day kernel artifact", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("env.VALIDATION_PROFILE != 'ipados-root-policy-compile'", device_artifact)
+        self.assertIn("env.VALIDATION_PROFILE != 'ipados-donor-runtime-audit'", device_artifact)
         xnu_step = self.workflow.split("- name: Build and validate source-only XNU", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("UNIXNU_SOURCE_ROOT: ${{ github.workspace }}/UniXNU", xnu_step)
         self.assertIn("PYTHONDONTWRITEBYTECODE: '1'", xnu_step)

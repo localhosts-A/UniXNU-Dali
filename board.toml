@@ -36,7 +36,7 @@ windows = [
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-unixnu_commit = "7c5f9e0234156af8b2ea6b89067a4891d4f2a165"
+unixnu_commit = "904c0b6d465203310d323bf850d1cefae047f85a"
 uefi_commit = "b53c48dd0664cb2a945eb6b8ca1194a0bae0fe84"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
@@ -201,6 +201,14 @@ roots = [
   "com.apple.iokit.IOHIDFamily",
   "com.apple.iokit.IOHIDEventDriver",
 ]
+
+[kernel.prelink.profiles.donor-runtime-audit]
+# This isolated profile keeps the original executable donor bundle so its live
+# OSMetaClass objects can be read at the AMFI diagnostic stop. Its source-XNU
+# defconfig disables the replacement IOStorageFamily and DaliUfs link inputs.
+add_roots = ["com.apple.iokit.IOStorageFamily"]
+source_interfaces = []
+source_interface_bindings = []
 
 [payload]
 volume = "DALI-XNU"

@@ -6,6 +6,7 @@ import struct
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,7 +103,7 @@ class PrelinkQemuTests(unittest.TestCase):
             "slide": report["slide"],
             "component_closure_verified": True,
             "pointer_table_rebindings_verified": len(report["bindings"]),
-            "source_interface_bindings_verified": len(cls.board["kernel"]["prelink"]["source_interface_bindings"]),
+            "source_interface_bindings_verified": len(report.get("source_interface_bindings", [])),
             "component_headers_and_bytes_verified": len(report["components"]),
             "kmod_and_sparse_index_verified": True,
             "instruction_relocation_complete": False,
@@ -141,6 +142,13 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertEqual(len(DALI_QEMU.source_storage_metaclass_read_args()), 10)
         for _, symbol, _ in DALI_QEMU.SOURCE_STORAGE_METACLASSES:
             self.assertIn(f"{symbol}:0x28", DALI_QEMU.source_storage_metaclass_read_args())
+        self.assertEqual(len(DALI_QEMU.donor_storage_metaclass_read_args()), 12)
+        self.assertIn("--read-memory", DALI_QEMU.donor_storage_metaclass_read_args())
+        self.assertIn("--read-kernel-symbol", DALI_QEMU.donor_storage_metaclass_read_args())
+        self.assertIn("parser.add_argument('--read-memory', action='append'", probe_source)
+        self.assertIn("gdb_command += ['--read-memory', request]", probe_source)
+        self.assertIn("expected_donor_runtime_terminal", source)
+        self.assertIn('validate_donor_runtime_audit_candidate(', source)
         self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
         self.assertIn("validate_prelink_structure_audit(kernel, prelink_report, verification_path)", source)
 
@@ -199,10 +207,129 @@ class PrelinkQemuTests(unittest.TestCase):
             verification_path.write_text(json.dumps({**verification, "candidate_sha256": "0" * 64}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
-
             verification_path.write_text(json.dumps({**verification, "abi_qualified": True}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
+
+    def make_donor_report(self, kernel, native_kernel):
+        return {
+            "candidate_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+            "native_sha256": hashlib.sha256(native_kernel.read_bytes()).hexdigest(),
+            "original_sha256": self.KERNELCACHE_SHA256,
+            "slide": int(self.board["kernel"]["prelink"]["slide"], 0),
+            "instruction_relocation_complete": False,
+            "abi_qualified": False,
+            "runtime_qualified": False,
+            "loadable": False,
+            "source_interfaces": [],
+            "source_interface_bindings": [],
+            "bindings": [{"target": 0x1000, "new_target": 0x2000, "kind": "component"}],
+            "components": [self.STORAGE_ID],
+            "codeless_components": [],
+            "source_interface_transform": {
+                "version": 2,
+                "original_kernelcache_sha256": self.KERNELCACHE_SHA256,
+                "rewritten_prelink_input_sha256": self.KERNELCACHE_SHA256,
+                "entries": {},
+            },
+        }
+
+    def test_donor_runtime_candidate_keeps_original_kext_and_excludes_native_classes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            kernel = root / "kernel.macho"
+            native = root / "native.macho"
+            config = root / "config"
+            report_path = root / "kernel.json"
+            kernel.write_bytes(b"donor runtime candidate")
+            native.write_bytes(b"native kernel without IOStorageFamily")
+            config.write_text(
+                "# CONFIG_XNU_SOURCE_STORAGE_FAMILY is not set\n"
+                "# CONFIG_XNU_VERIFIED_ROOT_PROVIDER is not set\n"
+                'CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a"\n'
+            )
+            report = self.make_donor_report(kernel, native)
+            report_path.write_text(json.dumps(report))
+            symbol_output = f"{0xfffffff00c147638:016x} S {DALI_QEMU.IO_SERVICE_METACLASS_SYMBOL}\n"
+            with mock.patch.object(DALI_QEMU.subprocess, "check_output", return_value=symbol_output):
+                parsed = DALI_QEMU.validate_donor_runtime_audit_candidate(
+                    kernel, report_path, native, config)
+            self.assertIs(parsed["loadable"], False)
+
+            verification_path = root / "kernel.verification.json"
+            verification_path.write_text(json.dumps(self.make_verification(kernel, report)))
+            checked = DALI_QEMU.validate_prelink_structure_audit(
+                kernel, report, verification_path, expected_map_count=0)
+            self.assertEqual(checked["source_interface_bindings_verified"], 0)
+            self.assertIs(checked["loadable"], False)
+
+            for bad_report in (
+                {**report, "codeless_components": [self.STORAGE_ID]},
+                {**report, "source_interfaces": [self.STORAGE_ID]},
+                {**report, "abi_qualified": True},
+                {**report, "loadable": True},
+            ):
+                report_path.write_text(json.dumps(bad_report))
+                with mock.patch.object(DALI_QEMU.subprocess, "check_output", return_value=symbol_output), \
+                        self.assertRaises(SystemExit):
+                    DALI_QEMU.validate_donor_runtime_audit_candidate(kernel, report_path, native, config)
+
+            config.write_text(config.read_text().replace("# CONFIG_XNU_SOURCE_STORAGE_FAMILY is not set",
+                                                       "CONFIG_XNU_SOURCE_STORAGE_FAMILY=y"))
+            report_path.write_text(json.dumps(report))
+            with mock.patch.object(DALI_QEMU.subprocess, "check_output", return_value=symbol_output), \
+                    self.assertRaises(SystemExit):
+                DALI_QEMU.validate_donor_runtime_audit_candidate(kernel, report_path, native, config)
+
+    def test_donor_runtime_metaclass_capture_checks_size_parent_and_pointers_only(self):
+        service_address = 0xfffffff00c147638
+        requests = DALI_QEMU.donor_storage_metaclass_requests()
+        memory = {}
+        for index, (class_name, symbol, class_size) in enumerate(DALI_QEMU.SOURCE_STORAGE_METACLASSES, start=1):
+            raw = bytearray(DALI_QEMU.OSMETA_CLASS_OBJECT_BYTES)
+            struct.pack_into("<Q", raw, 0x00, 0xfffffff007000000 + index * 0x100)
+            if DALI_QEMU.DONOR_STORAGE_PARENTS[class_name] == DALI_QEMU.IO_SERVICE_METACLASS_SYMBOL:
+                parent = service_address
+            else:
+                parent = requests["IOStorage"]["runtime_va"]
+            struct.pack_into("<Q", raw, 0x10, parent)
+            struct.pack_into("<Q", raw, 0x18, 0xfffffff007100000 + index * 0x100)
+            struct.pack_into("<I", raw, 0x20, class_size)
+            memory[requests[class_name]["request"]] = raw.hex()
+        service = bytearray(DALI_QEMU.OSMETA_CLASS_OBJECT_BYTES)
+        memory_raw = {"memory": memory, "requested_kernel_symbols": {
+            DALI_QEMU.IO_SERVICE_METACLASS_SYMBOL: service.hex(),
+        }}
+        nm = f"{service_address:016x} S {DALI_QEMU.IO_SERVICE_METACLASS_SYMBOL}\n"
+        with mock.patch.object(DALI_QEMU.subprocess, "check_output", return_value=nm):
+            observation = DALI_QEMU.inspect_donor_storage_metaclasses(memory_raw, Path("native.macho"))
+        self.assertTrue(observation["capture_complete"])
+        self.assertTrue(observation["all_class_sizes_match_expected"])
+        self.assertTrue(observation["all_required_pointers_nonzero"])
+        self.assertTrue(observation["all_superclasses_match_expected"])
+        self.assertTrue(observation["source_io_service_metaclass_matches_native_symbol"])
+        self.assertFalse(observation["abi_qualified"])
+        self.assertFalse(observation["loadable"])
+
+        first = DALI_QEMU.SOURCE_STORAGE_METACLASSES[0][0]
+        damaged = dict(memory)
+        raw = bytearray.fromhex(damaged[requests[first]["request"]])
+        struct.pack_into("<I", raw, 0x20, 0xDEAD)
+        damaged[requests[first]["request"]] = raw.hex()
+        with mock.patch.object(DALI_QEMU.subprocess, "check_output", return_value=nm):
+            mismatch = DALI_QEMU.inspect_donor_storage_metaclasses(
+                {"memory": damaged, "requested_kernel_symbols": memory_raw["requested_kernel_symbols"]},
+                Path("native.macho"))
+        self.assertFalse(mismatch["all_class_sizes_match_expected"])
+        self.assertFalse(mismatch["abi_qualified"])
+
+    def test_expected_donor_runtime_stop_is_limited_to_the_known_amfi_panic(self):
+        report = {"stop_symbol": "_panic", "panic_caller_component": {
+            "module": "com.apple.driver.AppleMobileFileIntegrity"}}
+        self.assertTrue(DALI_QEMU.expected_donor_runtime_terminal(report, "AMFI: No PMGR?"))
+        self.assertFalse(DALI_QEMU.expected_donor_runtime_terminal(report, "unrelated AMFI panic"))
+        self.assertFalse(DALI_QEMU.expected_donor_runtime_terminal(
+            {**report, "stop_symbol": "_Assert"}, "AMFI: No PMGR?"))
 
     def test_candidate_rejects_hash_mapping_and_loadability_tampering(self):
         with tempfile.TemporaryDirectory() as temp:

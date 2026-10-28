@@ -1,0 +1,18 @@
+# Isolated compile/QEMU audit profile for the original 21H461 IOStorageFamily.
+# It intentionally omits the source replacement and Dali UFS block provider so
+# the donor classes can register without duplicate OSMetaClass definitions.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_SOURCE_ENTITLEMENT_FREE=y
+# CONFIG_XNU_SOURCE_STORAGE_FAMILY is not set
+# CONFIG_XNU_VERIFIED_ROOT_PROVIDER is not set
+# CONFIG_XNU_OWNER_ROOT_AUDIT is not set
+# CONFIG_XNU_OWNER_ROOT_TRUST is not set
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a"
+CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a"

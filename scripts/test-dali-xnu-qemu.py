@@ -20,6 +20,7 @@ from dali_ipados_trust_cache import parse_bundle
 IMAGE4_CRYPTO_HASH_METHOD = "sha2-384"
 AMFI_ONLY_PLATFORM_CODE = True
 OSMETA_CLASS_OBJECT_BYTES = 0x28
+IO_SERVICE_METACLASS_SYMBOL = "__ZN9IOService10gMetaClassE"
 SOURCE_STORAGE_METACLASSES = (
     ("IOBlockStorageDevice", "__ZN20IOBlockStorageDevice10gMetaClassE", 0x90),
     ("IOMedia", "__ZN7IOMedia10gMetaClassE", 0xD0),
@@ -27,6 +28,13 @@ SOURCE_STORAGE_METACLASSES = (
     ("IOPartitionScheme", "__ZN17IOPartitionScheme10gMetaClassE", 0xB0),
     ("IOStorage", "__ZN9IOStorage10gMetaClassE", 0x90),
 )
+DONOR_STORAGE_PARENTS = {
+    "IOBlockStorageDevice": IO_SERVICE_METACLASS_SYMBOL,
+    "IOMedia": "__ZN9IOStorage10gMetaClassE",
+    "IOMediaBSDClient": IO_SERVICE_METACLASS_SYMBOL,
+    "IOPartitionScheme": "__ZN9IOStorage10gMetaClassE",
+    "IOStorage": IO_SERVICE_METACLASS_SYMBOL,
+}
 
 
 def validate_psci_abis(assembly):
@@ -162,6 +170,68 @@ def validate_prelink_audit_candidate(kernel, report_path):
     return report
 
 
+def validate_donor_runtime_audit_candidate(kernel, report_path, native_kernel, config_path):
+    """Require the isolated donor-executable profile and an unmodified source kernel."""
+    report = json.loads(report_path.read_text())
+    candidate_digest = hashlib.sha256(kernel.read_bytes()).hexdigest()
+    native_digest = hashlib.sha256(native_kernel.read_bytes()).hexdigest()
+    if report.get("candidate_sha256") != candidate_digest or report.get("native_sha256") != native_digest:
+        raise SystemExit("Donor-runtime prelink report does not bind these exact kernel files")
+    if any(report.get(key) is not False for key in (
+            "instruction_relocation_complete", "abi_qualified", "runtime_qualified", "loadable")):
+        raise SystemExit("Donor-runtime audit candidates must remain explicitly non-loadable")
+
+    board = tomllib.loads((DEVICE_ROOT / "board.toml").read_text())
+    base = board["kernel"]["prelink"]
+    profile = base.get("profiles", {}).get("donor-runtime-audit")
+    if not isinstance(profile, dict):
+        raise SystemExit("Dali board is missing the donor-runtime audit prelink profile")
+    storage = "com.apple.iokit.IOStorageFamily"
+    expected_cache = base.get("kernelcache_sha256")
+    transform = report.get("source_interface_transform", {})
+    if report.get("original_sha256") != expected_cache or \
+            transform.get("version") != 2 or \
+            transform.get("original_kernelcache_sha256") != expected_cache or \
+            transform.get("rewritten_prelink_input_sha256") != expected_cache or \
+            transform.get("entries") != {} or report.get("source_interfaces") != [] or \
+            report.get("source_interface_bindings") != [] or \
+            storage not in report.get("components", []) or storage in report.get("codeless_components", []):
+        raise SystemExit("Prelink report does not retain the original executable IOStorageFamily donor")
+
+    config = {}
+    for line in config_path.read_text().splitlines():
+        if line.startswith("CONFIG_") and "=" in line:
+            key, value = line.split("=", 1)
+            if value == "y":
+                config[key[7:]] = True
+            elif value == "n":
+                config[key[7:]] = False
+            elif value.startswith('"') and value.endswith('"'):
+                config[key[7:]] = value[1:-1]
+            else:
+                config[key[7:]] = value
+    for key in ("XNU_SOURCE_STORAGE_FAMILY", "XNU_VERIFIED_ROOT_PROVIDER",
+                "XNU_OWNER_ROOT_AUDIT", "XNU_OWNER_ROOT_TRUST"):
+        if config.get(key) in (True, 1, "1", "y"):
+            raise SystemExit(f"Donor-runtime defconfig must disable {key}")
+    archives = config.get("XNU_EXTRA_LD_ARCHIVES", "")
+    dependencies = config.get("XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES", "")
+    if any(name in archives or name in dependencies
+           for name in ("libIOStorageFamily.a", "libDaliUfs.a", "libVerifiedRootDali.a")):
+        raise SystemExit("Donor-runtime source link still contains a source storage/root archive")
+    symbols = subprocess.check_output(["llvm-nm", "--defined-only", native_kernel], text=True)
+    defined = {line.split()[-1] for line in symbols.splitlines() if line.split()}
+    class_symbols = {symbol for _, symbol, _ in SOURCE_STORAGE_METACLASSES}
+    class_symbols.update((
+        "__ZTV20IOBlockStorageDevice", "__ZTV7IOMedia", "__ZTV16IOMediaBSDClient",
+        "__ZTV17IOPartitionScheme", "__ZTV9IOStorage",
+    ))
+    duplicates = sorted(defined & class_symbols)
+    if duplicates:
+        raise SystemExit("Native source XNU still defines donor IOStorageFamily classes: " + ", ".join(duplicates))
+    return report
+
+
 def format_qemu_probe_failure(name, stdout, report_path, log_path):
     """Prefer the stop report's cause when a probe exits after its deadline."""
     try:
@@ -194,12 +264,20 @@ def format_qemu_probe_failure(name, stdout, report_path, log_path):
     return f"QEMU probe {name} failed; see {log_path}\n{stdout[-5000:]}"
 
 
-def validate_prelink_structure_audit(kernel, report, verification_path):
+def expected_donor_runtime_terminal(report, output):
+    caller = report.get("panic_caller_component", {}) if isinstance(report, dict) else {}
+    return (report.get("stop_symbol") == "_panic" and isinstance(caller, dict) and
+            caller.get("module") == "com.apple.driver.AppleMobileFileIntegrity" and
+            "AMFI: No PMGR?" in output)
+
+
+def validate_prelink_structure_audit(kernel, report, verification_path, expected_map_count=None):
     """Require the separate verifier's exact-image structural audit for QEMU diagnostics."""
     verification = json.loads(verification_path.read_text())
     digest = hashlib.sha256(kernel.read_bytes()).hexdigest()
     board = tomllib.loads((DEVICE_ROOT / 'board.toml').read_text())
-    expected_maps = len(board['kernel']['prelink'].get('source_interface_bindings', []))
+    expected_maps = (len(board['kernel']['prelink'].get('source_interface_bindings', []))
+                     if expected_map_count is None else expected_map_count)
     if verification.get('verification') != 'independent-prelink-structure-and-pointer-table' or \
             verification.get('candidate_sha256') != digest or \
             verification.get('native_sha256') != report.get('native_sha256') or \
@@ -243,6 +321,148 @@ def validate_trust_cache(path, expected_hashes):
 def source_storage_metaclass_read_args():
     return [argument for _, symbol, _ in SOURCE_STORAGE_METACLASSES
             for argument in ("--read-kernel-symbol", f"{symbol}:0x{OSMETA_CLASS_OBJECT_BYTES:x}")]
+
+
+def donor_storage_metaclass_requests():
+    board = tomllib.loads((DEVICE_ROOT / "board.toml").read_text())
+    prelink = board["kernel"]["prelink"]
+    slide = int(prelink["slide"], 0)
+    bindings = {}
+    for entry in prelink.get("source_interface_bindings", []):
+        symbol = entry["symbol"]
+        if symbol in {item[1] for item in SOURCE_STORAGE_METACLASSES}:
+            if symbol in bindings:
+                raise SystemExit(f"Duplicate donor metaclass address for {symbol}")
+            bindings[symbol] = int(entry["donor_va"], 0)
+    requests = {}
+    for class_name, symbol, _ in SOURCE_STORAGE_METACLASSES:
+        if symbol not in bindings:
+            raise SystemExit(f"Missing pinned donor metaclass address for {symbol}")
+        donor_va = bindings[symbol]
+        runtime_va = donor_va + slide
+        if not 0 <= runtime_va < 1 << 64 or runtime_va + OSMETA_CLASS_OBJECT_BYTES > 1 << 64:
+            raise SystemExit(f"Invalid slid donor metaclass address for {symbol}")
+        requests[class_name] = {
+            "symbol": symbol,
+            "donor_va": donor_va,
+            "runtime_va": runtime_va,
+            "request": f"{runtime_va:x}:{OSMETA_CLASS_OBJECT_BYTES:x}",
+        }
+    return requests
+
+
+def donor_storage_metaclass_read_args():
+    arguments = []
+    for request in donor_storage_metaclass_requests().values():
+        arguments += ["--read-memory", request["request"]]
+    arguments += ["--read-kernel-symbol", f"{IO_SERVICE_METACLASS_SYMBOL}:0x{OSMETA_CLASS_OBJECT_BYTES:x}"]
+    return arguments
+
+
+def inspect_donor_storage_metaclasses(report, native_kernel):
+    """Decode live donor objects and verify their size and known superclass links only."""
+    memory = report.get("memory", {}) if isinstance(report, dict) else {}
+    requested_symbols = report.get("requested_kernel_symbols", {}) if isinstance(report, dict) else {}
+    if not isinstance(memory, dict):
+        memory = {}
+    if not isinstance(requested_symbols, dict):
+        requested_symbols = {}
+    requests = donor_storage_metaclass_requests()
+    errors = []
+    service_raw = requested_symbols.get(IO_SERVICE_METACLASS_SYMBOL)
+    try:
+        service_data = bytes.fromhex(service_raw) if isinstance(service_raw, str) else b""
+    except ValueError:
+        service_data = b""
+    if len(service_data) != OSMETA_CLASS_OBJECT_BYTES:
+        errors.append("IOService: missing or malformed source-kernel superclass metaclass")
+
+    names = subprocess.check_output(["llvm-nm", "--defined-only", native_kernel], text=True)
+    symbol_addresses = {}
+    for line in names.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[-1] == IO_SERVICE_METACLASS_SYMBOL:
+            try:
+                symbol_addresses[IO_SERVICE_METACLASS_SYMBOL] = int(fields[0], 16)
+            except ValueError:
+                pass
+    expected_service_address = symbol_addresses.get(IO_SERVICE_METACLASS_SYMBOL, 0)
+    if not expected_service_address:
+        errors.append("IOService: exact native XNU metaclass symbol is missing")
+
+    classes = {}
+    for class_name, _, expected_size in SOURCE_STORAGE_METACLASSES:
+        request = requests[class_name]
+        raw = memory.get(request["request"])
+        try:
+            data = bytes.fromhex(raw) if isinstance(raw, str) else b""
+        except ValueError:
+            data = b""
+        record = {
+            "symbol": request["symbol"],
+            "donor_link_address": hex(request["donor_va"]),
+            "runtime_address": hex(request["runtime_va"]),
+            "read_request": request["request"],
+            "expected_class_size_bytes": expected_size,
+            "expected_superclass_symbol": DONOR_STORAGE_PARENTS[class_name],
+            "available": False,
+        }
+        if len(data) != OSMETA_CLASS_OBJECT_BYTES:
+            errors.append(f"{class_name}: missing or malformed donor runtime metaclass object")
+        else:
+            vtable = struct.unpack_from("<Q", data, 0)[0]
+            superclass = struct.unpack_from("<Q", data, 0x10)[0]
+            class_name_symbol = struct.unpack_from("<Q", data, 0x18)[0]
+            class_size = struct.unpack_from("<I", data, 0x20)[0]
+            if DONOR_STORAGE_PARENTS[class_name] == IO_SERVICE_METACLASS_SYMBOL:
+                expected_superclass = expected_service_address
+            else:
+                parent = requests["IOStorage"]
+                expected_superclass = parent["runtime_va"]
+            record.update({
+                "available": True,
+                "raw_hex": data.hex(),
+                "vtable_pointer": hex(vtable),
+                "superclass_metaclass_pointer": hex(superclass),
+                "class_name_symbol_pointer": hex(class_name_symbol),
+                "class_size_bytes": class_size,
+                "class_size_nonzero": class_size > 0,
+                "class_size_matches_expected": class_size == expected_size,
+                "required_pointers_nonzero": bool(vtable and superclass and class_name_symbol),
+                "superclass_matches_expected": bool(expected_superclass and superclass == expected_superclass),
+            })
+            if class_size != expected_size:
+                errors.append(f"{class_name}: donor runtime class size differs from pinned source layout")
+            if not class_size:
+                errors.append(f"{class_name}: donor runtime class size was not initialized")
+            if not (vtable and superclass and class_name_symbol):
+                errors.append(f"{class_name}: donor runtime metaclass has a null required pointer")
+            if not record["superclass_matches_expected"]:
+                errors.append(f"{class_name}: donor runtime superclass pointer is unexpected")
+        classes[class_name] = record
+
+    complete = all(record["available"] for record in classes.values())
+    return {
+        "schema": "dali-donor-runtime-metaclass-observation-v1",
+        "object_bytes": OSMETA_CLASS_OBJECT_BYTES,
+        "classes": classes,
+        "capture_complete": complete,
+        "all_class_sizes_nonzero": complete and all(
+            record.get("class_size_nonzero") is True for record in classes.values()),
+        "all_class_sizes_match_expected": complete and all(
+            record.get("class_size_matches_expected") is True for record in classes.values()),
+        "all_required_pointers_nonzero": complete and all(
+            record.get("required_pointers_nonzero") is True for record in classes.values()),
+        "all_superclasses_match_expected": complete and all(
+            record.get("superclass_matches_expected") is True for record in classes.values()),
+        "source_io_service_metaclass_matches_native_symbol": bool(
+            expected_service_address and len(service_data) == OSMETA_CLASS_OBJECT_BYTES),
+        "errors": errors,
+        "donor_runtime_comparison_available": True,
+        "complete_abi_qualified": False,
+        "abi_qualified": False,
+        "loadable": False,
+    }
 
 
 def inspect_source_storage_metaclasses(report):
@@ -383,6 +603,12 @@ def main():
                         help="Exact report for a diagnostic-only, explicitly non-loadable candidate")
     parser.add_argument("--prelink-verification", type=Path,
                         help="Independent structural/pointer-table verification for the exact candidate")
+    parser.add_argument("--donor-runtime-audit", action="store_true",
+                        help="Capture original IOStorageFamily runtime metaclasses; never qualifies the candidate")
+    parser.add_argument("--native-kernel", type=Path,
+                        help="Exact source-only XNU input for the donor-runtime audit")
+    parser.add_argument("--config", type=Path,
+                        help="Selected source-XNU defconfig for the donor-runtime audit")
     parser.add_argument("--trust-cache", type=Path,
                         help="Exact board-pinned original iPadOS trust-cache bundle for DarwinBoot handoff")
     parser.add_argument("--uefi-efi", type=Path, required=True)
@@ -399,7 +625,21 @@ def main():
     prelink_report_sha256 = None
     prelink_verification = None
     prelink_verification_sha256 = None
-    if args.prelink_report:
+    if args.donor_runtime_audit:
+        if not args.prelink_report or not args.prelink_verification:
+            parser.error("the donor-runtime audit requires the exact prelink report and structural verification")
+        if args.trust_cache:
+            parser.error("the donor-runtime audit does not consume or qualify a trust-cache input")
+        if not args.native_kernel or not args.native_kernel.is_file() or not args.config or not args.config.is_file():
+            parser.error("the donor-runtime audit requires the exact native kernel and selected defconfig")
+        prelink_report = validate_donor_runtime_audit_candidate(
+            kernel, args.prelink_report.resolve(), args.native_kernel.resolve(), args.config.resolve())
+        prelink_report_sha256 = hashlib.sha256(args.prelink_report.read_bytes()).hexdigest()
+        verification_path = args.prelink_verification.resolve()
+        prelink_verification = validate_prelink_structure_audit(
+            kernel, prelink_report, verification_path, expected_map_count=0)
+        prelink_verification_sha256 = hashlib.sha256(verification_path.read_bytes()).hexdigest()
+    elif args.prelink_report:
         report_path = args.prelink_report.resolve()
         prelink_report = validate_prelink_audit_candidate(kernel, report_path)
         prelink_report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
@@ -412,6 +652,8 @@ def main():
             parser.error("the pinned iPadOS prelink probe requires the board trust-cache bundle")
     elif args.prelink_verification:
         parser.error("an independent prelink verification requires its candidate report")
+    elif args.native_kernel or args.config:
+        parser.error("--native-kernel and --config are only valid for --donor-runtime-audit")
     board = tomllib.loads((DEVICE_ROOT / "board.toml").read_text())
     trust_cache = (validate_trust_cache(args.trust_cache.resolve(), board["payload"]["trust_cache_sha256"])
                    if args.trust_cache else None)
@@ -444,7 +686,9 @@ def main():
         "cpu": "__ZN6ArmCpu5startEP9IOService",
         "timer": "_rtclock_intr",
     }
-    if trust_cache and prelink_report:
+    if args.donor_runtime_audit:
+        cases["donor-runtime"] = "_load_static_trust_cache"
+    elif trust_cache and prelink_report:
         cases["trust-cache"] = "_load_static_trust_cache"
     reports = {}
     for name, symbol in cases.items():
@@ -456,27 +700,53 @@ def main():
                         "--trace-symbol", "_trust_cache_runtime_init",
                         "--trace-symbol", "_load_static_trust_cache"]
             command += source_storage_metaclass_read_args()
+        if name == "donor-runtime":
+            command += donor_storage_metaclass_read_args()
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
         (output / f"{name}.log").parent.mkdir(parents=True, exist_ok=True)
         (output / f"{name}.log").write_text(result.stdout)
         report_path = destination / "gdb-stop.json"
         probe_report = None
         metaclass_observation = None
+        donor_runtime_observation = None
+        expected_donor_stop = False
         if report_path.is_file():
             probe_report = json.loads(report_path.read_text())
             if name == "trust-cache" and prelink_report:
                 metaclass_observation = inspect_source_storage_metaclasses(probe_report)
                 probe_report["source_storage_metaclass_observation"] = metaclass_observation
                 report_path.write_text(json.dumps(probe_report, indent=2) + "\n")
+            if name == "donor-runtime" and prelink_report:
+                donor_runtime_observation = inspect_donor_storage_metaclasses(probe_report, args.native_kernel.resolve())
+                probe_report["donor_storage_metaclass_observation"] = donor_runtime_observation
+                report_path.write_text(json.dumps(probe_report, indent=2) + "\n")
         if result.returncode:
-            message = format_qemu_probe_failure(name, result.stdout, report_path, output / f"{name}.log")
-            if metaclass_observation is not None:
-                message += "\nSource storage metaclass observation: " + json.dumps(
-                    metaclass_observation, sort_keys=True)
-            raise SystemExit(message)
+            expected_donor_stop = (args.donor_runtime_audit and name == "donor-runtime" and
+                                   probe_report is not None and
+                                   expected_donor_runtime_terminal(probe_report, result.stdout))
+            if expected_donor_stop:
+                print("QEMU reached the expected AMFI No-PMGR diagnostic stop after the donor runtime capture.")
+            else:
+                message = format_qemu_probe_failure(name, result.stdout, report_path, output / f"{name}.log")
+                if metaclass_observation is not None:
+                    message += "\nSource storage metaclass observation: " + json.dumps(
+                        metaclass_observation, sort_keys=True)
+                if donor_runtime_observation is not None:
+                    message += "\nDonor storage metaclass observation: " + json.dumps(
+                        donor_runtime_observation, sort_keys=True)
+                raise SystemExit(message)
         if not report_path.is_file():
             raise SystemExit(f"QEMU probe {name} did not produce {report_path}")
         reports[name] = probe_report
+        if name == "donor-runtime":
+            if not donor_runtime_observation or \
+                    donor_runtime_observation.get("capture_complete") is not True or \
+                    donor_runtime_observation.get("all_class_sizes_nonzero") is not True or \
+                    donor_runtime_observation.get("all_required_pointers_nonzero") is not True:
+                raise SystemExit("QEMU did not capture five initialized original donor runtime metaclass objects: " +
+                                 json.dumps(donor_runtime_observation, sort_keys=True))
+            if result.returncode and not expected_donor_stop:
+                raise SystemExit("Donor runtime probe failed outside the expected AMFI diagnostic stop")
         if reports[name].get('kernel_arguments') != kernel_args:
             raise SystemExit(f'{name}: QEMU did not use the hardware allocation arguments')
         shutil.rmtree(destination / "esp", ignore_errors=True)
@@ -488,7 +758,10 @@ def main():
         if report.get("bounded_timeout_interrupted") or not report.get("native_4k_mmu_observed"):
             raise SystemExit(f"{name}: native XNU initialization or bounded handoff failed")
         validate_corecrypto_state(report, prelink_report is not None)
-        if report.get("pc") != report.get("function_return_target"):
+        if name == "donor-runtime" and expected_donor_stop:
+            if not expected_donor_runtime_terminal(report, (output / "donor-runtime.log").read_text()):
+                raise SystemExit("Donor runtime probe did not stop at the expected AMFI No-PMGR checkpoint")
+        elif report.get("pc") != report.get("function_return_target"):
             raise SystemExit(f"{name}: QEMU stopped before returning from the selected XNU checkpoint")
         pthread = report.get("pthread_globals", {})
         if int(pthread.get("_source_pthread_status", -1)) != 0 or \
@@ -567,6 +840,19 @@ def main():
         "source_storage_metaclass_observation": (
             reports.get("trust-cache", {}).get("source_storage_metaclass_observation")
             if trust_cache and prelink_report else None),
+        "donor_runtime_metaclass_observation": (
+            reports.get("donor-runtime", {}).get("donor_storage_metaclass_observation")
+            if args.donor_runtime_audit else None),
+        "donor_runtime_capture_complete": bool(
+            reports.get("donor-runtime", {}).get("donor_storage_metaclass_observation", {}).get("capture_complete")
+            if args.donor_runtime_audit else False),
+        "donor_runtime_source_layout_matches": bool(
+            reports.get("donor-runtime", {}).get("donor_storage_metaclass_observation", {}).get(
+                "all_class_sizes_match_expected") and
+            reports.get("donor-runtime", {}).get("donor_storage_metaclass_observation", {}).get(
+                "all_superclasses_match_expected") if args.donor_runtime_audit else False),
+        "donor_runtime_expected_amfi_stop": expected_donor_stop if args.donor_runtime_audit else False,
+        "donor_runtime_abi_qualified": False,
         "hardware_kernel_arguments": board_args,
         "default_kalloc_budget_assertion_reproduced": budget_control["assertion_reproduced"],
         "default_kalloc_budget_control": budget_control,
@@ -582,7 +868,10 @@ def main():
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    print("PASS: DarwinBoot -> source XNU, one QEMU CPU, Apple DT platform, GIC, timer, and trust-cache checkpoint")
+    if args.donor_runtime_audit:
+        print("PASS: donor runtime metaclasses captured; candidate remains ABI-unqualified and not for device")
+    else:
+        print("PASS: DarwinBoot -> source XNU, one QEMU CPU, Apple DT platform, GIC, timer, and trust-cache checkpoint")
 
 
 if __name__ == "__main__":

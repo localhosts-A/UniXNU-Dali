@@ -112,9 +112,13 @@ class SourceGraphTests(unittest.TestCase):
     def test_selected_validation_profile_invalidates_only_kernel_cache(self):
         base = self.keys(profile="reset-qualification")
         root = self.keys(profile="ipados-root-compile")
+        donor = self.keys(profile="ipados-donor-runtime-audit")
         self.assertNotEqual(base["kernel"], root["kernel"])
+        self.assertNotEqual(root["kernel"], donor["kernel"])
         self.assertEqual(base["feeds"], root["feeds"])
         self.assertEqual(base["edk"], root["edk"])
+        self.assertEqual(root["feeds"], donor["feeds"])
+        self.assertEqual(root["edk"], donor["edk"])
 
     def test_dirty_or_untracked_input_is_rejected(self):
         (self.device / "local.toml").write_text("local overrides")
