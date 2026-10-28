@@ -145,6 +145,7 @@ class IpadosProfileTests(unittest.TestCase):
         self.assertEqual(profile["source_interface_bindings"], [])
 
         config = (ROOT / "configs/dali_ipados_donor_runtime_defconfig").read_text()
+        self.assertIn("CONFIG_XNU_SOURCE_MOCKFS=y", config)
         self.assertIn("# CONFIG_XNU_SOURCE_STORAGE_FAMILY is not set", config)
         self.assertNotIn("libDaliUfs.a", config)
         self.assertNotIn("libVerifiedRootDali.a", config)
