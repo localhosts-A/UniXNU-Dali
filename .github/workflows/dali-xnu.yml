@@ -360,7 +360,9 @@ jobs:
           path: |
             UniXNU/out/dali/kernel/kernel.macho
             UniXNU/out/dali/kernel/kernel.json
+            UniXNU/out/dali/kernel/kernel.verification.json
             UniXNU/out/dali/logs/prelink.log
+            UniXNU/out/dali/logs/prelink-verification.log
           if-no-files-found: warn
           retention-days: 1
 
@@ -414,6 +416,7 @@ jobs:
             --unixnu "$GITHUB_WORKSPACE/UniXNU" \
             --kernel "$UNIXNU_OUT/dali/kernel/kernel.macho" \
             --prelink-report "$UNIXNU_OUT/dali/kernel/kernel.json" \
+            --prelink-verification "$UNIXNU_OUT/dali/kernel/kernel.verification.json" \
             --trust-cache "$UNIXNU_OUT/dali/ipados-trust-cache/trust-cache.bundle" \
             --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
             --output-dir "$RUNNER_TEMP/dali-ipados-prelink-qemu"

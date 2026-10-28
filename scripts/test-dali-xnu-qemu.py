@@ -153,6 +153,31 @@ def validate_prelink_audit_candidate(kernel, report_path):
     return report
 
 
+def validate_prelink_structure_audit(kernel, report, verification_path):
+    """Require the separate verifier's exact-image structural audit for QEMU diagnostics."""
+    verification = json.loads(verification_path.read_text())
+    digest = hashlib.sha256(kernel.read_bytes()).hexdigest()
+    board = tomllib.loads((DEVICE_ROOT / 'board.toml').read_text())
+    expected_maps = len(board['kernel']['prelink'].get('source_interface_bindings', []))
+    if verification.get('verification') != 'independent-prelink-structure-and-pointer-table' or \
+            verification.get('candidate_sha256') != digest or \
+            verification.get('native_sha256') != report.get('native_sha256') or \
+            verification.get('original_sha256') != report.get('original_sha256') or \
+            verification.get('slide') != report.get('slide'):
+        raise SystemExit('Independent prelink verification does not bind the exact candidate and inputs')
+    if verification.get('component_closure_verified') is not True or \
+            verification.get('kmod_and_sparse_index_verified') is not True or \
+            verification.get('component_headers_and_bytes_verified') != len(report.get('components', [])) or \
+            verification.get('source_interface_bindings_verified') != expected_maps or \
+            type(verification.get('pointer_table_rebindings_verified')) is not int or \
+            verification['pointer_table_rebindings_verified'] < 1:
+        raise SystemExit('Independent prelink structural audit is incomplete')
+    if any(verification.get(key) is not False for key in
+           ('instruction_relocation_complete', 'abi_qualified', 'runtime_qualified', 'loadable')):
+        raise SystemExit('Structural audit cannot promote instruction, ABI, runtime, or loadability gates')
+    return verification
+
+
 def validate_corecrypto_state(report, require_prelinked_provider):
     if not report.get("crypto14_initialization_observed"):
         raise SystemExit("QEMU did not observe initialized corecrypto and PRNG state")
@@ -263,6 +288,8 @@ def main():
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--prelink-report", type=Path,
                         help="Exact report for a diagnostic-only, explicitly non-loadable candidate")
+    parser.add_argument("--prelink-verification", type=Path,
+                        help="Independent structural/pointer-table verification for the exact candidate")
     parser.add_argument("--trust-cache", type=Path,
                         help="Exact board-pinned original iPadOS trust-cache bundle for DarwinBoot handoff")
     parser.add_argument("--uefi-efi", type=Path, required=True)
@@ -273,12 +300,21 @@ def main():
     kernel = args.kernel.resolve()
     prelink_report = None
     prelink_report_sha256 = None
+    prelink_verification = None
+    prelink_verification_sha256 = None
     if args.prelink_report:
         report_path = args.prelink_report.resolve()
         prelink_report = validate_prelink_audit_candidate(kernel, report_path)
         prelink_report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        if not args.prelink_verification:
+            parser.error("the pinned iPadOS prelink probe requires the independent structural verification")
+        verification_path = args.prelink_verification.resolve()
+        prelink_verification = validate_prelink_structure_audit(kernel, prelink_report, verification_path)
+        prelink_verification_sha256 = hashlib.sha256(verification_path.read_bytes()).hexdigest()
         if not args.trust_cache:
             parser.error("the pinned iPadOS prelink probe requires the board trust-cache bundle")
+    elif args.prelink_verification:
+        parser.error("an independent prelink verification requires its candidate report")
     board = tomllib.loads((DEVICE_ROOT / "board.toml").read_text())
     trust_cache = (validate_trust_cache(args.trust_cache.resolve(), board["payload"]["trust_cache_sha256"])
                    if args.trust_cache else None)
@@ -405,6 +441,8 @@ def main():
         "kernel_sha256": hashes.pop(),
         "kernel_kind": "prelink-audit-candidate" if prelink_report else "source-xnu",
         "prelink_report_sha256": prelink_report_sha256,
+        "prelink_verification_sha256": prelink_verification_sha256,
+        "prelink_structure_verified": bool(prelink_verification),
         "candidate_loadable": prelink_report.get("loadable") if prelink_report else None,
         "diagnostic_only": bool(prelink_report),
         "image4_crypto_hash_method": IMAGE4_CRYPTO_HASH_METHOD if prelink_report else None,

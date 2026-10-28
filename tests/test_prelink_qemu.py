@@ -67,7 +67,9 @@ class PrelinkQemuTests(unittest.TestCase):
         ]
         return {
             "candidate_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+            "native_sha256": "1" * 64,
             "original_sha256": cls.KERNELCACHE_SHA256,
+            "slide": int(cls.board["kernel"]["prelink"]["slide"], 0),
             "instruction_relocation_complete": False,
             "abi_qualified": False,
             "runtime_qualified": False,
@@ -89,6 +91,26 @@ class PrelinkQemuTests(unittest.TestCase):
             },
         }
 
+    @classmethod
+    def make_verification(cls, kernel, report):
+        return {
+            "schema": 1,
+            "verification": "independent-prelink-structure-and-pointer-table",
+            "native_sha256": report["native_sha256"],
+            "original_sha256": report["original_sha256"],
+            "candidate_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(),
+            "slide": report["slide"],
+            "component_closure_verified": True,
+            "pointer_table_rebindings_verified": len(report["bindings"]),
+            "source_interface_bindings_verified": len(cls.board["kernel"]["prelink"]["source_interface_bindings"]),
+            "component_headers_and_bytes_verified": len(report["components"]),
+            "kmod_and_sparse_index_verified": True,
+            "instruction_relocation_complete": False,
+            "abi_qualified": False,
+            "runtime_qualified": False,
+            "loadable": False,
+        }
+
     def test_prelink_qemu_captures_security_kext_panic_path(self):
         source = (ROOT / "scripts/test-dali-xnu-qemu.py").read_text()
 
@@ -97,6 +119,7 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertTrue(DALI_QEMU.AMFI_ONLY_PLATFORM_CODE)
         self.assertIn('"--amfi-platform-only",', source)
         self.assertIn('"--prelink-report", args.prelink_report.resolve()', source)
+        self.assertIn("verification_path = args.prelink_verification.resolve()", source)
         self.assertIn('"--trust-cache", args.trust_cache.resolve()', source)
         self.assertIn('if not args.trust_cache:', source)
         self.assertIn('report.get("trust_cache_bundle_sha256") != trust_cache["sha256"]', source)
@@ -109,6 +132,7 @@ class PrelinkQemuTests(unittest.TestCase):
                        "__ZN6OSKext5startEb", "__ZN12KLDBootstrap22loadSecurityExtensionsEv"):
             self.assertIn(f'"--trace-symbol", "{symbol}"', source)
         self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
+        self.assertIn("validate_prelink_structure_audit(kernel, prelink_report, verification_path)", source)
 
     def test_nonloadable_prelink_candidate_skips_source_allocator_negative_control(self):
         self.assertFalse(DALI_QEMU.should_run_default_budget_control({"loadable": False}))
@@ -148,6 +172,27 @@ class PrelinkQemuTests(unittest.TestCase):
             self.assertEqual(sum(item["target_kind"] == "code" for item in records), 73)
             self.assertEqual(sum(item["target_kind"] == "data_const" for item in records), 6)
             self.assertEqual(sum(item["target_kind"] == "data_rw" for item in records), 5)
+
+    def test_independent_structure_audit_binds_exact_candidate_and_keeps_loadability_false(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            kernel = root / "kernel.macho"
+            kernel.write_bytes(b"exact diagnostic candidate")
+            report = self.make_report(kernel)
+            verification_path = root / "kernel.verification.json"
+            verification = self.make_verification(kernel, report)
+            verification_path.write_text(json.dumps(verification))
+            checked = DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
+            self.assertEqual(checked["pointer_table_rebindings_verified"], 84)
+            self.assertIs(checked["loadable"], False)
+
+            verification_path.write_text(json.dumps({**verification, "candidate_sha256": "0" * 64}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
+
+            verification_path.write_text(json.dumps({**verification, "abi_qualified": True}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
 
     def test_candidate_rejects_hash_mapping_and_loadability_tampering(self):
         with tempfile.TemporaryDirectory() as temp:
