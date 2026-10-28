@@ -115,6 +115,7 @@ class IpadosProfileTests(unittest.TestCase):
             "0xfffffff007add360": "__ZN9IOStorage10gMetaClassE",
         })
         code_symbols = {entry["donor_va"]: entry["symbol"] for entry in bindings}
+        self.assertEqual(code_symbols["0xfffffff005975ecc"], "__ZN7IOMediaC1EPK11OSMetaClass")
         self.assertEqual(code_symbols["0xfffffff00597d9f8"], "__ZN9IOStorage8completeEP19IOStorageCompletioniy")
         self.assertEqual(code_symbols["0xfffffff00597dc64"],
                          "__ZN9IOStorage18getProvisionStatusEP9IOServiceyyPjP24IOStorageProvisionExtenty")

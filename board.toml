@@ -92,7 +92,8 @@ source_interface_bindings = [
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596f068", symbol = "__ZN20IOBlockStorageDevice13doSetPriorityEP26IOBlockStorageDeviceExtentjh" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596f074", symbol = "__ZN20IOBlockStorageDevice18doSynchronizeCacheEv" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff00596f08c", symbol = "__ZN20IOBlockStorageDevice20doGetProvisionStatusEyyPjP35IOBlockStorageProvisionDeviceExtenty" },
-  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005975ecc", symbol = "__ZN7IOMediaC1Ev" },
+  # The donor body forwards x1 as OSMetaClass* to IOStorageC2; APFS callsites set x1.
+  { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005975ecc", symbol = "__ZN7IOMediaC1EPK11OSMetaClass" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005975f0c", symbol = "__ZN7IOMediaD2Ev" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976084", symbol = "__ZNK7IOMedia11getProviderEv" },
   { bundle = "com.apple.iokit.IOStorageFamily", donor_va = "0xfffffff005976094", symbol = "__ZN7IOMedia18matchPropertyTableEP12OSDictionaryPi" },
