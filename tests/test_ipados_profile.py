@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import tomllib
 import unittest
 
@@ -25,6 +26,7 @@ class IpadosProfileTests(unittest.TestCase):
         board, ipsw = self.board["board"], self.board["ipsw"]
         self.assertEqual((board["name"], board["soc"]), ("dali", "MT6991"))
         self.assertEqual(self.board["firmware"]["uefi_commit"], STAGED_UEFI_COMMIT)
+        self.assertRegex(self.board["firmware"]["unixnu_commit"], r"^[0-9a-f]{40}$")
         self.assertEqual((ipsw["product"], ipsw["device_class"], ipsw["version"], ipsw["build"]),
                          ("iPad7,1", "j120ap", "17.7.11", "21H461"))
         self.assertEqual((ipsw["chip_id"], ipsw["board_id"]), (0x8011, 12))
