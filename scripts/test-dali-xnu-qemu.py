@@ -654,13 +654,20 @@ def validate_trust_cache_runtime(report, expected_sha256):
     if not isinstance(raw_events, list):
         raise SystemExit("Trust-cache runtime checkpoint has malformed trace events")
     events = [item.get("symbol") for item in raw_events if isinstance(item, dict)]
-    try:
-        runtime_init = events.index("_trust_cache_runtime_init")
-        static_load = events.index("_load_static_trust_cache")
-    except ValueError:
-        raise SystemExit("QEMU did not observe both trust-cache runtime initialization and ADT loading") from None
-    if runtime_init >= static_load:
-        raise SystemExit("XNU trust-cache loader ran before its runtime was initialized")
+    if "_trust_cache_runtime_init" not in events:
+        raise SystemExit("QEMU did not observe trust-cache runtime initialization")
+    if report.get("bounded_timeout_interrupted") is not False:
+        raise SystemExit("Trust-cache loader return was interrupted or timed out")
+    if report.get("stop_symbol") != "_load_static_trust_cache":
+        raise SystemExit("QEMU did not stop at the static trust-cache loader return")
+    if report.get("function_return_stack_matched") is not True:
+        raise SystemExit("Trust-cache loader return did not match the entered function stack")
+    entry = report.get("finished_function_entry")
+    return_target = report.get("function_return_target")
+    pc = report.get("pc")
+    if not isinstance(entry, str) or not entry.startswith("0x") or \
+            not isinstance(return_target, str) or return_target != pc:
+        raise SystemExit("Trust-cache loader return lacks a matching entry/return checkpoint")
     return {
         "bundle_sha256": expected_sha256,
         "runtime_init_observed": True,
@@ -735,14 +742,19 @@ def inspect_amfi_pmgr_runtime(report, prelink_report):
             record["provider_pointer"] = hex(int.from_bytes(bytes.fromhex(raw), "little"))
         provider_fields[label] = record
     safe_cast = events.get("safeMetaCast-return", {}).get("x0")
+    missing_trace_points = [
+        {"pc": hex(address), "event": label}
+        for address, label in AMFI_PMGRAUDIT_TRACE_POINTS if address not in by_pc
+    ]
     return {
         "candidate_sha256": report["kernel_sha256"],
         "original_kernelcache_sha256": prelink_report.get("original_sha256"),
         "original_amfi_component_sha256": AMFI_PMGRAUDIT_COMPONENT_SHA256,
         "events": events,
+        "missing_trace_points": missing_trace_points,
         "provider_field_reads": provider_fields,
         "safe_meta_cast_succeeded": (int(safe_cast, 16) != 0) if isinstance(safe_cast, str) else None,
-        "trace_complete": all(label in events for _, label in AMFI_PMGRAUDIT_TRACE_POINTS),
+        "trace_complete": not missing_trace_points,
         "amfi_modified": False,
         "hardware_qualified": False,
         "abi_qualified": False,

@@ -227,6 +227,7 @@ class PrelinkQemuTests(unittest.TestCase):
         report = {"kernel_sha256": candidate_sha, "trace_events": events}
         observation = DALI_QEMU.inspect_amfi_pmgr_runtime(report, prelink)
         self.assertTrue(observation["trace_complete"])
+        self.assertEqual(observation["missing_trace_points"], [])
         self.assertTrue(observation["safe_meta_cast_succeeded"])
         self.assertEqual(observation["provider_field_reads"]["read-entry-provider"]["provider_pointer"],
                          "0xfffffff004000200")
@@ -236,6 +237,11 @@ class PrelinkQemuTests(unittest.TestCase):
         partial = DALI_QEMU.inspect_amfi_pmgr_runtime(
             {"kernel_sha256": candidate_sha, "trace_events": events[:4]}, prelink)
         self.assertFalse(partial["trace_complete"])
+        self.assertEqual(
+            partial["missing_trace_points"],
+            [{"pc": hex(address), "event": label}
+             for address, label in DALI_QEMU.AMFI_PMGRAUDIT_TRACE_POINTS[4:]],
+        )
         self.assertIsNone(partial["provider_field_reads"]["read-entry-provider"].get("provider_pointer"))
 
     def test_nonloadable_prelink_candidate_skips_source_allocator_negative_control(self):
@@ -565,10 +571,13 @@ class PrelinkQemuTests(unittest.TestCase):
         valid = {
             "trust_cache_bundle_sha256": digest,
             "requested_kernel_symbols": {"_trust_cache_static_loaded": "01"},
-            "trace_events": [
-                {"symbol": "_trust_cache_runtime_init"},
-                {"symbol": "_load_static_trust_cache"},
-            ],
+            "trace_events": [{"symbol": "_trust_cache_runtime_init"}],
+            "bounded_timeout_interrupted": False,
+            "stop_symbol": "_load_static_trust_cache",
+            "function_return_stack_matched": True,
+            "finished_function_entry": "0xfffffff00bd18bec",
+            "function_return_target": "0xfffffff00bfd4564",
+            "pc": "0xfffffff00bfd4564",
         }
         result = DALI_QEMU.validate_trust_cache_runtime(valid, digest)
         self.assertTrue(result["adt_handoff_verified"])
@@ -578,11 +587,12 @@ class PrelinkQemuTests(unittest.TestCase):
         for invalid in (
             {**valid, "trust_cache_bundle_sha256": "0" * 64},
             {**valid, "requested_kernel_symbols": {"_trust_cache_static_loaded": "00"}},
-            {**valid, "trace_events": [{"symbol": "_load_static_trust_cache"}]},
-            {**valid, "trace_events": [
-                {"symbol": "_load_static_trust_cache"},
-                {"symbol": "_trust_cache_runtime_init"},
-            ]},
+            {**valid, "trace_events": []},
+            {**valid, "stop_symbol": "_panic"},
+            {**valid, "bounded_timeout_interrupted": True},
+            {**valid, "function_return_stack_matched": False},
+            {**valid, "pc": "0xfffffff00bfd4560"},
+            {**valid, "finished_function_entry": None},
         ):
             with self.subTest(invalid=invalid), self.assertRaises(SystemExit):
                 DALI_QEMU.validate_trust_cache_runtime(invalid, digest)
