@@ -20,6 +20,10 @@ from dali_ipados_trust_cache import parse_bundle
 IMAGE4_CRYPTO_HASH_METHOD = "sha2-384"
 AMFI_ONLY_PLATFORM_CODE = True
 OSMETA_CLASS_OBJECT_BYTES = 0x28
+OSMETA_CLASS_NAME_FIELD_OFFSET = 0x18
+OSSTRING_METADATA_OFFSET = 0x10
+OSSTRING_METADATA_BYTES = 0x10
+OSMETA_CLASS_VTABLE_PREFIX_BYTES = 0x40
 IO_SERVICE_METACLASS_SYMBOL = "__ZN9IOService10gMetaClassE"
 SOURCE_STORAGE_METACLASSES = (
     ("IOBlockStorageDevice", "__ZN20IOBlockStorageDevice10gMetaClassE", 0x90),
@@ -318,9 +322,47 @@ def validate_trust_cache(path, expected_hashes):
     return {"sha256": digest, "modules": modules}
 
 
-def source_storage_metaclass_read_args():
-    return [argument for _, symbol, _ in SOURCE_STORAGE_METACLASSES
-            for argument in ("--read-kernel-symbol", f"{symbol}:0x{OSMETA_CLASS_OBJECT_BYTES:x}")]
+def source_storage_metaclass_requests(kernel):
+    names = {symbol for _, symbol, _ in SOURCE_STORAGE_METACLASSES}
+    output = subprocess.check_output(["llvm-nm", "--defined-only", str(kernel)], text=True)
+    addresses = {}
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 3 or fields[-1] not in names:
+            continue
+        symbol = fields[-1]
+        if symbol in addresses:
+            raise SystemExit(f"Duplicate source metaclass symbol address for {symbol}")
+        try:
+            addresses[symbol] = int(fields[0], 16)
+        except ValueError:
+            raise SystemExit(f"Invalid source metaclass symbol address for {symbol}") from None
+    requests = {}
+    for class_name, symbol, _ in SOURCE_STORAGE_METACLASSES:
+        address = addresses.get(symbol)
+        if address is None or not 0 <= address < 1 << 64:
+            raise SystemExit(f"Missing source metaclass symbol address for {symbol}")
+        name_field = address + OSMETA_CLASS_NAME_FIELD_OFFSET
+        if name_field + 8 > 1 << 64 or address + OSMETA_CLASS_VTABLE_PREFIX_BYTES > 1 << 64:
+            raise SystemExit(f"Invalid bounded source metaclass read range for {symbol}")
+        requests[class_name] = {
+            "symbol": symbol,
+            "runtime_va": address,
+            "class_name_metadata_request": (
+                f"{name_field:x}:{OSSTRING_METADATA_OFFSET:x}:{OSSTRING_METADATA_BYTES:x}"),
+            "vtable_prefix_request": f"{address:x}:0:{OSMETA_CLASS_VTABLE_PREFIX_BYTES:x}",
+        }
+    return requests
+
+
+def source_storage_metaclass_read_args(kernel):
+    requests = source_storage_metaclass_requests(kernel)
+    arguments = [argument for _, symbol, _ in SOURCE_STORAGE_METACLASSES
+                 for argument in ("--read-kernel-symbol", f"{symbol}:0x{OSMETA_CLASS_OBJECT_BYTES:x}")]
+    for request in requests.values():
+        arguments += ["--read-indirect-optional", request["class_name_metadata_request"]]
+        arguments += ["--read-indirect-optional", request["vtable_prefix_request"]]
+    return arguments
 
 
 def donor_storage_metaclass_requests():
@@ -340,13 +382,20 @@ def donor_storage_metaclass_requests():
             raise SystemExit(f"Missing pinned donor metaclass address for {symbol}")
         donor_va = bindings[symbol]
         runtime_va = donor_va + slide
-        if not 0 <= runtime_va < 1 << 64 or runtime_va + OSMETA_CLASS_OBJECT_BYTES > 1 << 64:
+        name_field = runtime_va + OSMETA_CLASS_NAME_FIELD_OFFSET
+        if (not 0 <= runtime_va < 1 << 64 or
+                runtime_va + OSMETA_CLASS_OBJECT_BYTES > 1 << 64 or
+                name_field + 8 > 1 << 64 or
+                runtime_va + OSMETA_CLASS_VTABLE_PREFIX_BYTES > 1 << 64):
             raise SystemExit(f"Invalid slid donor metaclass address for {symbol}")
         requests[class_name] = {
             "symbol": symbol,
             "donor_va": donor_va,
             "runtime_va": runtime_va,
             "request": f"{runtime_va:x}:{OSMETA_CLASS_OBJECT_BYTES:x}",
+            "class_name_metadata_request": (
+                f"{name_field:x}:{OSSTRING_METADATA_OFFSET:x}:{OSSTRING_METADATA_BYTES:x}"),
+            "vtable_prefix_request": f"{runtime_va:x}:0:{OSMETA_CLASS_VTABLE_PREFIX_BYTES:x}",
         }
     return requests
 
@@ -355,12 +404,53 @@ def donor_storage_metaclass_read_args():
     arguments = []
     for request in donor_storage_metaclass_requests().values():
         arguments += ["--read-memory", request["request"]]
+        arguments += ["--read-indirect-optional", request["class_name_metadata_request"]]
+        arguments += ["--read-indirect-optional", request["vtable_prefix_request"]]
     arguments += ["--read-kernel-symbol", f"{IO_SERVICE_METACLASS_SYMBOL}:0x{OSMETA_CLASS_OBJECT_BYTES:x}"]
     return arguments
 
 
+def inspect_indirect_metaclass_reads(report, class_name, requests):
+    """Retain bounded raw OSSymbol metadata and nested MetaClass vtable bytes."""
+    captured = report.get("requested_indirect_memory", {}) if isinstance(report, dict) else {}
+    if not isinstance(captured, dict):
+        captured = {}
+
+    def decode(request, expected_bytes):
+        value = captured.get(request)
+        if not isinstance(value, dict):
+            return {"request": request, "available": False,
+                    "unavailable": "probe report has no matching indirect read"}
+        result = {"request": request, "pointer": value.get("pointer"),
+                  "address": value.get("address"), "available": False}
+        if value.get("unavailable"):
+            result["unavailable"] = value["unavailable"]
+            return result
+        raw = value.get("bytes")
+        try:
+            data = bytes.fromhex(raw) if isinstance(raw, str) else b""
+        except ValueError:
+            data = b""
+        if len(data) != expected_bytes:
+            result["unavailable"] = "indirect read returned a malformed byte range"
+            return result
+        result.update({"available": True, "raw_hex": data.hex()})
+        if expected_bytes == OSMETA_CLASS_VTABLE_PREFIX_BYTES:
+            result["entries"] = [hex(value) for value in struct.unpack("<8Q", data)]
+        return result
+
+    request = requests[class_name]
+    return {
+        "class_name_symbol_metadata": decode(
+            request["class_name_metadata_request"], OSSTRING_METADATA_BYTES),
+        "metaclass_vtable_prefix": decode(
+            request["vtable_prefix_request"], OSMETA_CLASS_VTABLE_PREFIX_BYTES),
+        "scope": "raw bounded reads only; OSSymbol string pointer is not authenticated or dereferenced",
+    }
+
+
 def inspect_donor_storage_metaclasses(report, native_kernel):
-    """Decode live donor objects and verify their size and known superclass links only."""
+    """Decode live donor objects; retain optional raw name metadata and vtable bytes."""
     memory = report.get("memory", {}) if isinstance(report, dict) else {}
     requested_symbols = report.get("requested_kernel_symbols", {}) if isinstance(report, dict) else {}
     if not isinstance(memory, dict):
@@ -431,6 +521,7 @@ def inspect_donor_storage_metaclasses(report, native_kernel):
                 "required_pointers_nonzero": bool(vtable and superclass and class_name_symbol),
                 "superclass_matches_expected": bool(expected_superclass and superclass == expected_superclass),
             })
+            record.update(inspect_indirect_metaclass_reads(report, class_name, requests))
             if class_size != expected_size:
                 errors.append(f"{class_name}: donor runtime class size differs from pinned source layout")
             if not class_size:
@@ -455,6 +546,12 @@ def inspect_donor_storage_metaclasses(report, native_kernel):
             record.get("required_pointers_nonzero") is True for record in classes.values()),
         "all_superclasses_match_expected": complete and all(
             record.get("superclass_matches_expected") is True for record in classes.values()),
+        "all_class_name_metadata_reads_available": complete and all(
+            record.get("class_name_symbol_metadata", {}).get("available") is True
+            for record in classes.values()),
+        "all_metaclass_vtable_prefix_reads_available": complete and all(
+            record.get("metaclass_vtable_prefix", {}).get("available") is True
+            for record in classes.values()),
         "source_io_service_metaclass_matches_native_symbol": bool(
             expected_service_address and len(service_data) == OSMETA_CLASS_OBJECT_BYTES),
         "errors": errors,
@@ -465,10 +562,11 @@ def inspect_donor_storage_metaclasses(report, native_kernel):
     }
 
 
-def inspect_source_storage_metaclasses(report):
-    """Decode live source-XNU OSMetaClass objects without promoting ABI status."""
+def inspect_source_storage_metaclasses(report, kernel):
+    """Decode source-XNU OSMetaClass objects plus optional bounded raw reads."""
     requested = report.get("requested_kernel_symbols") if isinstance(report, dict) else None
     requested = requested if isinstance(requested, dict) else {}
+    requests = source_storage_metaclass_requests(kernel)
     classes = {}
     errors = []
     for class_name, symbol, expected_size in SOURCE_STORAGE_METACLASSES:
@@ -494,6 +592,7 @@ def inspect_source_storage_metaclasses(report):
                 "class_size_matches_source_layout": class_size == expected_size,
                 "required_pointers_nonzero": bool(vtable and superclass and class_name_symbol),
             })
+            record.update(inspect_indirect_metaclass_reads(report, class_name, requests))
         classes[class_name] = record
     complete = all(record["available"] for record in classes.values())
     return {
@@ -505,6 +604,12 @@ def inspect_source_storage_metaclasses(report):
             record.get("class_size_matches_source_layout") is True for record in classes.values()),
         "all_required_pointers_nonzero": complete and all(
             record.get("required_pointers_nonzero") is True for record in classes.values()),
+        "all_class_name_metadata_reads_available": complete and all(
+            record.get("class_name_symbol_metadata", {}).get("available") is True
+            for record in classes.values()),
+        "all_metaclass_vtable_prefix_reads_available": complete and all(
+            record.get("metaclass_vtable_prefix", {}).get("available") is True
+            for record in classes.values()),
         "errors": errors,
         "donor_runtime_comparison_available": False,
         "abi_qualified": False,
@@ -699,7 +804,7 @@ def main():
             command += ["--read-kernel-symbol", "_trust_cache_static_loaded:1",
                         "--trace-symbol", "_trust_cache_runtime_init",
                         "--trace-symbol", "_load_static_trust_cache"]
-            command += source_storage_metaclass_read_args()
+            command += source_storage_metaclass_read_args(kernel)
         if name == "donor-runtime":
             command += donor_storage_metaclass_read_args()
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
@@ -713,7 +818,7 @@ def main():
         if report_path.is_file():
             probe_report = json.loads(report_path.read_text())
             if name == "trust-cache" and prelink_report:
-                metaclass_observation = inspect_source_storage_metaclasses(probe_report)
+                metaclass_observation = inspect_source_storage_metaclasses(probe_report, kernel)
                 probe_report["source_storage_metaclass_observation"] = metaclass_observation
                 report_path.write_text(json.dumps(probe_report, indent=2) + "\n")
             if name == "donor-runtime" and prelink_report:
