@@ -1,0 +1,27 @@
+version = 1
+
+[boot]
+timeout = 10
+default = "xnu"
+rotate = 0
+connect_all = false
+
+[ui]
+title = "iPadOS 17.7.11 / REDMI K80 Ultra"
+
+[kits]
+autoload = false
+
+[[entry]]
+id = "xnu"
+title = "iPadOS 17.7.11 (21H461)"
+type = "xnu"
+path = "Payloads/kernel.macho"
+initrd = "Payloads/root.img"
+args = "rd=md0 -v dali-earlyboot=1 dali-ipados-root=1 dali-pid1=1 kt_fixed_zones=120"
+
+[[entry]]
+id = "exit"
+title = "Return to firmware diagnostics"
+type = "action"
+action = "exit"

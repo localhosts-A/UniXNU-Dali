@@ -37,6 +37,16 @@ class IpadosProfileTests(unittest.TestCase):
         spec = self.board["userdata"]
         self.assertEqual(spec["partition_name"], "unixnu_data")
         self.assertEqual(spec["lun"], 2)
+
+    def test_ipados_boot_profile_uses_packed_data_seed_and_owner_root_gates(self):
+        spec = self.board["userdata"]
+        config = tomllib.loads((ROOT / "package/unixnu-ipados.toml").read_text())
+        xnu = [entry for entry in config["entry"] if entry.get("type") == "xnu"]
+        self.assertEqual(len(xnu), 1)
+        self.assertEqual(xnu[0]["initrd"], "Payloads/root.img")
+        self.assertIn("dali-ipados-root=1", xnu[0]["args"])
+        self.assertIn("dali-pid1=1", xnu[0]["args"])
+        self.assertNotIn("dali-run=", xnu[0]["args"])
         self.assertEqual((spec["first_lba"], spec["last_lba"], spec["lba_bytes"]),
                          (7_023_103, 15_403_518, 4096))
         self.assertEqual((spec["last_lba"] - spec["first_lba"] + 1) * spec["lba_bytes"],
