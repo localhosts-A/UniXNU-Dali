@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tomllib
@@ -18,6 +19,14 @@ from dali_ipados_trust_cache import parse_bundle
 
 IMAGE4_CRYPTO_HASH_METHOD = "sha2-384"
 AMFI_ONLY_PLATFORM_CODE = True
+OSMETA_CLASS_OBJECT_BYTES = 0x28
+SOURCE_STORAGE_METACLASSES = (
+    ("IOBlockStorageDevice", "__ZN20IOBlockStorageDevice10gMetaClassE", 0x90),
+    ("IOMedia", "__ZN7IOMedia10gMetaClassE", 0xD0),
+    ("IOMediaBSDClient", "__ZN16IOMediaBSDClient10gMetaClassE", 0xB0),
+    ("IOPartitionScheme", "__ZN17IOPartitionScheme10gMetaClassE", 0xB0),
+    ("IOStorage", "__ZN9IOStorage10gMetaClassE", 0x90),
+)
 
 
 def validate_psci_abis(assembly):
@@ -231,6 +240,58 @@ def validate_trust_cache(path, expected_hashes):
     return {"sha256": digest, "modules": modules}
 
 
+def source_storage_metaclass_read_args():
+    return [argument for _, symbol, _ in SOURCE_STORAGE_METACLASSES
+            for argument in ("--read-kernel-symbol", f"{symbol}:0x{OSMETA_CLASS_OBJECT_BYTES:x}")]
+
+
+def inspect_source_storage_metaclasses(report):
+    """Decode live source-XNU OSMetaClass objects without promoting ABI status."""
+    requested = report.get("requested_kernel_symbols") if isinstance(report, dict) else None
+    requested = requested if isinstance(requested, dict) else {}
+    classes = {}
+    errors = []
+    for class_name, symbol, expected_size in SOURCE_STORAGE_METACLASSES:
+        record = {"symbol": symbol, "expected_class_size_bytes": expected_size, "available": False}
+        raw = requested.get(symbol)
+        try:
+            data = bytes.fromhex(raw) if isinstance(raw, str) else b""
+        except ValueError:
+            data = b""
+        if len(data) != OSMETA_CLASS_OBJECT_BYTES:
+            errors.append(f"{class_name}: missing or malformed {OSMETA_CLASS_OBJECT_BYTES}-byte object")
+        else:
+            vtable = struct.unpack_from("<Q", data, 0)[0]
+            superclass = struct.unpack_from("<Q", data, 0x10)[0]
+            class_name_symbol = struct.unpack_from("<Q", data, 0x18)[0]
+            class_size = struct.unpack_from("<I", data, 0x20)[0]
+            record.update({
+                "available": True,
+                "vtable_pointer": hex(vtable),
+                "superclass_metaclass_pointer": hex(superclass),
+                "class_name_symbol_pointer": hex(class_name_symbol),
+                "class_size_bytes": class_size,
+                "class_size_matches_source_layout": class_size == expected_size,
+                "required_pointers_nonzero": bool(vtable and superclass and class_name_symbol),
+            })
+        classes[class_name] = record
+    complete = all(record["available"] for record in classes.values())
+    return {
+        "schema": "dali-source-storage-metaclass-observation-v1",
+        "object_bytes": OSMETA_CLASS_OBJECT_BYTES,
+        "classes": classes,
+        "capture_complete": complete,
+        "all_class_sizes_match_source_layout": complete and all(
+            record.get("class_size_matches_source_layout") is True for record in classes.values()),
+        "all_required_pointers_nonzero": complete and all(
+            record.get("required_pointers_nonzero") is True for record in classes.values()),
+        "errors": errors,
+        "donor_runtime_comparison_available": False,
+        "abi_qualified": False,
+        "loadable": False,
+    }
+
+
 def validate_trust_cache_runtime(report, expected_sha256):
     """Require the target XNU loader to consume the exact DarwinBoot ADT cache."""
     if not isinstance(report, dict) or report.get("trust_cache_bundle_sha256") != expected_sha256:
@@ -394,16 +455,28 @@ def main():
             command += ["--read-kernel-symbol", "_trust_cache_static_loaded:1",
                         "--trace-symbol", "_trust_cache_runtime_init",
                         "--trace-symbol", "_load_static_trust_cache"]
+            command += source_storage_metaclass_read_args()
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
         (output / f"{name}.log").parent.mkdir(parents=True, exist_ok=True)
         (output / f"{name}.log").write_text(result.stdout)
         report_path = destination / "gdb-stop.json"
+        probe_report = None
+        metaclass_observation = None
+        if report_path.is_file():
+            probe_report = json.loads(report_path.read_text())
+            if name == "trust-cache" and prelink_report:
+                metaclass_observation = inspect_source_storage_metaclasses(probe_report)
+                probe_report["source_storage_metaclass_observation"] = metaclass_observation
+                report_path.write_text(json.dumps(probe_report, indent=2) + "\n")
         if result.returncode:
-            raise SystemExit(format_qemu_probe_failure(
-                name, result.stdout, report_path, output / f"{name}.log"))
+            message = format_qemu_probe_failure(name, result.stdout, report_path, output / f"{name}.log")
+            if metaclass_observation is not None:
+                message += "\nSource storage metaclass observation: " + json.dumps(
+                    metaclass_observation, sort_keys=True)
+            raise SystemExit(message)
         if not report_path.is_file():
             raise SystemExit(f"QEMU probe {name} did not produce {report_path}")
-        reports[name] = json.loads(report_path.read_text())
+        reports[name] = probe_report
         if reports[name].get('kernel_arguments') != kernel_args:
             raise SystemExit(f'{name}: QEMU did not use the hardware allocation arguments')
         shutil.rmtree(destination / "esp", ignore_errors=True)
@@ -491,6 +564,9 @@ def main():
         "trust_cache_adt_handoff_verified": bool(trust_cache_runtime),
         "trust_cache_runtime_consumed": bool(trust_cache_runtime),
         "trust_cache_runtime_checkpoint": trust_cache_runtime,
+        "source_storage_metaclass_observation": (
+            reports.get("trust-cache", {}).get("source_storage_metaclass_observation")
+            if trust_cache and prelink_report else None),
         "hardware_kernel_arguments": board_args,
         "default_kalloc_budget_assertion_reproduced": budget_control["assertion_reproduced"],
         "default_kalloc_budget_control": budget_control,

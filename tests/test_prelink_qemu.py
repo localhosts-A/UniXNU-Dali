@@ -127,6 +127,8 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn('cases["trust-cache"] = "_load_static_trust_cache"', source)
         self.assertIn('validate_trust_cache_runtime(reports["trust-cache"], trust_cache["sha256"])', source)
         self.assertIn('"trust_cache_runtime_consumed": bool(trust_cache_runtime)', source)
+        self.assertIn('command += source_storage_metaclass_read_args()', source)
+        self.assertIn('"source_storage_metaclass_observation": (', source)
         self.assertIn('"--kext-logs"', source)
         self.assertIn('parser.add_argument("--qemu-firmware", type=Path', source)
         self.assertIn('common += ["--qemu-firmware", args.qemu_firmware.resolve()]', source)
@@ -136,6 +138,9 @@ class PrelinkQemuTests(unittest.TestCase):
         for symbol in ("_OSRuntimeInitializeCPP", "__ZN11OSMetaClass11postModLoadEPv",
                        "__ZN6OSKext5startEb", "__ZN12KLDBootstrap22loadSecurityExtensionsEv"):
             self.assertIn(f'"--trace-symbol", "{symbol}"', source)
+        self.assertEqual(len(DALI_QEMU.source_storage_metaclass_read_args()), 10)
+        for _, symbol, _ in DALI_QEMU.SOURCE_STORAGE_METACLASSES:
+            self.assertIn(f"{symbol}:0x28", DALI_QEMU.source_storage_metaclass_read_args())
         self.assertIn("validate_prelink_audit_candidate(kernel, report_path)", source)
         self.assertIn("validate_prelink_structure_audit(kernel, prelink_report, verification_path)", source)
 
@@ -313,6 +318,38 @@ class PrelinkQemuTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(SystemExit):
                 DALI_QEMU.validate_trust_cache_runtime(invalid, digest)
+
+    def test_source_storage_metaclass_snapshot_decodes_layout_but_never_qualifies_abi(self):
+        raw_objects = {}
+        for index, (_, symbol, class_size) in enumerate(DALI_QEMU.SOURCE_STORAGE_METACLASSES, start=1):
+            data = bytearray(DALI_QEMU.OSMETA_CLASS_OBJECT_BYTES)
+            struct.pack_into("<Q", data, 0x00, 0xfffffff00b000000 + index * 0x100)
+            struct.pack_into("<Q", data, 0x10, 0xfffffff00b001000 + index * 0x100)
+            struct.pack_into("<Q", data, 0x18, 0xfffffff00b002000 + index * 0x100)
+            struct.pack_into("<I", data, 0x20, class_size)
+            raw_objects[symbol] = data.hex()
+
+        observation = DALI_QEMU.inspect_source_storage_metaclasses({"requested_kernel_symbols": raw_objects})
+        self.assertTrue(observation["capture_complete"])
+        self.assertTrue(observation["all_class_sizes_match_source_layout"])
+        self.assertTrue(observation["all_required_pointers_nonzero"])
+        self.assertFalse(observation["abi_qualified"])
+        self.assertFalse(observation["loadable"])
+
+        wrong_size = dict(raw_objects)
+        first_symbol = DALI_QEMU.SOURCE_STORAGE_METACLASSES[0][1]
+        first = bytearray.fromhex(wrong_size[first_symbol])
+        struct.pack_into("<I", first, 0x20, 0xDEAD)
+        wrong_size[first_symbol] = first.hex()
+        mismatch = DALI_QEMU.inspect_source_storage_metaclasses({"requested_kernel_symbols": wrong_size})
+        self.assertTrue(mismatch["capture_complete"])
+        self.assertFalse(mismatch["all_class_sizes_match_source_layout"])
+        self.assertFalse(mismatch["abi_qualified"])
+
+        incomplete = DALI_QEMU.inspect_source_storage_metaclasses({"requested_kernel_symbols": {}})
+        self.assertFalse(incomplete["capture_complete"])
+        self.assertFalse(incomplete["all_class_sizes_match_source_layout"])
+        self.assertEqual(len(incomplete["errors"]), 5)
 
     def test_qemu_timeout_error_uses_the_bounded_stop_report(self):
         with tempfile.TemporaryDirectory() as temporary:
