@@ -174,6 +174,43 @@ def validate_trust_cache(path, expected_hashes):
     return {"sha256": digest, "modules": modules}
 
 
+def validate_trust_cache_runtime(report, expected_sha256):
+    """Require the target XNU loader to consume the exact DarwinBoot ADT cache."""
+    if not isinstance(report, dict) or report.get("trust_cache_bundle_sha256") != expected_sha256:
+        raise SystemExit("Trust-cache runtime checkpoint did not bind the pinned sidecar")
+    symbols = report.get("requested_kernel_symbols", {})
+    if not isinstance(symbols, dict):
+        raise SystemExit("Trust-cache runtime checkpoint has malformed symbol evidence")
+    raw_loaded = symbols.get("_trust_cache_static_loaded")
+    if not isinstance(raw_loaded, str) or len(raw_loaded) != 2:
+        raise SystemExit("Trust-cache runtime checkpoint omitted the actual static-loaded flag")
+    try:
+        loaded = bytes.fromhex(raw_loaded)
+    except ValueError:
+        raise SystemExit("Trust-cache runtime checkpoint returned malformed flag bytes") from None
+    if loaded != b"\x01":
+        raise SystemExit("XNU returned from the static trust-cache loader without loading an ADT cache")
+    raw_events = report.get("trace_events", [])
+    if not isinstance(raw_events, list):
+        raise SystemExit("Trust-cache runtime checkpoint has malformed trace events")
+    events = [item.get("symbol") for item in raw_events if isinstance(item, dict)]
+    try:
+        runtime_init = events.index("_trust_cache_runtime_init")
+        static_load = events.index("_load_static_trust_cache")
+    except ValueError:
+        raise SystemExit("QEMU did not observe both trust-cache runtime initialization and ADT loading") from None
+    if runtime_init >= static_load:
+        raise SystemExit("XNU trust-cache loader ran before its runtime was initialized")
+    return {
+        "bundle_sha256": expected_sha256,
+        "runtime_init_observed": True,
+        "adt_static_loader_returned": True,
+        "static_loaded_flag": 1,
+        "adt_handoff_verified": True,
+        "runtime_consumed": True,
+    }
+
+
 def validate_reset_instructions(kernel, output):
     """Require the real compiled call chain; source/compile success is insufficient."""
     output.mkdir(parents=True, exist_ok=True)
@@ -272,11 +309,17 @@ def main():
         "cpu": "__ZN6ArmCpu5startEP9IOService",
         "timer": "_rtclock_intr",
     }
+    if trust_cache and prelink_report:
+        cases["trust-cache"] = "_load_static_trust_cache"
     reports = {}
     for name, symbol in cases.items():
         destination = output / name
         command = [*common, "--kernel-base-args", kernel_args, "--require-crypto14", "--finish-function",
                    "--break-symbol", symbol, "--output", destination]
+        if name == "trust-cache":
+            command += ["--read-kernel-symbol", "_trust_cache_static_loaded:1",
+                        "--trace-symbol", "_trust_cache_runtime_init",
+                        "--trace-symbol", "_load_static_trust_cache"]
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=150)
         (output / f"{name}.log").parent.mkdir(parents=True, exist_ok=True)
         (output / f"{name}.log").write_text(result.stdout)
@@ -329,6 +372,9 @@ def main():
             timer.get("_armcpu_timer_interrupts", 0) < 1:
         raise SystemExit("QEMU did not deliver a real architectural timer interrupt through ArmCpu")
 
+    trust_cache_runtime = (validate_trust_cache_runtime(reports["trust-cache"], trust_cache["sha256"])
+                           if trust_cache and prelink_report else None)
+
     budget_control = {
         "status": "not-run",
         "assertion_reproduced": None,
@@ -365,8 +411,9 @@ def main():
         "amfi_only_platform_code": AMFI_ONLY_PLATFORM_CODE if prelink_report else None,
         "trust_cache_bundle_sha256": trust_cache["sha256"] if trust_cache else None,
         "trust_cache_module_count": len(trust_cache["modules"]) if trust_cache else None,
-        "trust_cache_adt_handoff_verified": False,
-        "trust_cache_runtime_consumed": False,
+        "trust_cache_adt_handoff_verified": bool(trust_cache_runtime),
+        "trust_cache_runtime_consumed": bool(trust_cache_runtime),
+        "trust_cache_runtime_checkpoint": trust_cache_runtime,
         "hardware_kernel_arguments": board_args,
         "default_kalloc_budget_assertion_reproduced": budget_control["assertion_reproduced"],
         "default_kalloc_budget_control": budget_control,
@@ -382,7 +429,7 @@ def main():
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    print("PASS: DarwinBoot -> source XNU, one QEMU CPU, Apple DT platform, GIC and timer interrupt")
+    print("PASS: DarwinBoot -> source XNU, one QEMU CPU, Apple DT platform, GIC, timer, and trust-cache checkpoint")
 
 
 if __name__ == "__main__":

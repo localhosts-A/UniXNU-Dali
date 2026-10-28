@@ -100,8 +100,9 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn('"--trust-cache", args.trust_cache.resolve()', source)
         self.assertIn('if not args.trust_cache:', source)
         self.assertIn('report.get("trust_cache_bundle_sha256") != trust_cache["sha256"]', source)
-        self.assertIn('"trust_cache_adt_handoff_verified": False', source)
-        self.assertIn('"trust_cache_runtime_consumed": False', source)
+        self.assertIn('cases["trust-cache"] = "_load_static_trust_cache"', source)
+        self.assertIn('validate_trust_cache_runtime(reports["trust-cache"], trust_cache["sha256"])', source)
+        self.assertIn('"trust_cache_runtime_consumed": bool(trust_cache_runtime)', source)
         self.assertIn('"--kext-logs"', source)
         self.assertIn('"--trace-symbol", "_register_and_init_prng"', source)
         for symbol in ("_OSRuntimeInitializeCPP", "__ZN11OSMetaClass11postModLoadEPv",
@@ -235,6 +236,33 @@ class PrelinkQemuTests(unittest.TestCase):
             path.write_bytes(b"invalid trust cache")
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_trust_cache(path, [hashlib.sha256(path.read_bytes()).hexdigest()])
+
+    def test_runtime_checkpoint_requires_xnu_to_load_the_exact_adt_cache(self):
+        digest = "a" * 64
+        valid = {
+            "trust_cache_bundle_sha256": digest,
+            "requested_kernel_symbols": {"_trust_cache_static_loaded": "01"},
+            "trace_events": [
+                {"symbol": "_trust_cache_runtime_init"},
+                {"symbol": "_load_static_trust_cache"},
+            ],
+        }
+        result = DALI_QEMU.validate_trust_cache_runtime(valid, digest)
+        self.assertTrue(result["adt_handoff_verified"])
+        self.assertTrue(result["runtime_consumed"])
+        self.assertEqual(result["static_loaded_flag"], 1)
+
+        for invalid in (
+            {**valid, "trust_cache_bundle_sha256": "0" * 64},
+            {**valid, "requested_kernel_symbols": {"_trust_cache_static_loaded": "00"}},
+            {**valid, "trace_events": [{"symbol": "_load_static_trust_cache"}]},
+            {**valid, "trace_events": [
+                {"symbol": "_load_static_trust_cache"},
+                {"symbol": "_trust_cache_runtime_init"},
+            ]},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(SystemExit):
+                DALI_QEMU.validate_trust_cache_runtime(invalid, digest)
 
 
 if __name__ == "__main__":
