@@ -406,6 +406,8 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertIn('--log-syscalls-after', command)
             self.assertEqual(command[command.index('--log-syscalls-after') + 1], '_load_init_program')
             self.assertNotIn('--log-kernel-strings-after', command)
+            traced = [command[index + 1] for index, value in enumerate(command[:-1]) if value == '--trace-symbol']
+            self.assertNotIn('_load_init_program', traced)
             for option in ('--finish-function', '--owner-root-accepted', '--native-user',
                            '--native-air-init', '--data-ramdisk'):
                 self.assertNotIn(option, command)
