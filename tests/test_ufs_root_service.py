@@ -122,7 +122,7 @@ class UfsRootServiceTests(unittest.TestCase):
         self.assertIn("CONFIG_XNU_DALI_OWNER_PUBLIC_KEY=", boot_profile)
 
     def test_root_policy_action_adds_audit_qemu_but_no_device_artifact(self):
-        self.assertIn("options: [reset-qualification, pid1, ipados-root-compile, ipados-root-policy-compile, ipados-donor-runtime-audit]", self.workflow)
+        self.assertIn("options: [reset-qualification, pid1, ipados-root-compile, ipados-root-policy-compile, ipados-donor-runtime-audit, ipados-qemu-root]", self.workflow)
         self.assertIn('profile == "ipados-root-compile"', self.workflow)
         self.assertIn('profile == "ipados-root-policy-compile"', self.workflow)
         self.assertIn('defconfig = "dali_ipados_root_boot_defconfig"', self.workflow)
