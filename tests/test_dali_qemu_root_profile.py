@@ -401,6 +401,8 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                            '--check-commpage', '--qemu-vmm-present', '--trust-cache'):
                 self.assertIn(option, command)
             self.assertIn('_trust_cache_static_loaded:1', command)
+            self.assertIn('--log-syscalls-after', command)
+            self.assertIn('--log-kernel-strings-after', command)
             for option in ('--finish-function', '--owner-root-accepted', '--native-user',
                            '--native-air-init', '--data-ramdisk'):
                 self.assertNotIn(option, command)

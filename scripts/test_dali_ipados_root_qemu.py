@@ -557,6 +557,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--trace-symbol', '_vfs_mountroot', '--trace-symbol', '_native_owner_root_checkpoint',
                '--trace-symbol', '_native_owner_root_accepted_checkpoint',
                '--trace-symbol', '_load_static_trust_cache', '--trace-symbol', '_load_init_program',
+               '--log-syscalls-after', '_load_init_program',
+               '--log-kernel-strings-after', '_load_init_program',
                '--kernel-base-args', '-v dali-earlyboot=1 kt_fixed_zones=120 serial=3 debug=0x14e',
                '--output', str(output)]
     if firmware is not None:
