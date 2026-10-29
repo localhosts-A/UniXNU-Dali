@@ -465,6 +465,13 @@ jobs:
         with:
           name: dali-ipados-prelink-qemu-not-for-device
           path: |
+            UniXNU/out/dali/kernel/kernel.macho
+            UniXNU/out/dali/kernel/kernel.json
+            UniXNU/out/dali/kernel/kernel.verification.json
+            UniXNU/out/dali/.config
+            UniXNU/out/dali/ipados-trust-cache/trust-cache.bundle
+            UniXNU/out/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi
+            UniXNU/build/DarwinBoot/DEBUG_CLANGPDB/AARCH64/DarwinBoot.efi
             ${{ runner.temp }}/dali-ipados-prelink-qemu/summary.json
             ${{ runner.temp }}/dali-ipados-prelink-qemu/*.log
             ${{ runner.temp }}/dali-ipados-prelink-qemu/*/gdb-stop.json

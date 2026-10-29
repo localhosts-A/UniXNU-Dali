@@ -72,6 +72,7 @@ class PrelinkQemuTests(unittest.TestCase):
             "original_sha256": cls.KERNELCACHE_SHA256,
             "slide": int(cls.board["kernel"]["prelink"]["slide"], 0),
             "instruction_relocation_complete": False,
+            "register_dataflow_qualified": False,
             "abi_qualified": False,
             "runtime_qualified": False,
             "loadable": False,
@@ -107,6 +108,7 @@ class PrelinkQemuTests(unittest.TestCase):
             "component_headers_and_bytes_verified": len(report["components"]),
             "kmod_and_sparse_index_verified": True,
             "instruction_relocation_complete": False,
+            "register_dataflow_qualified": False,
             "abi_qualified": False,
             "runtime_qualified": False,
             "loadable": False,
@@ -386,12 +388,21 @@ class PrelinkQemuTests(unittest.TestCase):
             verification_path.write_text(json.dumps(verification))
             checked = DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
             self.assertEqual(checked["pointer_table_rebindings_verified"], 84)
+            self.assertIs(checked["register_dataflow_qualified"], False)
             self.assertIs(checked["loadable"], False)
 
             verification_path.write_text(json.dumps({**verification, "candidate_sha256": "0" * 64}))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
             verification_path.write_text(json.dumps({**verification, "abi_qualified": True}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
+            verification_path.write_text(json.dumps({**verification, "register_dataflow_qualified": True}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
+            omitted_dataflow = {key: value for key, value in verification.items()
+                                if key != "register_dataflow_qualified"}
+            verification_path.write_text(json.dumps(omitted_dataflow))
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_structure_audit(kernel, report, verification_path)
 
@@ -402,6 +413,7 @@ class PrelinkQemuTests(unittest.TestCase):
             "original_sha256": self.KERNELCACHE_SHA256,
             "slide": int(self.board["kernel"]["prelink"]["slide"], 0),
             "instruction_relocation_complete": False,
+            "register_dataflow_qualified": False,
             "abi_qualified": False,
             "runtime_qualified": False,
             "loadable": False,
@@ -451,6 +463,9 @@ class PrelinkQemuTests(unittest.TestCase):
                 {**report, "codeless_components": [self.STORAGE_ID]},
                 {**report, "source_interfaces": [self.STORAGE_ID]},
                 {**report, "abi_qualified": True},
+                {**report, "register_dataflow_qualified": True},
+                {key: value for key, value in report.items()
+                 if key != "register_dataflow_qualified"},
                 {**report, "loadable": True},
             ):
                 report_path.write_text(json.dumps(bad_report))
@@ -636,6 +651,15 @@ class PrelinkQemuTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
 
+            report.write_text(json.dumps({**base, "register_dataflow_qualified": True}))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+            omitted_dataflow = {key: value for key, value in base.items()
+                                if key != "register_dataflow_qualified"}
+            report.write_text(json.dumps(omitted_dataflow))
+            with self.assertRaises(SystemExit):
+                DALI_QEMU.validate_prelink_audit_candidate(kernel, report)
+
             bad_transform = {**base["source_interface_transform"], "rewritten_prelink_input_sha256": "invalid"}
             report.write_text(json.dumps({**base, "source_interface_transform": bad_transform}))
             with self.assertRaises(SystemExit):
@@ -778,6 +802,22 @@ class PrelinkQemuTests(unittest.TestCase):
         self.assertIn("message += f\"\\nUEFI UART tail", source)
         self.assertIn("*/gdb-uart.log", workflow)
         self.assertIn("*/gdb-stderr.log", workflow)
+
+
+    def test_prelink_qemu_artifact_retains_local_replay_inputs(self):
+        workflow = (ROOT / ".github/workflows/dali-xnu.yml").read_text()
+        start = workflow.index("- name: Upload non-loadable prelink QEMU diagnostics")
+        end = workflow.index("- name: Test UniXNU to DarwinBoot handoff fixtures", start)
+        upload = workflow[start:end]
+        for path in (
+                "UniXNU/out/dali/kernel/kernel.macho",
+                "UniXNU/out/dali/kernel/kernel.json",
+                "UniXNU/out/dali/kernel/kernel.verification.json",
+                "UniXNU/out/dali/.config",
+                "UniXNU/out/dali/ipados-trust-cache/trust-cache.bundle",
+                "UniXNU/out/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi",
+                "UniXNU/build/DarwinBoot/DEBUG_CLANGPDB/AARCH64/DarwinBoot.efi"):
+            self.assertIn(path, upload)
 
 
 if __name__ == "__main__":

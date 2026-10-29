@@ -126,7 +126,8 @@ def validate_prelink_audit_candidate(kernel, report_path):
     if report.get('candidate_sha256') != digest:
         raise SystemExit('Prelink report does not identify this exact candidate')
     if any(report.get(key) is not False for key in (
-            'instruction_relocation_complete', 'abi_qualified', 'runtime_qualified', 'loadable')):
+            'instruction_relocation_complete', 'register_dataflow_qualified',
+            'abi_qualified', 'runtime_qualified', 'loadable')):
         raise SystemExit('This QEMU path only accepts an explicitly non-loadable prelink audit candidate')
     board = tomllib.loads((DEVICE_ROOT / 'board.toml').read_text())
     prelink = board['kernel']['prelink']
@@ -214,7 +215,8 @@ def validate_donor_runtime_audit_candidate(kernel, report_path, native_kernel, c
     if report.get("candidate_sha256") != candidate_digest or report.get("native_sha256") != native_digest:
         raise SystemExit("Donor-runtime prelink report does not bind these exact kernel files")
     if any(report.get(key) is not False for key in (
-            "instruction_relocation_complete", "abi_qualified", "runtime_qualified", "loadable")):
+            "instruction_relocation_complete", "register_dataflow_qualified",
+            "abi_qualified", "runtime_qualified", "loadable")):
         raise SystemExit("Donor-runtime audit candidates must remain explicitly non-loadable")
 
     board = tomllib.loads((DEVICE_ROOT / "board.toml").read_text())
@@ -328,8 +330,9 @@ def validate_prelink_structure_audit(kernel, report, verification_path, expected
             verification['pointer_table_rebindings_verified'] < 1:
         raise SystemExit('Independent prelink structural audit is incomplete')
     if any(verification.get(key) is not False for key in
-           ('instruction_relocation_complete', 'abi_qualified', 'runtime_qualified', 'loadable')):
-        raise SystemExit('Structural audit cannot promote instruction, ABI, runtime, or loadability gates')
+           ('instruction_relocation_complete', 'register_dataflow_qualified',
+            'abi_qualified', 'runtime_qualified', 'loadable')):
+        raise SystemExit('Structural audit cannot promote relocation, dataflow, ABI, runtime, or loadability gates')
     return verification
 
 
