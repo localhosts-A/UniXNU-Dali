@@ -472,8 +472,15 @@ def validate_launchd_report(report, inputs, launchd):
         raise ValueError('launchd linked owner anchor or runtime-loaded trust-cache state is invalid')
     events = {event.get('symbol') for event in report.get('trace_events', [])}
     if not {'_vfs_mountroot', '_native_owner_root_checkpoint', '_native_owner_root_accepted_checkpoint',
-            '_load_static_trust_cache', '_load_init_program'} <= events:
-        raise ValueError('launchd path is missing a root, trust-cache or init-program runtime milestone')
+            '_load_static_trust_cache'} <= events:
+        raise ValueError('launchd path is missing a root or trust-cache runtime milestone')
+    activation = report.get('syscall_start_event', {})
+    try:
+        activation_pc = int(activation.get('pc', ''), 16)
+    except (TypeError, ValueError):
+        activation_pc = 0
+    if not 0xfffffff000000000 <= activation_pc < 0xfffffff100000000:
+        raise ValueError('launchd probe did not enter the _load_init_program syscall-log activation')
     virtio = report.get('native_virtio_globals', {})
     integrity = report.get('native_virtio_integrity', {})
     if (virtio.get('_native_virtio_ready') != 1 or virtio.get('_native_virtio_read_requests', 0) <= 0 or
@@ -556,9 +563,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--read-kernel-symbol', '_trust_cache_static_loaded:1',
                '--trace-symbol', '_vfs_mountroot', '--trace-symbol', '_native_owner_root_checkpoint',
                '--trace-symbol', '_native_owner_root_accepted_checkpoint',
-               '--trace-symbol', '_load_static_trust_cache', '--trace-symbol', '_load_init_program',
+               '--trace-symbol', '_load_static_trust_cache',
                '--log-syscalls-after', '_load_init_program',
-               '--log-kernel-strings-after', '_load_init_program',
                '--kernel-base-args', '-v dali-earlyboot=1 kt_fixed_zones=120 serial=3 debug=0x14e',
                '--output', str(output)]
     if firmware is not None:

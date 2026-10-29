@@ -302,8 +302,10 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             'trace_events': [
                 {'symbol': '_vfs_mountroot'}, {'symbol': '_native_owner_root_checkpoint'},
                 {'symbol': '_native_owner_root_accepted_checkpoint'},
-                {'symbol': '_load_static_trust_cache'}, {'symbol': '_load_init_program'},
+                {'symbol': '_load_static_trust_cache'},
             ],
+            'syscall_start_event': {'pc': '0xfffffff00bcad650', 'lr': '0xfffffff00bcad8d8',
+                                    'elapsed_seconds': 17.4},
             'followed_main_entry': {
                 'observed': True, 'first_instruction_completed': True,
                 'entry_offset': entry, 'pc': hex(header + entry),
@@ -402,7 +404,8 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                 self.assertIn(option, command)
             self.assertIn('_trust_cache_static_loaded:1', command)
             self.assertIn('--log-syscalls-after', command)
-            self.assertIn('--log-kernel-strings-after', command)
+            self.assertEqual(command[command.index('--log-syscalls-after') + 1], '_load_init_program')
+            self.assertNotIn('--log-kernel-strings-after', command)
             for option in ('--finish-function', '--owner-root-accepted', '--native-user',
                            '--native-air-init', '--data-ramdisk'):
                 self.assertNotIn(option, command)
