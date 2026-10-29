@@ -27,6 +27,7 @@ OS_BYTES = 6077580800
 SYSTEMOS_BYTES = 3303014400
 OWNER_KEY_BYTES = 395
 LAUNCHD_SHA256 = '8cec9a3c44a443b08e977ccc5d577850316ad428c575dc01f09b018dbd5b6a25'
+IMG4_IGNITION_BLOB_MIB = '65000000650000007600000064000000'
 
 
 def digest(path):
@@ -640,6 +641,7 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--trace-symbol', '_native_owner_root_accepted_checkpoint',
                '--trace-symbol', '_load_static_trust_cache',
                '--log-syscalls-after', '_load_init_program',
+               '--log-syscall-return-mib', IMG4_IGNITION_BLOB_MIB,
                '--kernel-base-args', '-v dali-earlyboot=1 kt_fixed_zones=120 serial=3 debug=0x14e',
                '--output', str(output)]
     if firmware is not None:
@@ -659,9 +661,13 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
             report['launchd_syscall_pc_mapping'] = map_launchd_syscall_pcs(report, launchd_input)
             report_path.write_text(json.dumps(report, indent=2) + '\n')
     if result.returncode:
-        mapping = (json.dumps(report.get('launchd_syscall_pc_mapping'), indent=2)
-                   if report and report.get('launchd_syscall_pc_mapping') else '')
-        suffix = '\nLaunchd syscall-PC mapping:\n' + mapping if mapping else ''
+        diagnostics = {}
+        if report and report.get('launchd_syscall_pc_mapping'):
+            diagnostics['launchd_syscall_pc_mapping'] = report['launchd_syscall_pc_mapping']
+        if report and report.get('syscall_return_checkpoint'):
+            diagnostics['syscall_return_checkpoint'] = report['syscall_return_checkpoint']
+        suffix = ('\nBounded launchd syscall diagnostics:\n' + json.dumps(diagnostics, indent=2)
+                  if diagnostics else '')
         raise RuntimeError('QEMU launchd probe stopped before validated LC_MAIN: ' +
                            result.stdout[-8000:] + suffix)
     if report is None:

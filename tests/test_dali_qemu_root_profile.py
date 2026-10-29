@@ -379,6 +379,11 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                                         'observed': False, 'first_instruction_completed': False},
                 'syscall_events': [{'number': 4, 'user_pc': hex(header + 140),
                                     'user_lr': hex(header + 148)}],
+                'syscall_return_checkpoint': {
+                    'observed': True, 'syscall_number': 202, 'x0': '0x0',
+                    'old_length_before': 0, 'old_length_after': 128,
+                    'scope': 'one exact sysctl return; output bytes are never read',
+                },
             }
 
             def run(command, **kwargs):
@@ -387,10 +392,11 @@ class DaliQemuRootProfileTests(unittest.TestCase):
 
             with patch.object(module, 'LAUNCHD_SHA256', hashlib.sha256(data).hexdigest()), \
                     patch.object(module.subprocess, 'run', side_effect=run):
-                with self.assertRaisesRegex(RuntimeError, 'stopped before validated LC_MAIN'):
+                with self.assertRaisesRegex(RuntimeError, 'stopped before validated LC_MAIN') as error:
                     module.run_launchd_probe(ROOT.parent / 'UniXNU', base / 'kernel', base / 'prelink',
                                              base / 'trust', base / 'os.dmg', base / 'systemos.dmg',
                                              base / 'efi', base / 'fdt', launchd_path, output)
+            self.assertIn('syscall_return_checkpoint', str(error.exception))
             report = json.loads((output / 'gdb-stop.json').read_bytes())
         self.assertTrue(report['launchd_syscall_pc_mapping']['events'][0]['user_pc']
                         ['mapped_to_launchd_executable'])
@@ -463,6 +469,9 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertIn('_trust_cache_static_loaded:1', command)
             self.assertIn('--log-syscalls-after', command)
             self.assertEqual(command[command.index('--log-syscalls-after') + 1], '_load_init_program')
+            self.assertIn('--log-syscall-return-mib', command)
+            self.assertEqual(command[command.index('--log-syscall-return-mib') + 1],
+                             module.IMG4_IGNITION_BLOB_MIB)
             self.assertNotIn('--log-kernel-strings-after', command)
             traced = [command[index + 1] for index, value in enumerate(command[:-1]) if value == '--trace-symbol']
             self.assertNotIn('_load_init_program', traced)
