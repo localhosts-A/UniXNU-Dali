@@ -41,6 +41,23 @@ class SourceKernelCacheTests(unittest.TestCase):
             kernel.write_bytes(b"invalid Mach-O")
             self.assertNotEqual(run("record").returncode, 0, "invalid output cannot create a cache stamp")
 
+    def test_qemu_root_profile_keeps_exact_pins_and_rejects_embedded_physical_ufs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tree, _, _, _ = tree_fixture(Path(directory))
+            kernel = tree / module.KERNEL
+            kernel.parent.mkdir(parents=True)
+            header = struct.pack("<8I2I", 0xfeedfacf, 0x100000c, 0, 2, 1, 8, 0, 0, 1, 8)
+            kernel.write_bytes(header)
+            stamp = module.snapshot(tree, "a" * 64, "ipados-qemu-root")
+            self.assertEqual(stamp["profile"], "ipados-qemu-root")
+            self.assertEqual(stamp["source_identity_mode"], "exact-build-input-pins-not-embedded-qemu-only")
+            self.assertTrue(stamp["compiled_source_pins"])
+            with self.assertRaises(ValueError):
+                module.snapshot(tree, "a" * 64, "reset-qualification")
+            kernel.write_bytes(header + b"DALIUFSSRC1")
+            with self.assertRaisesRegex(ValueError, "unlinked Dali UFS"):
+                module.snapshot(tree, "a" * 64, "ipados-qemu-root")
+
     def test_donor_runtime_profile_records_pins_without_an_unlinked_ufs_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             tree, _, _, _ = tree_fixture(Path(directory))

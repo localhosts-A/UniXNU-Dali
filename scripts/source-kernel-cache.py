@@ -13,7 +13,10 @@ artifact = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(artifact)
 from dali_source_identity import build_source_identity, verify_compiled_record
 KERNEL = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
-DONOR_RUNTIME_AUDIT_PROFILE = "ipados-donor-runtime-audit"
+NON_UFS_DIAGNOSTIC_PROFILES = {
+    "ipados-donor-runtime-audit": "exact-build-input-pins-not-embedded-audit-only",
+    "ipados-qemu-root": "exact-build-input-pins-not-embedded-qemu-only",
+}
 
 
 def snapshot(tree, key, profile="default"):
@@ -21,10 +24,10 @@ def snapshot(tree, key, profile="default"):
     revision = subprocess.check_output(["git", "-C", str(tree / ".cache/xnu-work"),
                                         "rev-parse", "HEAD"], text=True).strip()
     pins, source = build_source_identity(tree)
-    if profile == DONOR_RUNTIME_AUDIT_PROFILE:
+    if profile in NON_UFS_DIAGNOSTIC_PROFILES:
         if b"DALIUFSSRC1" in data:
-            raise ValueError("donor-runtime audit kernel unexpectedly includes the unlinked Dali UFS source record")
-        identity_mode = "exact-build-input-pins-not-embedded-audit-only"
+            raise ValueError(f"{profile} kernel unexpectedly includes the unlinked Dali UFS source record")
+        identity_mode = NON_UFS_DIAGNOSTIC_PROFILES[profile]
     else:
         verify_compiled_record(data, pins)
         identity_mode = "embedded-source-record-verified"
@@ -40,7 +43,7 @@ def main():
     parser.add_argument("--tree", required=True, type=Path)
     parser.add_argument("--key", required=True)
     parser.add_argument("--profile", default="default",
-                        help="workflow profile; only the donor-runtime audit may omit an in-kernel UFS marker")
+                        help="workflow profile; only explicit non-UFS diagnostics may omit the in-kernel UFS marker")
     args = parser.parse_args()
     if len(args.key) != 64 or any(ch not in "0123456789abcdef" for ch in args.key):
         parser.error("input key must be a SHA-256 fingerprint")

@@ -1,0 +1,416 @@
+#!/usr/bin/env python3
+"""Observe the read-only 21H461 OS root through real XNU Virtio/APFS owner auth.
+
+This is a QEMU-only diagnostic, stopping before launchd exec. The existing
+independent owner policy is enforced; Apple rootauth and AMFI still execute.
+No Apple hardware trust, userspace boot, or physical Dali result is asserted.
+"""
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import shutil
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+import tomllib
+
+ROOT = Path(__file__).resolve().parents[1]
+OS_UUID = '04769D26-2CA0-4825-B443-E2E5F88300F2'
+OS_BYTES = 6077580800
+SYSTEMOS_BYTES = 3303014400
+OWNER_KEY_BYTES = 395
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with Path(path).open('rb', buffering=0) as source:
+        for chunk in iter(lambda: source.read(8 * 1024 * 1024), b''):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+def load_device_runner():
+    path = ROOT / 'scripts/test-dali-xnu-qemu.py'
+    spec = importlib.util.spec_from_file_location('dali_qemu_validation', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def make_qemu_virtio_fdt(qemu, output, workdir):
+    if output.exists():
+        raise ValueError('QEMU FDT output must be a new file')
+    disks = [workdir / 'dtb-probe-os.raw', workdir / 'dtb-probe-systemos.raw']
+    for disk in disks:
+        with disk.open('xb') as stream:
+            stream.truncate(1024 * 1024)
+    command = [qemu, '-machine', f'virt,virtualization=off,secure=off,dumpdtb={output},gic-version=3',
+               '-cpu', 'cortex-a710', '-accel', 'tcg', '-m', '2048M', '-nodefaults',
+               '-display', 'none', '-nic', 'none', '-global', 'virtio-mmio.force-legacy=false',
+               '-blockdev', json.dumps({'driver': 'file', 'node-name': 'probe-os-file',
+                                        'filename': str(disks[0]), 'read-only': True}),
+               '-blockdev', json.dumps({'driver': 'raw', 'node-name': 'probe-os',
+                                        'file': 'probe-os-file', 'read-only': True}),
+               '-device', 'virtio-blk-device,drive=probe-os',
+               '-blockdev', json.dumps({'driver': 'file', 'node-name': 'probe-systemos-file',
+                                        'filename': str(disks[1]), 'read-only': True}),
+               '-blockdev', json.dumps({'driver': 'raw', 'node-name': 'probe-systemos',
+                                        'file': 'probe-systemos-file', 'read-only': True}),
+               '-device', 'virtio-blk-device,drive=probe-systemos']
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, timeout=60)
+    if result.returncode or not output.is_file():
+        raise RuntimeError('QEMU failed to generate Virtio FDT: ' + result.stdout[-5000:])
+    data = output.read_bytes()
+    if len(data) < 40 or struct.unpack_from('>I', data)[0] != 0xd00dfeed:
+        raise ValueError('QEMU output is not a flattened device tree')
+    return hashlib.sha256(data).hexdigest(), command
+
+
+def attach_readonly_root_image(image):
+    image = Path(image).resolve(strict=True)
+    info = plistlib.loads(subprocess.check_output(['hdiutil', 'info', '-plist'], timeout=30))
+    if any(Path(item['image-path']).resolve() == image for item in info.get('images', [])):
+        raise ValueError('root image is already attached; do not detach another run\'s media')
+    attached = subprocess.run(
+        ['hdiutil', 'attach', '-nomount', '-readonly', '-noverify', '-noautofsck', '-plist', str(image)],
+        check=True, capture_output=True, timeout=120)
+    devices = set()
+    try:
+        result = plistlib.loads(attached.stdout)
+        entities = result.get('system-entities', [])
+        devices = {entry['dev-entry'] for entry in entities
+                   if re.fullmatch(r'/dev/disk[0-9]+', entry.get('dev-entry', ''))}
+        matches = [entry.get('dev-entry') for entry in entities
+                   if entry.get('content-hint') == 'GUID_partition_scheme']
+        if len(matches) != 1 or matches[0] not in devices:
+            raise ValueError('hdiutil must expose one GPT whole-disk device')
+        device = matches[0]
+        info = plistlib.loads(subprocess.check_output(
+            ['diskutil', 'info', '-plist', device], timeout=30))
+        required = {'BusProtocol': 'Disk Image', 'Writable': False,
+                    'DeviceNode': device, 'TotalSize': OS_BYTES}
+        observed = {key: info.get(key) for key in required}
+        if observed != required:
+            raise ValueError(f'root UDIF is not the expected read-only whole disk: {observed}')
+        raw = Path('/dev/r' + Path(device).name)
+        if not raw.exists() or not stat.S_ISCHR(raw.stat().st_mode):
+            raise ValueError('expected the actual read-only whole-disk character device')
+        with raw.open('rb', buffering=0) as stream:
+            if len(stream.read(4096)) != 4096:
+                raise ValueError('short read from attached OS whole disk')
+        return device
+    except BaseException:
+        for device in sorted(devices):
+            subprocess.run(['hdiutil', 'detach', device], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        raise
+
+
+def detach_readonly_root_image(device):
+    subprocess.run(['hdiutil', 'detach', device], check=True, timeout=60)
+
+
+def validate_qemu_root_config(path):
+    values = {}
+    for number, line in enumerate(Path(path).read_text().splitlines(), 1):
+        line = line.strip()
+        if line.startswith('# CONFIG_') and line.endswith(' is not set'):
+            key, value = line[2:].split(' ', 1)[0], 'n'
+        elif line.startswith('CONFIG_') and '=' in line:
+            key, value = line.split('=', 1)
+        elif not line or line.startswith('#'):
+            continue
+        else:
+            raise ValueError(f'invalid QEMU root config line {number}')
+        if key in values:
+            raise ValueError(f'duplicate QEMU root config key: {key}')
+        values[key] = value.strip('"')
+    enabled = {key for key, value in values.items() if value == 'y'}
+    disabled = {key for key, value in values.items() if value == 'n'}
+    required = {'CONFIG_XNU_BUILD_ARCHIVES', 'CONFIG_XNU_SOURCE_STORAGE_FAMILY',
+                'CONFIG_XNU_SOURCE_CORECRYPTO14', 'CONFIG_XNU_NATIVE_VIRTIO_BLOCK',
+                'CONFIG_XNU_NATIVE_VIRTIO_QEMU_SOURCE_STORAGE', 'CONFIG_XNU_VERIFIED_ROOT_PROVIDER',
+                'CONFIG_XNU_OWNER_ROOT_AUDIT', 'CONFIG_XNU_OWNER_ROOT_TRUST',
+                'CONFIG_XNU_TRUST_CACHE_RUNTIME'}
+    forbidden = {'CONFIG_XNU_NATIVE_AES', 'CONFIG_XNU_NATIVE_UFS',
+                 'CONFIG_XNU_NATIVE_RAM_BLOCK', 'CONFIG_XNU_SOURCE_MOCKFS',
+                 'CONFIG_XNU_SOURCE_ENTITLEMENT_FREE'}
+    if not required <= enabled:
+        raise ValueError(f'QEMU root config lacks required features: {sorted(required - enabled)}')
+    if enabled & forbidden:
+        raise ValueError(f'QEMU root config enables hardware/fixture features: {sorted(enabled & forbidden)}')
+    if not forbidden <= disabled:
+        raise ValueError(f'QEMU root config must explicitly disable hardware/fixture features: {sorted(forbidden - disabled)}')
+    if values.get('CONFIG_XNU_CRYPTO_BOOTSTRAP') != 'source':
+        raise ValueError('QEMU root config requires the source crypto bootstrap')
+    archive = values.get('CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE', '')
+    if not archive.endswith('/build/native-virtio-block-qemu-source-storage/libNativeVirtioBlock.a'):
+        raise ValueError('QEMU root config must select the isolated source-storage Virtio archive')
+    extras = values.get('CONFIG_XNU_EXTRA_LD_ARCHIVES', '')
+    if 'libDaliUfs.a' in extras or 'libNativeUfs.a' in extras:
+        raise ValueError('QEMU root config links the physical Dali UFS driver')
+    if 'libNativeVirtioBlock.a' in extras:
+        raise ValueError('QEMU root config duplicates the standard Virtio archive force-load')
+    if 'libVerifiedRootDali.a' not in extras or 'libDaliBootLog.a' not in extras:
+        raise ValueError('QEMU root config must link owner-policy and Dali logging archives')
+    return {'required': sorted(required), 'forbidden_disabled': sorted(forbidden),
+            'virtio_archive': archive, 'extra_archives': extras}
+
+
+def validate_inputs(kernel, report_path, verification_path, config_path,
+                    trust_cache_path, root_image_path, systemos_image_path,
+                    userdata_report_path, root_policy_path):
+    runner = load_device_runner()
+    board = tomllib.loads((ROOT / 'board.toml').read_text())
+    images = {}
+    for name, path, pin in (('OS', root_image_path, '044-76040-038.dmg'),
+                            ('SystemOS', systemos_image_path, '044-76034-038.dmg')):
+        path = Path(path).resolve(strict=True)
+        expected = board['ipsw']['sha256'][pin]
+        if not path.is_file() or digest(path) != expected:
+            raise ValueError(f'read-only {name} input does not match the board SHA-256 pin')
+        with path.open('rb', buffering=0) as source:
+            first_sector = source.read(512)
+        images[name] = {'path': str(path), 'sha256': expected, 'bytes': path.stat().st_size,
+                        'first_sector_sha256': hashlib.sha256(first_sector).hexdigest()}
+    systemos = Path(systemos_image_path)
+    if systemos.stat().st_size != SYSTEMOS_BYTES:
+        raise ValueError('SystemOS input does not have its pinned raw geometry')
+    with systemos.open('rb', buffering=0) as source:
+        source.seek(32)
+        if source.read(4) != b'NXSB':
+            raise ValueError('SystemOS input lacks the pinned raw APFS superblock')
+    prelink = runner.validate_prelink_audit_candidate(kernel, report_path)
+    verification = runner.validate_prelink_structure_audit(kernel, prelink, verification_path)
+    trust = runner.validate_trust_cache(trust_cache_path, board['payload']['trust_cache_sha256'])
+    config = runner.validate_source_xnu_config(config_path, require_trust_cache_runtime=True)
+    qemu_config = validate_qemu_root_config(config_path)
+    policy = json.loads(Path(root_policy_path).read_bytes())
+    image_report = json.loads(Path(userdata_report_path).read_bytes())
+    if (image_report.get('image_bytes') != 9382658048 or
+            image_report.get('image_sha256') != 'fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093' or
+            image_report.get('hardware_tested') is not False):
+        raise ValueError('userdata report is not the exact pinned assembled image')
+    if policy.get('userdata_image_sha256') != image_report.get('image_sha256'):
+        raise ValueError('root policies do not bind the exact userdata image report')
+    if not re.fullmatch('[0-9a-f]{64}', policy.get('owner_anchor_sha256', '')):
+        raise ValueError('root policy owner anchor is missing or malformed')
+    expected_windows = {
+        'OS': (OS_BYTES, 'e5634d04a8ac35f024845f583394e0a35deb26a04cb0c00286a8674e25a9a4f2', OS_UUID),
+        'SystemOS': (SYSTEMOS_BYTES, 'b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f',
+                     '8846FE78-2910-4297-AF97-D59BB6F8FC16'),
+    }
+    if len(policy.get('policies', [])) != 2:
+        raise ValueError('root build report must bind exactly OS and SystemOS')
+    for actual, name in zip(policy['policies'], ('OS', 'SystemOS')):
+        size, sha, volume_uuid = expected_windows[name]
+        window = next((item for item in image_report.get('windows', []) if item.get('name') == name), None)
+        if (actual.get('name') != name or actual.get('image_bytes') != size or
+                actual.get('image_sha256') != sha or actual.get('volume_uuid') != volume_uuid or
+                actual.get('trusted_key_sha256') != policy['owner_anchor_sha256'] or
+                not window or window.get('size') != size or window.get('sha256') != sha):
+            raise ValueError(f'{name} policy does not bind its exact pinned source window')
+    archive = Path(root_policy_path).with_name('libVerifiedRootDali.a')
+    if (policy.get('signature_verified_by_openssl') is not True or policy.get('private_key_in_archive') is not False or
+            policy.get('boot_root_authenticated') is not False or not archive.is_file() or
+            digest(archive) != policy.get('archive_sha256')):
+        raise ValueError('root policy archive/report is missing or overstates device authentication')
+    return {'kernel_sha256': digest(kernel), 'prelink': prelink, 'verification': verification,
+            'trust_cache': trust, 'config': config, 'policy': policy,
+            'qemu_config': qemu_config, 'images': images}
+
+
+def validate_root_report(report, inputs):
+    if (report.get('stop_symbol') != '_native_owner_root_accepted_checkpoint' or
+            report.get('bounded_timeout_interrupted') is not False or
+            report.get('function_return_stack_matched') is not True or
+            report.get('functional_ipados_boot_demonstrated') is not False or
+            report.get('ipados_userspace_boot_demonstrated') is not False or
+            report.get('hardware_boot_demonstrated', False) is not False):
+        raise ValueError('root checkpoint report is not the bounded host-only matched return')
+    if (report.get('kernel_sha256') != inputs['kernel_sha256'] or
+            report.get('offline_qemu_vmm_present_declared') is not True):
+        raise ValueError('root checkpoint does not bind the exact kernel and actual QEMU identity')
+    try:
+        if int(report['pc'], 16) != int(report['function_return_target'], 16):
+            raise ValueError('root checkpoint did not reach its actual return address')
+    except (KeyError, TypeError) as error:
+        raise ValueError('root checkpoint lacks its actual return address') from error
+    binding = report.get('owner_root_binding_audit', {})
+    device = binding.get('_native_owner_root_mount_device', 0xffffffff)
+    if (binding.get('boot_root_accepted') is not True or binding.get('_native_owner_root_accepted') != 1 or
+            binding.get('_native_owner_root_decision') != 1 or
+            binding.get('_native_owner_root_trust_enabled') != 1 or
+            binding.get('_native_owner_root_apple_autherr') != 80 or
+            binding.get('_native_owner_root_readonly') != 1 or binding.get('actual_uuid') != OS_UUID or
+            not isinstance(device, int) or not 0 < device < 0xffffffff or
+            device != binding.get('_native_owner_root_selected_device') or
+            device != binding.get('_native_verified_block_root_device') or
+            binding.get('_native_verified_block_root_media_matches') != 1 or
+            binding.get('_native_verified_block_root_uuid_match') != 1):
+        raise ValueError('actual XNU owner-root decision/device/UUID/read-only evidence failed')
+    if (report.get('original_amfi_table_owner_observed') is not True or
+            report.get('crypto14_initialization_observed') is not True or
+            report.get('trust_cache_bundle_sha256') != inputs['trust_cache']['sha256']):
+        raise ValueError('original AMFI, initialized crypto or exact trust-cache handoff was not observed')
+    try:
+        anchor = bytes.fromhex(report['requested_kernel_symbols']['_verified_root_key'])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('actual linked owner public anchor was not captured') from error
+    if (len(anchor) != OWNER_KEY_BYTES or not anchor.startswith(b'VROOTKEY') or
+            hashlib.sha256(anchor).hexdigest() != inputs['policy']['owner_anchor_sha256']):
+        raise ValueError('actual linked owner public anchor differs from the policy input')
+    virtio = report.get('native_virtio_globals', {})
+    integrity = report.get('native_virtio_integrity', {})
+    if (virtio.get('_native_virtio_ready') != 1 or virtio.get('_native_virtio_read_requests', 0) <= 0 or
+            virtio.get('_native_virtio_read_failures') != 0 or
+            integrity.get('_native_virtio_manifest_ready') != 1 or
+            integrity.get('_native_virtio_integrity_failures') != 0 or
+            integrity.get('_native_virtio_verified_blocks', 0) <= 0):
+        raise ValueError('actual signed Virtio root reads were not observed')
+    os_input = report.get('virtio_block_input', {})
+    systemos_input = report.get('virtio_extra_block_input', {})
+    if (os_input.get('read_only') is not True or os_input.get('device_attached') is not True or
+            os_input.get('source_format') != 'UDIF' or os_input.get('bytes') != OS_BYTES or
+            os_input.get('host_media_writable') is not False or
+            os_input.get('source_sha256') != inputs['images']['OS']['sha256'] or
+            systemos_input.get('read_only') is not True or systemos_input.get('device_attached') is not True or
+            systemos_input.get('bytes') != SYSTEMOS_BYTES or
+            systemos_input.get('first_sector_sha256') != inputs['images']['SystemOS']['first_sector_sha256']):
+        raise ValueError('actual QEMU root media were not the exact read-only input pair')
+    if not any(event.get('symbol') == '_vfs_mountroot' for event in report.get('trace_events', [])):
+        raise ValueError('real BSD root-mount entry was not observed')
+
+
+def run_root_probe(unixnu, kernel, prelink_report, trust_cache_path,
+                   root_image, systemos_image, efi, fdt, output, firmware=None):
+    if output.exists():
+        raise ValueError('QEMU output directory must be new')
+    output.mkdir(parents=True, exist_ok=False)
+    probe = Path(unixnu).resolve() / 'scripts/probe-darwinboot-xnu.py'
+    command = [sys.executable, '-I', '-B', str(probe),
+               '--kernel', str(Path(kernel).resolve()), '--uefi-efi', str(Path(efi).resolve()),
+               '--prelink-report', str(Path(prelink_report).resolve()),
+               '--trust-cache', str(Path(trust_cache_path).resolve()),
+               '--virtio-udif-image', str(Path(root_image).resolve()),
+               '--virtio-extra-block-image', str(Path(systemos_image).resolve()),
+               '--virtio-mmio-fdt', str(Path(fdt).resolve()),
+               '--root-match-volume-uuid', OS_UUID, '--qemu-vmm-present', '--armvirt', '--armcpu',
+               '--nvram-proxy', '--crypto-hash-method', 'sha2-384', '--amfi-platform-only',
+               '--require-crypto14', '--owner-root-accepted', '--finish-function',
+               '--break-symbol', '_panic', '--timeout', '180', '--qemu-memory-mib', '2048', '--kext-logs',
+               '--read-kernel-symbol', f'_verified_root_key:{OWNER_KEY_BYTES}',
+               '--trace-symbol', '_vfs_mountroot', '--trace-symbol', '_load_init_program',
+               '--trace-symbol', '_native_owner_root_checkpoint',
+               '--kernel-base-args', '-v dali-earlyboot=1 kt_fixed_zones=120 serial=3 debug=0x14e',
+               '--output', str(output)]
+    if firmware is not None:
+        command += ['--qemu-firmware', str(Path(firmware).resolve())]
+    (output / 'probe-command.json').write_text(json.dumps(command, indent=2) + '\n')
+    probe_env = os.environ.copy()
+    probe_env['PYTHONDONTWRITEBYTECODE'] = '1'
+    result = subprocess.run(command, env=probe_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, timeout=300)
+    (output.parent / (output.name + '.log')).write_text(result.stdout)
+    report_path = output / 'gdb-stop.json'
+    if result.returncode:
+        raise RuntimeError('QEMU root probe stopped without acceptance: ' + result.stdout[-8000:])
+    if not report_path.is_file():
+        raise RuntimeError('QEMU root probe produced no GDB report')
+    return json.loads(report_path.read_bytes())
+
+
+def verify_source_media(inputs):
+    for name, image in inputs['images'].items():
+        path = Path(image['path'])
+        if path.stat().st_size != image['bytes'] or digest(path) != image['sha256']:
+            raise ValueError(f'source {name} image changed during the QEMU run')
+
+
+def root_summary(report, inputs, fdt_sha256):
+    validate_root_report(report, inputs)
+    return {
+        'candidate_sha256': report['kernel_sha256'],
+        'effective_config_sha256': inputs['config']['sha256'],
+        'trust_cache_sha256': inputs['trust_cache']['sha256'],
+        'root_image_sha256': inputs['images']['OS']['sha256'],
+        'systemos_image_sha256': inputs['images']['SystemOS']['sha256'],
+        'qemu_root_config': inputs['qemu_config'], 'qemu_fdt_sha256': fdt_sha256,
+        'owner_anchor_sha256': inputs['policy']['owner_anchor_sha256'],
+        'owner_root_accepted': True, 'verified_root_authenticated': True,
+        'apple_rootauth_errno': report['owner_root_binding_audit']['_native_owner_root_apple_autherr'],
+        'apple_hardware_root_trust_demonstrated': False,
+        'actual_virtio_verified_blocks': report['native_virtio_integrity']['_native_virtio_verified_blocks'],
+        'init_program_entry_observed': any(event.get('symbol') == '_load_init_program'
+                                           for event in report.get('trace_events', [])),
+        'launchd_exec_observed': False,
+        'apple_userspace_boot_demonstrated': False,
+        'springboard_display_demonstrated': False,
+        'hardware_boot_demonstrated': False, 'device_flashable': False,
+        'scope': 'QEMU owner-policy root checkpoint before launchd; not Apple hardware trust or Dali qualification',
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--unixnu', type=Path, required=True)
+    parser.add_argument('--kernel', type=Path, required=True)
+    parser.add_argument('--prelink-report', type=Path, required=True)
+    parser.add_argument('--prelink-verification', type=Path, required=True)
+    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--trust-cache', type=Path, required=True)
+    parser.add_argument('--root-image', type=Path, required=True)
+    parser.add_argument('--systemos-image', type=Path, required=True)
+    parser.add_argument('--userdata-report', type=Path, required=True)
+    parser.add_argument('--root-policy-report', type=Path, required=True)
+    parser.add_argument('--uefi-efi', type=Path, required=True)
+    parser.add_argument('--virtio-fdt', type=Path,
+                        help='Existing matching QEMU virt FDT; otherwise generate one with two read-only disks')
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--qemu-firmware', type=Path)
+    args = parser.parse_args()
+    if args.output.exists():
+        parser.error('QEMU root output must be a new directory')
+    inputs = validate_inputs(args.kernel, args.prelink_report, args.prelink_verification,
+                             args.config, args.trust_cache, args.root_image, args.systemos_image,
+                             args.userdata_report, args.root_policy_report)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='dali-root-fdt-', dir=args.output.parent) as workdir:
+        if args.virtio_fdt:
+            fdt = args.virtio_fdt.resolve(strict=True)
+            fdt_sha256 = digest(fdt)
+        else:
+            fdt = Path(workdir) / 'qemu-virtio.dtb'
+            qemu = shutil.which('qemu-system-aarch64')
+            if not qemu:
+                parser.error('qemu-system-aarch64 is required to generate the matching Virtio FDT')
+            fdt_sha256, _ = make_qemu_virtio_fdt(qemu, fdt, Path(workdir))
+        try:
+            device = attach_readonly_root_image(args.root_image)
+            try:
+                report = run_root_probe(args.unixnu, args.kernel, args.prelink_report, args.trust_cache,
+                                        args.root_image, args.systemos_image, args.uefi_efi, fdt,
+                                        args.output, args.qemu_firmware)
+            finally:
+                detach_readonly_root_image(device)
+        finally:
+            if args.output.is_dir():
+                shutil.copyfile(fdt, args.output / 'qemu-virtio.dtb')
+            verify_source_media(inputs)
+        summary = root_summary(report, inputs, fdt_sha256)
+        summary['prelink_report_sha256'] = digest(args.prelink_report)
+        summary['prelink_verification_sha256'] = digest(args.prelink_verification)
+        (args.output / 'root-checkpoint-summary.json').write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
+        print(json.dumps(summary, sort_keys=True))
+
+
+if __name__ == '__main__':
+    main()

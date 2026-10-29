@@ -1,0 +1,31 @@
+# Diagnostic-only QEMU path for the pinned 21H461 owner-signed OS/SystemOS root.
+# Uses source IOStorageFamily and the isolated read-only NativeVirtioBlock profile.
+# This is not a bare-metal Dali driver qualification or a flashable profile.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_SOURCE_STORAGE_FAMILY=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_VERIFIED_ROOT_PROVIDER=y
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
+CONFIG_XNU_NATIVE_VIRTIO_QEMU_SOURCE_STORAGE=y
+CONFIG_XNU_NATIVE_AES=n
+CONFIG_XNU_NATIVE_UFS=n
+CONFIG_XNU_NATIVE_RAM_BLOCK=n
+CONFIG_XNU_SOURCE_MOCKFS=n
+CONFIG_XNU_SOURCE_ENTITLEMENT_FREE=n
+CONFIG_XNU_DALI_ROOT_IMAGE="{tree}/../userdata/userdata-root.img"
+CONFIG_XNU_DALI_ROOT_REPORT="{tree}/../userdata/userdata-root.json"
+CONFIG_XNU_DALI_OWNER_PRIVATE_KEY="{tree}/build/dali-verified-root/keys/owner.pem"
+CONFIG_XNU_DALI_OWNER_PUBLIC_KEY="{tree}/build/dali-verified-root/keys/owner-public.pem"
+CONFIG_XNU_DALI_VERIFIED_ROOT_OUT="{tree}/build/dali-verified-root"
+CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE="{tree}/build/native-virtio-block-qemu-source-storage/libNativeVirtioBlock.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/dali-xnu-platform/libDaliBootLog.a -Wl,-force_load,{tree}/build/dali-verified-root/libVerifiedRootDali.a"
+CONFIG_XNU_EXTRA_KERNEL_ARCHIVE_DEPENDENCIES="{tree}/build/dali-xnu-platform/libDaliBootLog.a {tree}/build/dali-verified-root/libVerifiedRootDali.a"

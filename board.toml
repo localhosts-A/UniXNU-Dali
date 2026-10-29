@@ -36,7 +36,7 @@ windows = [
 config = "dali"
 dsc = "Platforms/Xiaomi/daliPkg/dali.dsc"
 fd = "Build/daliPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-unixnu_commit = "76567249bdc8e896df8556e6fc366f3ca7ade8f8"
+unixnu_commit = "a5ed1593106eee9758086a882ef4d74b38a361d2"
 uefi_commit = "b53c48dd0664cb2a945eb6b8ca1194a0bae0fe84"
 submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Mu_Basecore", "Silicium-ACPI"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
@@ -63,6 +63,7 @@ archives = [
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",
   "build-source-storage.py",
+  "build-native-virtio-qemu-source-storage.py",
   "build-dali-xnu-platform.py",
   "build-dali-verified-root.py",
 ]
