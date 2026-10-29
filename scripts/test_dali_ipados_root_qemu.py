@@ -623,6 +623,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
         raise ValueError('QEMU launchd output directory must be new')
     output.mkdir(parents=True, exist_ok=False)
     probe = Path(unixnu).resolve() / 'scripts/probe-darwinboot-xnu.py'
+    process_layout_objects = (Path(kernel).resolve().parent.parent /
+                              'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837')
     command = [sys.executable, '-I', '-B', str(probe),
                '--kernel', str(Path(kernel).resolve()), '--uefi-efi', str(Path(efi).resolve()),
                '--prelink-report', str(Path(prelink_report).resolve()),
@@ -633,7 +635,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--root-match-volume-uuid', OS_UUID, '--qemu-vmm-present', '--armvirt', '--armcpu',
                '--nvram-proxy', '--crypto-hash-method', 'sha2-384', '--amfi-platform-only',
                '--require-crypto14', '--follow-target-main', '--target-main-executable', str(Path(launchd).resolve()),
-               '--inspect-owner-root', '--inspect-process-list', '--check-commpage', '--break-symbol', '_panic',
+               '--inspect-owner-root', '--inspect-process-list', '--inspect-ui-threads',
+               '--process-layout-object-dir', str(process_layout_objects), '--check-commpage', '--break-symbol', '_panic',
                '--timeout', '180', '--qemu-memory-mib', '2048',
                '--read-kernel-symbol', f'_verified_root_key:{OWNER_KEY_BYTES}',
                '--read-kernel-symbol', '_trust_cache_static_loaded:1',

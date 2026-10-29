@@ -466,8 +466,11 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             options = {value for value in command if value.startswith('--')}
             self.assertFalse(options - declared, options - declared)
             for option in ('--follow-target-main', '--target-main-executable', '--inspect-owner-root',
-                           '--inspect-process-list', '--check-commpage', '--qemu-vmm-present', '--trust-cache'):
+                           '--inspect-process-list', '--inspect-ui-threads', '--process-layout-object-dir',
+                           '--check-commpage', '--qemu-vmm-present', '--trust-cache'):
                 self.assertIn(option, command)
+            object_dir = Path(base / 'kernel').resolve().parent.parent / 'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
+            self.assertEqual(command[command.index('--process-layout-object-dir') + 1], str(object_dir))
             self.assertIn('_trust_cache_static_loaded:1', command)
             self.assertIn('--log-syscalls-after', command)
             self.assertEqual(command[command.index('--log-syscalls-after') + 1], '_load_init_program')
