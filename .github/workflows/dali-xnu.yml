@@ -451,6 +451,55 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Probe original launchd LC_MAIN in QEMU
+        if: env.VALIDATION_PROFILE == 'ipados-qemu-root'
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          mount_point="$RUNNER_TEMP/dali-ipados-launchd-os-mount"
+          target_launchd="$RUNNER_TEMP/dali-ipados-target-launchd"
+          mkdir -p "$mount_point"
+          test ! -e "$target_launchd"
+          trap 'sudo hdiutil detach "$mount_point" >/dev/null 2>&1 || true' EXIT
+          sudo hdiutil attach -readonly -nobrowse -owners on -mountpoint "$mount_point" \
+            "$UNIXNU_OUT/ipsw/21H461/044-76040-038.dmg"
+          test -f "$mount_point/sbin/launchd"
+          cp "$mount_point/sbin/launchd" "$target_launchd"
+          chmod 400 "$target_launchd"
+          sudo hdiutil detach "$mount_point"
+          trap - EXIT
+          python3 "$GITHUB_WORKSPACE/UniXNU-Dali/scripts/test_dali_ipados_root_qemu.py" \
+            --unixnu "$GITHUB_WORKSPACE/UniXNU" \
+            --kernel "$UNIXNU_OUT/dali/kernel/kernel.macho" \
+            --prelink-report "$UNIXNU_OUT/dali/kernel/kernel.json" \
+            --prelink-verification "$UNIXNU_OUT/dali/kernel/kernel.verification.json" \
+            --config "$UNIXNU_OUT/dali/.config" \
+            --trust-cache "$UNIXNU_OUT/dali/ipados-trust-cache/trust-cache.bundle" \
+            --root-image "$UNIXNU_OUT/ipsw/21H461/044-76040-038.dmg" \
+            --systemos-image "$UNIXNU_OUT/ipsw/21H461/044-76034-038.dmg" \
+            --userdata-report "$UNIXNU_OUT/dali/userdata/userdata-root.json" \
+            --root-policy-report "$UNIXNU_OUT/dali/tree/build/dali-verified-root/build-report.json" \
+            --uefi-efi "$UNIXNU_OUT/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi" \
+            --follow-launchd --target-launchd "$target_launchd" \
+            --output "$RUNNER_TEMP/dali-ipados-launchd-qemu"
+
+      - name: Upload bounded QEMU launchd evidence
+        if: always() && env.VALIDATION_PROFILE == 'ipados-qemu-root'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dali-ipados-qemu-launchd-not-for-device
+          path: |
+            ${{ runner.temp }}/dali-ipados-launchd-qemu/launchd-summary.json
+            ${{ runner.temp }}/dali-ipados-launchd-qemu/qemu-virtio.dtb
+            ${{ runner.temp }}/dali-ipados-launchd-qemu/probe-command.json
+            ${{ runner.temp }}/dali-ipados-launchd-qemu/gdb-stop.json
+            ${{ runner.temp }}/dali-ipados-launchd-qemu/gdb-uart.log
+            ${{ runner.temp }}/dali-ipados-launchd-qemu.log
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Probe non-loadable 21H461 prelink candidate in QEMU
         if: env.VALIDATION_PROFILE == 'ipados-root-policy-compile'
         shell: bash

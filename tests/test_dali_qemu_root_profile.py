@@ -271,5 +271,154 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertEqual(detached, [['hdiutil', 'detach', '/dev/disk12'], ['hdiutil', 'detach', '/dev/disk13']])
 
 
+    @staticmethod
+    def synthetic_launchd():
+        data = bytearray(96)
+        struct.pack_into('<IiiIIIII', data, 0, 0xfeedfacf, 0x100000c, 0, 2, 1, 24, 0, 0)
+        struct.pack_into('<IIQQ', data, 32, 0x80000028, 24, 64, 0)
+        data[64:80] = b'LCMAIN-ENTRY!!!!'
+        return bytes(data)
+
+    def launchd_report_fixture(self, launchd):
+        inputs, report = self.root_fixture()
+        header = 0xfffffff333000000
+        entry = launchd['entry_offset']
+        report.update({
+            'stop_symbol': 'original-launchd-main',
+            'original_launchd_main_executed': True,
+            'bounded_timeout_interrupted': False,
+            'pstate': '0x0', 'pc': hex(header + entry + 4),
+            'kernel_page_globals': {
+                '_PAGE_SHIFT_CONST': 12, '_page_shift': 12,
+                '_page_shift_user32': 12, '_page_size': 4096,
+            },
+            'direct_user_commpage_shifts': {'fffff4025:1': 12, 'fffff4037:1': 12},
+            'root_selection': {'volume_uuid': module.OS_UUID, 'root_authentication_bypassed': False},
+            'original_crypto_table_owner_observed': True,
+            'original_crypto_initialized_observed': True,
+            'requested_kernel_symbols': {
+                **report['requested_kernel_symbols'], '_trust_cache_static_loaded': '01',
+            },
+            'trace_events': [
+                {'symbol': '_vfs_mountroot'}, {'symbol': '_native_owner_root_checkpoint'},
+                {'symbol': '_native_owner_root_accepted_checkpoint'},
+                {'symbol': '_load_static_trust_cache'}, {'symbol': '_load_init_program'},
+            ],
+            'followed_main_entry': {
+                'observed': True, 'first_instruction_completed': True,
+                'entry_offset': entry, 'pc': hex(header + entry),
+                'checkpoint_pc': hex(header + entry + 4), 'mach_header': hex(header),
+                'mach_header_bytes': launchd['mach_header'],
+                'entry_bytes_after_fault': launchd['entry_prefix'],
+                'pstate': '0x0', 'checkpoint_pstate': '0x0',
+            },
+            'original_launchd_main_input': {
+                'sha256': launchd['sha256'], 'entry_offset': entry,
+                'entry_prefix': launchd['entry_prefix'], 'mach_header': launchd['mach_header'],
+            },
+        })
+        return inputs, report
+
+    def test_launchd_target_pins_one_backed_arm64_lc_main(self):
+        data = self.synthetic_launchd()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'launchd'
+            path.write_bytes(data)
+            expected = hashlib.sha256(data).hexdigest()
+            with patch.object(module, 'LAUNCHD_SHA256', expected):
+                launchd = module.validate_launchd_target(path)
+                self.assertEqual(launchd['entry_offset'], 64)
+                self.assertEqual(launchd['entry_prefix'], data[64:80].hex())
+                self.assertEqual(launchd['mach_header'], data[:32].hex())
+                path.write_bytes(data + b'tampered')
+                with self.assertRaisesRegex(ValueError, 'pinned original'):
+                    module.validate_launchd_target(path)
+                with self.assertRaisesRegex(ValueError, 'changed during'):
+                    module.verify_launchd_target(launchd)
+
+    def test_launchd_summary_requires_real_lc_main_owner_root_and_trust(self):
+        data = self.synthetic_launchd()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'launchd'
+            path.write_bytes(data)
+            with patch.object(module, 'LAUNCHD_SHA256', hashlib.sha256(data).hexdigest()):
+                launchd = module.validate_launchd_target(path)
+            inputs, report = self.launchd_report_fixture(launchd)
+            summary = module.launchd_summary(report, inputs, launchd, '7' * 64, path, path)
+            self.assertTrue(summary['launchd_exec_observed'])
+            self.assertTrue(summary['trust_cache_static_loaded'])
+            self.assertFalse(summary['data_volume_attached'])
+            for field in ('apple_hardware_root_trust_demonstrated', 'apple_userspace_boot_demonstrated',
+                          'functional_ipados_boot_demonstrated', 'springboard_display_demonstrated',
+                          'hardware_boot_demonstrated', 'device_flashable'):
+                self.assertFalse(summary[field])
+            mutations = [
+                (('stop_symbol',), '_panic'), (('original_launchd_main_executed',), False),
+                (('followed_main_entry', 'first_instruction_completed'), False),
+                (('followed_main_entry', 'entry_bytes_after_fault'), '00' * 16),
+                (('followed_main_entry', 'pstate'), '0x5'),
+                (('requested_kernel_symbols', '_trust_cache_static_loaded'), '00'),
+                (('owner_root_binding_audit', '_native_owner_root_accepted'), 0),
+                (('root_selection', 'root_authentication_bypassed'), True),
+                (('trace_events',), []), (('virtio_block_input', 'read_only'), False),
+                (('trust_cache_bundle_sha256',), '0' * 64),
+            ]
+            for keys, value in mutations:
+                actual = copy.deepcopy(report)
+                parent = actual
+                for key in keys[:-1]:
+                    parent = parent[key]
+                parent[keys[-1]] = value
+                with self.subTest(keys=keys), self.assertRaises(ValueError):
+                    module.validate_launchd_report(actual, inputs, launchd)
+
+    def test_launchd_probe_uses_only_supported_options_and_no_data_fixture(self):
+        generic = ROOT.parent / 'UniXNU/scripts/probe-darwinboot-xnu.py'
+        if not generic.is_file():
+            self.skipTest('generic UniXNU checkout is not available')
+        declared = set()
+        for node in ast.walk(ast.parse(generic.read_text())):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'add_argument':
+                declared.update(arg.value for arg in node.args if isinstance(arg, ast.Constant) and
+                                isinstance(arg.value, str) and arg.value.startswith('--'))
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            output = base / 'launchd-run'
+
+            def run(command, **kwargs):
+                (output / 'gdb-stop.json').write_text('{}')
+                return subprocess.CompletedProcess(command, 0, 'synthetic launchd observer fixture')
+
+            with patch.object(module.subprocess, 'run', side_effect=run) as execute:
+                module.run_launchd_probe(generic.parents[1], base / 'kernel', base / 'prelink', base / 'trust',
+                                         base / 'os.dmg', base / 'systemos.dmg', base / 'efi', base / 'fdt',
+                                         base / 'launchd', output)
+            command = execute.call_args.args[0]
+            self.assertEqual(execute.call_args.kwargs['env']['PYTHONDONTWRITEBYTECODE'], '1')
+            options = {value for value in command if value.startswith('--')}
+            self.assertFalse(options - declared, options - declared)
+            for option in ('--follow-target-main', '--target-main-executable', '--inspect-owner-root',
+                           '--check-commpage', '--qemu-vmm-present', '--trust-cache'):
+                self.assertIn(option, command)
+            self.assertIn('_trust_cache_static_loaded:1', command)
+            for option in ('--finish-function', '--owner-root-accepted', '--native-user',
+                           '--native-air-init', '--data-ramdisk'):
+                self.assertNotIn(option, command)
+            self.assertTrue((output / 'probe-command.json').is_file())
+
+    def test_workflow_has_readonly_launchd_source_and_bounded_not_for_device_evidence(self):
+        workflow = (ROOT / '.github/workflows/dali-xnu.yml').read_text()
+        launchd = workflow.split('- name: Probe original launchd LC_MAIN in QEMU', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn('hdiutil attach -readonly', launchd)
+        self.assertIn('hdiutil detach', launchd)
+        self.assertIn('--follow-launchd', launchd)
+        self.assertIn('--target-launchd', launchd)
+        self.assertNotIn('--data-ramdisk', launchd)
+        artifact = workflow.split('- name: Upload bounded QEMU launchd evidence', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn('dali-ipados-qemu-launchd-not-for-device', artifact)
+        self.assertIn('launchd-summary.json', artifact)
+        self.assertNotIn('dali-ipados-target-launchd', artifact)
+
+
 if __name__ == '__main__':
     unittest.main()

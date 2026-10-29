@@ -26,6 +26,7 @@ OS_UUID = '04769D26-2CA0-4825-B443-E2E5F88300F2'
 OS_BYTES = 6077580800
 SYSTEMOS_BYTES = 3303014400
 OWNER_KEY_BYTES = 395
+LAUNCHD_SHA256 = '8cec9a3c44a443b08e977ccc5d577850316ad428c575dc01f09b018dbd5b6a25'
 
 
 def digest(path):
@@ -359,6 +360,221 @@ def root_summary(report, inputs, fdt_sha256):
     }
 
 
+def validate_launchd_target(path):
+    path = Path(path).resolve(strict=True)
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != LAUNCHD_SHA256:
+        raise ValueError('launchd input does not match the pinned original 21H461 executable')
+    if len(data) < 32 or struct.unpack_from('<I', data)[0] != 0xfeedfacf:
+        raise ValueError('launchd input is not the pinned ARM64 Mach-O')
+    ncmds, sizeofcmds = struct.unpack_from('<II', data, 16)
+    commands_end = 32 + sizeofcmds
+    if commands_end > len(data) or ncmds > sizeofcmds // 8:
+        raise ValueError('launchd Mach-O load-command range is invalid')
+    offset = 32
+    entries = []
+    for _ in range(ncmds):
+        if offset + 8 > commands_end:
+            raise ValueError('launchd Mach-O load command is truncated')
+        command, command_size = struct.unpack_from('<II', data, offset)
+        if command_size < 8 or offset + command_size > commands_end:
+            raise ValueError('launchd Mach-O load command has invalid bounds')
+        if command == 0x80000028:
+            if command_size < 24:
+                raise ValueError('launchd LC_MAIN command is truncated')
+            entries.append(struct.unpack_from('<Q', data, offset + 8)[0])
+        offset += command_size
+    if len(entries) != 1 or not 0 < entries[0] < len(data) - 16:
+        raise ValueError('launchd must have exactly one backed LC_MAIN entry')
+    entry = entries[0]
+    return {'path': str(path), 'sha256': LAUNCHD_SHA256, 'bytes': len(data),
+            'entry_offset': entry, 'entry_prefix': data[entry:entry + 16].hex(),
+            'mach_header': data[:32].hex()}
+
+
+def verify_launchd_target(launchd):
+    path = Path(launchd['path'])
+    if (not path.is_file() or path.stat().st_size != launchd['bytes'] or
+            digest(path) != launchd['sha256']):
+        raise ValueError('pinned launchd input changed during the QEMU run')
+
+
+def validate_launchd_report(report, inputs, launchd):
+    if (report.get('stop_symbol') != 'original-launchd-main' or
+            report.get('original_launchd_main_executed') is not True or
+            report.get('bounded_timeout_interrupted') is not False or
+            report.get('functional_ipados_boot_demonstrated') is not False or
+            report.get('ipados_userspace_boot_demonstrated') is not False or
+            report.get('hardware_boot_demonstrated', False) is not False):
+        raise ValueError('launchd report did not prove only the bounded original LC_MAIN execution')
+    if (report.get('kernel_sha256') != inputs['kernel_sha256'] or
+            report.get('offline_qemu_vmm_present_declared') is not True):
+        raise ValueError('launchd report does not bind the exact kernel and QEMU identity')
+    main = report.get('followed_main_entry', {})
+    main_input = report.get('original_launchd_main_input', {})
+    if (main.get('observed') is not True or main.get('first_instruction_completed') is not True or
+            main.get('entry_offset') != launchd['entry_offset'] or
+            main.get('entry_bytes_after_fault') != launchd['entry_prefix'] or
+            main.get('mach_header_bytes') != launchd['mach_header'] or
+            main_input.get('sha256') != launchd['sha256'] or
+            main_input.get('entry_offset') != launchd['entry_offset'] or
+            main_input.get('entry_prefix') != launchd['entry_prefix'] or
+            main_input.get('mach_header') != launchd['mach_header']):
+        raise ValueError('observed launchd entry is not the exact pinned LC_MAIN and original bytes')
+    try:
+        header = int(main['mach_header'], 16)
+        entry_pc = int(main['pc'], 16)
+        completed_pc = int(main['checkpoint_pc'], 16)
+        pstate = int(main['pstate'], 16)
+        checkpoint_pstate = int(main['checkpoint_pstate'], 16)
+        report_pc = int(report['pc'], 16)
+        report_pstate = int(report['pstate'], 16)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('launchd LC_MAIN report lacks actual user register state') from error
+    if (entry_pc != header + launchd['entry_offset'] or completed_pc != entry_pc + 4 or
+            report_pc != completed_pc or pstate & 0x1f != 0 or checkpoint_pstate & 0x1f != 0 or
+            report_pstate & 0x1f != 0):
+        raise ValueError('launchd main instruction did not complete at the exact original EL0 entry')
+    if report.get('direct_user_commpage_shifts') != {'fffff4025:1': 12, 'fffff4037:1': 12}:
+        raise ValueError('launchd user commpage does not report native 4K page shifts')
+    if report.get('kernel_page_globals') != {
+            '_PAGE_SHIFT_CONST': 12, '_page_shift': 12, '_page_shift_user32': 12, '_page_size': 4096}:
+        raise ValueError('launchd kernel page globals do not retain native 4K policy')
+    binding = report.get('owner_root_binding_audit', {})
+    device = binding.get('_native_owner_root_mount_device', 0xffffffff)
+    if (binding.get('boot_root_accepted') is not True or binding.get('_native_owner_root_accepted') != 1 or
+            binding.get('_native_owner_root_decision') != 1 or binding.get('_native_owner_root_trust_enabled') != 1 or
+            binding.get('_native_owner_root_apple_autherr') != 80 or binding.get('_native_owner_root_readonly') != 1 or
+            binding.get('actual_uuid') != OS_UUID or not isinstance(device, int) or not 0 < device < 0xffffffff or
+            device != binding.get('_native_owner_root_selected_device') or
+            device != binding.get('_native_verified_block_root_device') or
+            binding.get('_native_verified_block_root_media_matches') != 1 or
+            binding.get('_native_verified_block_root_uuid_match') != 1):
+        raise ValueError('launchd did not retain the actual read-only owner-root identity')
+    root_selection = report.get('root_selection', {})
+    if (root_selection.get('volume_uuid') != OS_UUID or
+            root_selection.get('root_authentication_bypassed') is not False):
+        raise ValueError('launchd root selection does not preserve the original authentication path')
+    if (report.get('original_amfi_table_owner_observed') is not True or
+            report.get('crypto14_initialization_observed') is not True or
+            report.get('original_crypto_table_owner_observed') is not True or
+            report.get('original_crypto_initialized_observed') is not True or
+            report.get('trust_cache_bundle_sha256') != inputs['trust_cache']['sha256']):
+        raise ValueError('launchd report lacks original AMFI/crypto or exact trust-cache input evidence')
+    try:
+        anchor = bytes.fromhex(report['requested_kernel_symbols']['_verified_root_key'])
+        trust_loaded = bytes.fromhex(report['requested_kernel_symbols']['_trust_cache_static_loaded'])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('launchd report lacks linked owner or static trust-cache state') from error
+    if (len(anchor) != OWNER_KEY_BYTES or not anchor.startswith(b'VROOTKEY') or
+            hashlib.sha256(anchor).hexdigest() != inputs['policy']['owner_anchor_sha256'] or
+            len(trust_loaded) != 1 or int.from_bytes(trust_loaded, 'little') != 1):
+        raise ValueError('launchd linked owner anchor or runtime-loaded trust-cache state is invalid')
+    events = {event.get('symbol') for event in report.get('trace_events', [])}
+    if not {'_vfs_mountroot', '_native_owner_root_checkpoint', '_native_owner_root_accepted_checkpoint',
+            '_load_static_trust_cache', '_load_init_program'} <= events:
+        raise ValueError('launchd path is missing a root, trust-cache or init-program runtime milestone')
+    virtio = report.get('native_virtio_globals', {})
+    integrity = report.get('native_virtio_integrity', {})
+    if (virtio.get('_native_virtio_ready') != 1 or virtio.get('_native_virtio_read_requests', 0) <= 0 or
+            virtio.get('_native_virtio_read_failures') != 0 or
+            integrity.get('_native_virtio_manifest_ready') != 1 or
+            integrity.get('_native_virtio_integrity_failures') != 0 or
+            integrity.get('_native_virtio_verified_blocks', 0) <= 0):
+        raise ValueError('launchd did not retain authenticated Virtio root reads')
+    os_input = report.get('virtio_block_input', {})
+    systemos_input = report.get('virtio_extra_block_input', {})
+    if (os_input.get('read_only') is not True or os_input.get('device_attached') is not True or
+            os_input.get('source_format') != 'UDIF' or os_input.get('bytes') != OS_BYTES or
+            os_input.get('host_media_writable') is not False or
+            os_input.get('source_sha256') != inputs['images']['OS']['sha256'] or
+            systemos_input.get('read_only') is not True or systemos_input.get('device_attached') is not True or
+            systemos_input.get('bytes') != SYSTEMOS_BYTES or
+            systemos_input.get('first_sector_sha256') != inputs['images']['SystemOS']['first_sector_sha256']):
+        raise ValueError('launchd run did not use the exact read-only OS/SystemOS input pair')
+
+
+def launchd_summary(report, inputs, launchd, fdt_sha256, prelink_report_path, prelink_verification_path):
+    validate_launchd_report(report, inputs, launchd)
+    binding = report['owner_root_binding_audit']
+    entry = report['followed_main_entry']
+    return {
+        'schema': 'dali-ipados-qemu-launchd-v1',
+        'candidate_sha256': report['kernel_sha256'],
+        'effective_config_sha256': inputs['config']['sha256'],
+        'prelink_report_sha256': digest(prelink_report_path),
+        'prelink_verification_sha256': digest(prelink_verification_path),
+        'trust_cache_sha256': inputs['trust_cache']['sha256'],
+        'trust_cache_static_loaded': True,
+        'root_image_sha256': inputs['images']['OS']['sha256'],
+        'systemos_image_sha256': inputs['images']['SystemOS']['sha256'],
+        'qemu_fdt_sha256': fdt_sha256,
+        'owner_anchor_sha256': inputs['policy']['owner_anchor_sha256'],
+        'owner_root_accepted': True,
+        'verified_root_authenticated': True,
+        'owner_root_uuid': binding['actual_uuid'],
+        'owner_root_device': binding['_native_owner_root_mount_device'],
+        'apple_rootauth_errno': binding['_native_owner_root_apple_autherr'],
+        'apple_hardware_root_trust_demonstrated': False,
+        'launchd_sha256': launchd['sha256'],
+        'launchd_lc_main_offset': launchd['entry_offset'],
+        'launchd_entry_pc': entry['pc'],
+        'launchd_checkpoint_pc': entry['checkpoint_pc'],
+        'launchd_entry_pstate': entry['pstate'],
+        'launchd_first_instruction_completed': True,
+        'launchd_exec_observed': True,
+        'init_program_entry_observed': True,
+        'data_volume_attached': False,
+        'apple_userspace_boot_demonstrated': False,
+        'functional_ipados_boot_demonstrated': False,
+        'springboard_display_demonstrated': False,
+        'hardware_boot_demonstrated': False,
+        'device_flashable': False,
+        'scope': 'QEMU-only original launchd LC_MAIN after authenticated owner-root; no Data volume, Apple hardware trust, or Dali qualification',
+    }
+
+
+def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
+                      root_image, systemos_image, efi, fdt, launchd, output, firmware=None):
+    if output.exists():
+        raise ValueError('QEMU launchd output directory must be new')
+    output.mkdir(parents=True, exist_ok=False)
+    probe = Path(unixnu).resolve() / 'scripts/probe-darwinboot-xnu.py'
+    command = [sys.executable, '-I', '-B', str(probe),
+               '--kernel', str(Path(kernel).resolve()), '--uefi-efi', str(Path(efi).resolve()),
+               '--prelink-report', str(Path(prelink_report).resolve()),
+               '--trust-cache', str(Path(trust_cache_path).resolve()),
+               '--virtio-udif-image', str(Path(root_image).resolve()),
+               '--virtio-extra-block-image', str(Path(systemos_image).resolve()),
+               '--virtio-mmio-fdt', str(Path(fdt).resolve()),
+               '--root-match-volume-uuid', OS_UUID, '--qemu-vmm-present', '--armvirt', '--armcpu',
+               '--nvram-proxy', '--crypto-hash-method', 'sha2-384', '--amfi-platform-only',
+               '--require-crypto14', '--follow-target-main', '--target-main-executable', str(Path(launchd).resolve()),
+               '--inspect-owner-root', '--check-commpage', '--break-symbol', '_panic',
+               '--timeout', '180', '--qemu-memory-mib', '2048',
+               '--read-kernel-symbol', f'_verified_root_key:{OWNER_KEY_BYTES}',
+               '--read-kernel-symbol', '_trust_cache_static_loaded:1',
+               '--trace-symbol', '_vfs_mountroot', '--trace-symbol', '_native_owner_root_checkpoint',
+               '--trace-symbol', '_native_owner_root_accepted_checkpoint',
+               '--trace-symbol', '_load_static_trust_cache', '--trace-symbol', '_load_init_program',
+               '--kernel-base-args', '-v dali-earlyboot=1 kt_fixed_zones=120 serial=3 debug=0x14e',
+               '--output', str(output)]
+    if firmware is not None:
+        command += ['--qemu-firmware', str(Path(firmware).resolve())]
+    (output / 'probe-command.json').write_text(json.dumps(command, indent=2) + '\n')
+    probe_env = os.environ.copy()
+    probe_env['PYTHONDONTWRITEBYTECODE'] = '1'
+    result = subprocess.run(command, env=probe_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, timeout=300)
+    (output.parent / (output.name + '.log')).write_text(result.stdout)
+    report_path = output / 'gdb-stop.json'
+    if result.returncode:
+        raise RuntimeError('QEMU launchd probe stopped before validated LC_MAIN: ' + result.stdout[-8000:])
+    if not report_path.is_file():
+        raise RuntimeError('QEMU launchd probe produced no GDB report')
+    return json.loads(report_path.read_bytes())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--unixnu', type=Path, required=True)
@@ -376,7 +592,14 @@ def main():
                         help='Existing matching QEMU virt FDT; otherwise generate one with two read-only disks')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--qemu-firmware', type=Path)
+    parser.add_argument('--follow-launchd', action='store_true',
+                        help='Run a separate QEMU pass to the exact original launchd LC_MAIN')
+    parser.add_argument('--target-launchd', type=Path,
+                        help='Unchanged 21H461 launchd executable for --follow-launchd')
     args = parser.parse_args()
+    if args.follow_launchd != (args.target_launchd is not None):
+        parser.error('--follow-launchd and --target-launchd must be supplied together')
+    launchd = validate_launchd_target(args.target_launchd) if args.follow_launchd else None
     if args.output.exists():
         parser.error('QEMU root output must be a new directory')
     inputs = validate_inputs(args.kernel, args.prelink_report, args.prelink_verification,
@@ -396,19 +619,32 @@ def main():
         try:
             device = attach_readonly_root_image(args.root_image)
             try:
-                report = run_root_probe(args.unixnu, args.kernel, args.prelink_report, args.trust_cache,
-                                        args.root_image, args.systemos_image, args.uefi_efi, fdt,
-                                        args.output, args.qemu_firmware)
+                if args.follow_launchd:
+                    report = run_launchd_probe(args.unixnu, args.kernel, args.prelink_report, args.trust_cache,
+                                               args.root_image, args.systemos_image, args.uefi_efi, fdt,
+                                               launchd['path'], args.output, args.qemu_firmware)
+                else:
+                    report = run_root_probe(args.unixnu, args.kernel, args.prelink_report, args.trust_cache,
+                                            args.root_image, args.systemos_image, args.uefi_efi, fdt,
+                                            args.output, args.qemu_firmware)
             finally:
                 detach_readonly_root_image(device)
         finally:
             if args.output.is_dir():
                 shutil.copyfile(fdt, args.output / 'qemu-virtio.dtb')
             verify_source_media(inputs)
-        summary = root_summary(report, inputs, fdt_sha256)
-        summary['prelink_report_sha256'] = digest(args.prelink_report)
-        summary['prelink_verification_sha256'] = digest(args.prelink_verification)
-        (args.output / 'root-checkpoint-summary.json').write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
+            if launchd is not None:
+                verify_launchd_target(launchd)
+        if args.follow_launchd:
+            summary = launchd_summary(report, inputs, launchd, fdt_sha256,
+                                      args.prelink_report, args.prelink_verification)
+            summary_path = args.output / 'launchd-summary.json'
+        else:
+            summary = root_summary(report, inputs, fdt_sha256)
+            summary['prelink_report_sha256'] = digest(args.prelink_report)
+            summary['prelink_verification_sha256'] = digest(args.prelink_verification)
+            summary_path = args.output / 'root-checkpoint-summary.json'
+        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
         print(json.dumps(summary, sort_keys=True))
 
 
