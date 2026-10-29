@@ -479,6 +479,7 @@ jobs:
             ${{ runner.temp }}/dali-ipados-prelink-qemu/*/gdb-stderr.log
             ${{ runner.temp }}/dali-ipados-prelink-qemu/reset-instructions.json
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 1
 
       - name: Test UniXNU to DarwinBoot handoff fixtures

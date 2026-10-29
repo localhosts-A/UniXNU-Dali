@@ -818,6 +818,7 @@ class PrelinkQemuTests(unittest.TestCase):
                 "UniXNU/out/dali/package/Build/Out/AARCH64-DEBUG/UniXNU.efi",
                 "UniXNU/build/DarwinBoot/DEBUG_CLANGPDB/AARCH64/DarwinBoot.efi"):
             self.assertIn(path, upload)
+        self.assertIn("include-hidden-files: true", upload)
 
 
 if __name__ == "__main__":
