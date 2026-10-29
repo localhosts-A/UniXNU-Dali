@@ -384,6 +384,7 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                     'old_length_before': 0, 'old_length_after': 128,
                     'scope': 'one exact sysctl return; output bytes are never read',
                 },
+                'process_list': [{'pid': 1, 'name': 'launchd', 'state': 2}],
             }
 
             def run(command, **kwargs):
@@ -397,6 +398,7 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                                              base / 'trust', base / 'os.dmg', base / 'systemos.dmg',
                                              base / 'efi', base / 'fdt', launchd_path, output)
             self.assertIn('syscall_return_checkpoint', str(error.exception))
+            self.assertIn('pid1_process', str(error.exception))
             report = json.loads((output / 'gdb-stop.json').read_bytes())
         self.assertTrue(report['launchd_syscall_pc_mapping']['events'][0]['user_pc']
                         ['mapped_to_launchd_executable'])
@@ -464,7 +466,7 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             options = {value for value in command if value.startswith('--')}
             self.assertFalse(options - declared, options - declared)
             for option in ('--follow-target-main', '--target-main-executable', '--inspect-owner-root',
-                           '--check-commpage', '--qemu-vmm-present', '--trust-cache'):
+                           '--inspect-process-list', '--check-commpage', '--qemu-vmm-present', '--trust-cache'):
                 self.assertIn(option, command)
             self.assertIn('_trust_cache_static_loaded:1', command)
             self.assertIn('--log-syscalls-after', command)

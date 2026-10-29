@@ -633,7 +633,7 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--root-match-volume-uuid', OS_UUID, '--qemu-vmm-present', '--armvirt', '--armcpu',
                '--nvram-proxy', '--crypto-hash-method', 'sha2-384', '--amfi-platform-only',
                '--require-crypto14', '--follow-target-main', '--target-main-executable', str(Path(launchd).resolve()),
-               '--inspect-owner-root', '--check-commpage', '--break-symbol', '_panic',
+               '--inspect-owner-root', '--inspect-process-list', '--check-commpage', '--break-symbol', '_panic',
                '--timeout', '180', '--qemu-memory-mib', '2048',
                '--read-kernel-symbol', f'_verified_root_key:{OWNER_KEY_BYTES}',
                '--read-kernel-symbol', '_trust_cache_static_loaded:1',
@@ -666,6 +666,10 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
             diagnostics['launchd_syscall_pc_mapping'] = report['launchd_syscall_pc_mapping']
         if report and report.get('syscall_return_checkpoint'):
             diagnostics['syscall_return_checkpoint'] = report['syscall_return_checkpoint']
+        if report and isinstance(report.get('process_list'), list):
+            diagnostics['pid1_process'] = next(
+                (entry for entry in report['process_list']
+                 if isinstance(entry, dict) and entry.get('pid') == 1), None)
         suffix = ('\nBounded launchd syscall diagnostics:\n' + json.dumps(diagnostics, indent=2)
                   if diagnostics else '')
         raise RuntimeError('QEMU launchd probe stopped before validated LC_MAIN: ' +
