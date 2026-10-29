@@ -273,10 +273,13 @@ class DaliQemuRootProfileTests(unittest.TestCase):
 
     @staticmethod
     def synthetic_launchd():
-        data = bytearray(96)
-        struct.pack_into('<IiiIIIII', data, 0, 0xfeedfacf, 0x100000c, 0, 2, 1, 24, 0, 0)
-        struct.pack_into('<IIQQ', data, 32, 0x80000028, 24, 64, 0)
-        data[64:80] = b'LCMAIN-ENTRY!!!!'
+        entry = 128
+        data = bytearray(160)
+        struct.pack_into('<IiiIIIII', data, 0, 0xfeedfacf, 0x100000c, 0, 2, 2, 96, 0, 0)
+        struct.pack_into('<II16sQQQQiiII', data, 32, 0x19, 72, b'__TEXT',
+                         0x100000000, 0x1000, 0, len(data), 7, 5, 0, 0)
+        struct.pack_into('<IIQQ', data, 104, 0x80000028, 24, entry, 0)
+        data[entry:entry + 16] = b'LCMAIN-ENTRY!!!!'
         return bytes(data)
 
     def launchd_report_fixture(self, launchd):
@@ -329,14 +332,69 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             expected = hashlib.sha256(data).hexdigest()
             with patch.object(module, 'LAUNCHD_SHA256', expected):
                 launchd = module.validate_launchd_target(path)
-                self.assertEqual(launchd['entry_offset'], 64)
-                self.assertEqual(launchd['entry_prefix'], data[64:80].hex())
+                self.assertEqual(launchd['entry_offset'], 128)
+                self.assertEqual(launchd['entry_prefix'], data[128:144].hex())
                 self.assertEqual(launchd['mach_header'], data[:32].hex())
                 path.write_bytes(data + b'tampered')
                 with self.assertRaisesRegex(ValueError, 'pinned original'):
                     module.validate_launchd_target(path)
                 with self.assertRaisesRegex(ValueError, 'changed during'):
                     module.verify_launchd_target(launchd)
+
+    def test_maps_syscall_pcs_to_pinned_launchd_text(self):
+        data = self.synthetic_launchd()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'launchd'
+            path.write_bytes(data)
+            with patch.object(module, 'LAUNCHD_SHA256', hashlib.sha256(data).hexdigest()):
+                launchd = module.validate_launchd_target(path)
+            header = 0x100000000
+            report = {
+                'followed_main_entry': {'mach_header': hex(header), 'entry_offset': 128,
+                                        'observed': False, 'first_instruction_completed': False},
+                'syscall_events': [
+                    {'number': 4, 'user_pc': hex(header + 140), 'user_lr': hex(header + 148)},
+                    {'number': 202, 'user_pc': '0x101072940', 'user_lr': '0x10103ff68'},
+                ],
+            }
+            mapping = module.map_launchd_syscall_pcs(report, launchd)
+        self.assertTrue(mapping['available'])
+        self.assertEqual(mapping['lc_main_target'], hex(header + 128))
+        self.assertFalse(mapping['lc_main_observed'])
+        self.assertTrue(mapping['events'][0]['user_pc']['mapped_to_launchd_executable'])
+        self.assertEqual(mapping['events'][0]['user_pc']['file_offset'], 140)
+        self.assertFalse(mapping['events'][1]['user_pc']['mapped_to_launchd_executable'])
+        self.assertIn('does not establish LC_MAIN', mapping['scope'])
+
+    def test_failed_launchd_probe_persists_bounded_pc_mapping(self):
+        data = self.synthetic_launchd()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            launchd_path = base / 'launchd'
+            launchd_path.write_bytes(data)
+            output = base / 'launchd-run'
+            header = 0x100000000
+            partial = {
+                'followed_main_entry': {'mach_header': hex(header), 'entry_offset': 128,
+                                        'observed': False, 'first_instruction_completed': False},
+                'syscall_events': [{'number': 4, 'user_pc': hex(header + 140),
+                                    'user_lr': hex(header + 148)}],
+            }
+
+            def run(command, **kwargs):
+                (output / 'gdb-stop.json').write_text(json.dumps(partial))
+                return subprocess.CompletedProcess(command, 1, 'timeout before validated LC_MAIN')
+
+            with patch.object(module, 'LAUNCHD_SHA256', hashlib.sha256(data).hexdigest()), \
+                    patch.object(module.subprocess, 'run', side_effect=run):
+                with self.assertRaisesRegex(RuntimeError, 'stopped before validated LC_MAIN'):
+                    module.run_launchd_probe(ROOT.parent / 'UniXNU', base / 'kernel', base / 'prelink',
+                                             base / 'trust', base / 'os.dmg', base / 'systemos.dmg',
+                                             base / 'efi', base / 'fdt', launchd_path, output)
+            report = json.loads((output / 'gdb-stop.json').read_bytes())
+        self.assertTrue(report['launchd_syscall_pc_mapping']['events'][0]['user_pc']
+                        ['mapped_to_launchd_executable'])
+        self.assertFalse(report['launchd_syscall_pc_mapping']['lc_main_observed'])
 
     def test_launchd_summary_requires_real_lc_main_owner_root_and_trust(self):
         data = self.synthetic_launchd()

@@ -373,6 +373,7 @@ def validate_launchd_target(path):
         raise ValueError('launchd Mach-O load-command range is invalid')
     offset = 32
     entries = []
+    segments = []
     for _ in range(ncmds):
         if offset + 8 > commands_end:
             raise ValueError('launchd Mach-O load command is truncated')
@@ -383,13 +384,31 @@ def validate_launchd_target(path):
             if command_size < 24:
                 raise ValueError('launchd LC_MAIN command is truncated')
             entries.append(struct.unpack_from('<Q', data, offset + 8)[0])
+        elif command == 0x19:
+            if command_size < 72:
+                raise ValueError('launchd LC_SEGMENT_64 command is truncated')
+            raw_name = data[offset + 8:offset + 24].split(b'\0', 1)[0]
+            try:
+                name = raw_name.decode('ascii')
+            except UnicodeDecodeError as error:
+                raise ValueError('launchd segment name is not ASCII') from error
+            vmaddr, vmsize, fileoff, filesize, maxprot, initprot = struct.unpack_from(
+                '<QQQQii', data, offset + 24)
+            if (not vmsize or filesize > vmsize or fileoff + filesize > len(data) or
+                    vmaddr + vmsize > 1 << 64):
+                raise ValueError('launchd Mach-O segment bounds are invalid')
+            segments.append({'name': name, 'vmaddr': vmaddr, 'vmsize': vmsize,
+                             'fileoff': fileoff, 'filesize': filesize,
+                             'maxprot': maxprot, 'initprot': initprot})
         offset += command_size
-    if len(entries) != 1 or not 0 < entries[0] < len(data) - 16:
-        raise ValueError('launchd must have exactly one backed LC_MAIN entry')
+    text = [segment for segment in segments if segment['name'] == '__TEXT' and segment['fileoff'] == 0]
+    if (len(entries) != 1 or len(text) != 1 or
+            not 0 < entries[0] < text[0]['filesize'] - 16):
+        raise ValueError('launchd must have one file-backed __TEXT segment and exactly one backed LC_MAIN entry')
     entry = entries[0]
     return {'path': str(path), 'sha256': LAUNCHD_SHA256, 'bytes': len(data),
             'entry_offset': entry, 'entry_prefix': data[entry:entry + 16].hex(),
-            'mach_header': data[:32].hex()}
+            'mach_header': data[:32].hex(), 'segments': segments}
 
 
 def verify_launchd_target(launchd):
@@ -397,6 +416,62 @@ def verify_launchd_target(launchd):
     if (not path.is_file() or path.stat().st_size != launchd['bytes'] or
             digest(path) != launchd['sha256']):
         raise ValueError('pinned launchd input changed during the QEMU run')
+
+
+def map_launchd_syscall_pcs(report, launchd):
+    main = report.get('followed_main_entry') or {}
+    text = [segment for segment in launchd['segments']
+            if segment['name'] == '__TEXT' and segment['fileoff'] == 0]
+    if len(text) != 1 or not main.get('mach_header'):
+        return {'available': False, 'reason': 'missing unique __TEXT mapping or runtime Mach header'}
+    try:
+        header = int(main['mach_header'], 0)
+        if header & 4095 or main.get('entry_offset') != launchd['entry_offset']:
+            raise ValueError
+    except (TypeError, ValueError):
+        return {'available': False, 'reason': 'invalid runtime Mach header or LC_MAIN offset'}
+
+    data = Path(launchd['path']).read_bytes()
+    if hashlib.sha256(data).hexdigest() != launchd['sha256']:
+        raise ValueError('pinned launchd input changed before syscall-PC mapping')
+    slide = header - text[0]['vmaddr']
+
+    def map_address(value):
+        try:
+            address = int(value, 0)
+        except (TypeError, ValueError):
+            return {'mapped_to_launchd_executable': False, 'reason': 'invalid address'}
+        matches = []
+        for segment in launchd['segments']:
+            if not segment['initprot'] & 4:
+                continue
+            start = segment['vmaddr'] + slide
+            if start <= address < start + segment['vmsize']:
+                offset = segment['fileoff'] + address - start
+                matches.append({'segment': segment['name'], 'file_offset': offset,
+                                'file_backed': offset < segment['fileoff'] + segment['filesize']})
+        if len(matches) != 1:
+            return {'mapped_to_launchd_executable': False,
+                    'reason': 'outside executable segments' if not matches else 'overlapping executable segments'}
+        return {'mapped_to_launchd_executable': True, **matches[0]}
+
+    events = []
+    for index, event in enumerate(report.get('syscall_events', [])):
+        if not isinstance(event, dict):
+            continue
+        events.append({'index': index, 'number': event.get('number'),
+                       'user_pc': map_address(event.get('user_pc')),
+                       'user_lr': map_address(event.get('user_lr'))})
+    return {
+        'available': True,
+        'launchd_sha256': launchd['sha256'],
+        'runtime_mach_header': hex(header),
+        'image_slide': hex(slide) if slide >= 0 else f'-0x{-slide:x}',
+        'lc_main_target': hex(header + launchd['entry_offset']),
+        'lc_main_observed': bool(main.get('observed') and main.get('first_instruction_completed')),
+        'events': events,
+        'scope': 'address-to-file mapping only; does not establish LC_MAIN completion',
+    }
 
 
 def validate_launchd_report(report, inputs, launchd):
@@ -576,11 +651,22 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                             text=True, timeout=300)
     (output.parent / (output.name + '.log')).write_text(result.stdout)
     report_path = output / 'gdb-stop.json'
+    report = None
+    if report_path.is_file():
+        report = json.loads(report_path.read_bytes())
+        if report.get('syscall_events') and report.get('followed_main_entry'):
+            launchd_input = validate_launchd_target(launchd)
+            report['launchd_syscall_pc_mapping'] = map_launchd_syscall_pcs(report, launchd_input)
+            report_path.write_text(json.dumps(report, indent=2) + '\n')
     if result.returncode:
-        raise RuntimeError('QEMU launchd probe stopped before validated LC_MAIN: ' + result.stdout[-8000:])
-    if not report_path.is_file():
+        mapping = (json.dumps(report.get('launchd_syscall_pc_mapping'), indent=2)
+                   if report and report.get('launchd_syscall_pc_mapping') else '')
+        suffix = '\nLaunchd syscall-PC mapping:\n' + mapping if mapping else ''
+        raise RuntimeError('QEMU launchd probe stopped before validated LC_MAIN: ' +
+                           result.stdout[-8000:] + suffix)
+    if report is None:
         raise RuntimeError('QEMU launchd probe produced no GDB report')
-    return json.loads(report_path.read_bytes())
+    return report
 
 
 def main():
