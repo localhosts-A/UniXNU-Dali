@@ -777,6 +777,11 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
     process_layout_objects = (Path(kernel).resolve().parent.parent /
                               'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837')
     gate_wait_callsite = resolve_image4_gate_wait_callsite(kernel, prelink_report)
+    gate_wait_pc = int(gate_wait_callsite['address'], 16)
+    gate_wait_register_reads = [
+        f'{gate_wait_pc:x}:x0:0:10',
+        f'{gate_wait_pc:x}:x1:0:10',
+    ]
     command = [sys.executable, '-I', '-B', str(probe),
                '--kernel', str(Path(kernel).resolve()), '--uefi-efi', str(Path(efi).resolve()),
                '--prelink-report', str(Path(prelink_report).resolve()),
@@ -789,7 +794,10 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--require-crypto14', '--follow-target-main', '--target-main-executable', str(Path(launchd).resolve()),
                '--inspect-owner-root', '--inspect-process-list', '--inspect-ui-threads',
                '--process-layout-object-dir', str(process_layout_objects), '--check-commpage',
-               '--trace-address', gate_wait_callsite['address'], '--break-symbol', '_panic',
+               '--trace-address', gate_wait_callsite['address'],
+               '--trace-read-register-offset', gate_wait_register_reads[0],
+               '--trace-read-register-offset', gate_wait_register_reads[1],
+               '--break-symbol', '_panic',
                '--timeout', '180', '--qemu-memory-mib', '2048',
                '--read-kernel-symbol', f'_verified_root_key:{OWNER_KEY_BYTES}',
                '--read-kernel-symbol', '_trust_cache_static_loaded:1',
@@ -822,6 +830,9 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
         report['launchd_gate_wait_callsite'] = {
             **gate_wait_callsite, 'observed': bool(trace_events),
             'trace_event_count': len(trace_events), 'trace_events': trace_events,
+            'trace_read_register_offsets': gate_wait_register_reads,
+            'argument_memory_scope': ('optional bounded raw 16-byte reads at source-typed x0 lock and x1 gate '
+                                      'arguments; unavailable reads are recorded and fields are not decoded'),
         }
         report_path.write_text(json.dumps(report, indent=2) + '\n')
     if result.returncode:

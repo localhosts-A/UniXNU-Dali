@@ -379,8 +379,12 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                                         'observed': False, 'first_instruction_completed': False},
                 'syscall_events': [{'number': 4, 'user_pc': hex(header + 140),
                                     'user_lr': hex(header + 148)}],
-                'trace_events': [{'pc': '0xfffffff004a94994', 'x0': '0x11', 'x1': '0x22',
-                                  'x2': '0x0', 'x3': '0x1', 'x4': '0x0'}],
+                'trace_events': [{'pc': '0xfffffff004a94994', 'x0': '0xfffffff000001000',
+                                  'x1': '0xfffffff000001000', 'x2': '0x0', 'x3': '0x1', 'x4': '0x0',
+                                  'register_memory_reads': {
+                                      'fffffff004a94994:x0:0:10': {'raw_hex': '00112233445566778899aabbccddeeff'},
+                                      'fffffff004a94994:x1:0:10': {'raw_hex': 'ffeeddccbbaa99887766554433221100'},
+                                  }}],
                 'syscall_return_checkpoint': {
                     'observed': True, 'syscall_number': 202, 'x0': '0x0',
                     'old_length_before': 0, 'old_length_after': 128,
@@ -424,8 +428,16 @@ class DaliQemuRootProfileTests(unittest.TestCase):
         gate_trace = report['launchd_gate_wait_callsite']
         self.assertTrue(gate_trace['observed'])
         self.assertEqual(gate_trace['target_symbol'], '_lck_mtx_gate_wait')
-        self.assertEqual(gate_trace['trace_events'][0]['x0'], '0x11')
+        self.assertEqual(gate_trace['trace_events'][0]['x0'], '0xfffffff000001000')
         self.assertEqual(gate_trace['trace_events'][0]['x4'], '0x0')
+        thread = report['ui_thread_snapshots']['processes'][0]['threads'][0]
+        self.assertEqual(thread['wait_event'], gate_trace['trace_events'][0]['x1'])
+        reads = gate_trace['trace_events'][0]['register_memory_reads']
+        self.assertEqual(reads['fffffff004a94994:x0:0:10']['raw_hex'], '00112233445566778899aabbccddeeff')
+        self.assertEqual(reads['fffffff004a94994:x1:0:10']['raw_hex'], 'ffeeddccbbaa99887766554433221100')
+        self.assertIn('fields are not decoded', gate_trace['argument_memory_scope'])
+        self.assertEqual(gate_trace['trace_read_register_offsets'], [
+            'fffffff004a94994:x0:0:10', 'fffffff004a94994:x1:0:10'])
         self.assertTrue(report['launchd_syscall_pc_mapping']['events'][0]['user_pc']
                         ['mapped_to_launchd_executable'])
         self.assertFalse(report['launchd_syscall_pc_mapping']['lc_main_observed'])
@@ -495,9 +507,14 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertFalse(options - declared, options - declared)
             for option in ('--follow-target-main', '--target-main-executable', '--inspect-owner-root',
                            '--inspect-process-list', '--inspect-ui-threads', '--process-layout-object-dir',
-                           '--check-commpage', '--trace-address', '--qemu-vmm-present', '--trust-cache'):
+                           '--check-commpage', '--trace-address', '--trace-read-register-offset',
+                           '--qemu-vmm-present', '--trust-cache'):
                 self.assertIn(option, command)
             self.assertEqual(command[command.index('--trace-address') + 1], '0xfffffff004a94994')
+            trace_reads = [command[index + 1] for index, value in enumerate(command[:-1])
+                           if value == '--trace-read-register-offset']
+            self.assertEqual(trace_reads, [
+                'fffffff004a94994:x0:0:10', 'fffffff004a94994:x1:0:10'])
             object_dir = Path(base / 'kernel').resolve().parent.parent / 'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
             self.assertEqual(command[command.index('--process-layout-object-dir') + 1], str(object_dir))
             self.assertIn('_trust_cache_static_loaded:1', command)
