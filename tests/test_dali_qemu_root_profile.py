@@ -396,6 +396,11 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                     'old_length_before': 0, 'old_length_after': 128,
                     'scope': 'one exact sysctl return; output bytes are never read',
                 },
+                'requested_kernel_symbols': {
+                    '_vm_page_free_count': '64000000', '_vm_page_free_target': 'c8000000',
+                    '_vm_page_free_min': '32000000', '_vm_page_free_wanted': '03000000',
+                    '_vm_page_free_wanted_privileged': '01000000',
+                },
                 'process_list': [{'pid': 1, 'name': 'launchd', 'state': 2},
                                  {'pid': 0, 'name': 'kernel_task', 'state': 2}],
                 'ui_thread_snapshots': {
@@ -440,8 +445,14 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertIn('launchd_thread_snapshot', str(error.exception))
             self.assertIn('saved_kernel_context', str(error.exception))
             self.assertIn('launchd_gate_wait_callsite', str(error.exception))
+            self.assertIn('vm_page_counters', str(error.exception))
             self.assertNotIn('wait_event', str(error.exception))
             report = json.loads((output / 'gdb-stop.json').read_bytes())
+        self.assertEqual(report['vm_page_counters']['counters'], {
+            'free_pages': 100, 'free_page_target': 200,
+            'free_page_minimum': 50, 'threads_waiting_for_memory': 3,
+            'privileged_threads_waiting_for_memory': 1,
+        })
         gate_trace = report['launchd_gate_wait_callsite']
         self.assertTrue(gate_trace['observed'])
         self.assertEqual(gate_trace['target_symbol'], '_lck_mtx_gate_wait')
@@ -469,6 +480,27 @@ class DaliQemuRootProfileTests(unittest.TestCase):
         self.assertTrue(report['launchd_syscall_pc_mapping']['events'][0]['user_pc']
                         ['mapped_to_launchd_executable'])
         self.assertFalse(report['launchd_syscall_pc_mapping']['lc_main_observed'])
+
+    def test_vm_page_counter_snapshot_requires_complete_source_typed_u32_reads(self):
+        report = module.vm_page_counters_diagnostic({
+            '_vm_page_free_count': '64000000', '_vm_page_free_target': 'c8000000',
+            '_vm_page_free_min': '32000000', '_vm_page_free_wanted': '03000000',
+            '_vm_page_free_wanted_privileged': '01000000',
+        })
+        self.assertTrue(report['observed'])
+        self.assertEqual(report['counters'], {
+            'free_pages': 100, 'free_page_target': 200,
+            'free_page_minimum': 50, 'threads_waiting_for_memory': 3,
+            'privileged_threads_waiting_for_memory': 1,
+        })
+        incomplete = module.vm_page_counters_diagnostic({
+            '_vm_page_free_count': '64000000', '_vm_page_free_target': 'zz',
+        })
+        self.assertFalse(incomplete['observed'])
+        self.assertEqual(incomplete['counters'], {'free_pages': 100})
+        self.assertCountEqual(incomplete['unavailable_symbols'], [
+            '_vm_page_free_target', '_vm_page_free_min', '_vm_page_free_wanted',
+            '_vm_page_free_wanted_privileged'])
 
     def test_launchd_summary_requires_real_lc_main_owner_root_and_trust(self):
         data = self.synthetic_launchd()
@@ -547,6 +579,13 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             object_dir = Path(base / 'kernel').resolve().parent.parent / 'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
             self.assertEqual(command[command.index('--process-layout-object-dir') + 1], str(object_dir))
             self.assertIn('_trust_cache_static_loaded:1', command)
+            symbol_reads = [command[index + 1] for index, value in enumerate(command[:-1])
+                            if value == '--read-kernel-symbol']
+            for symbol in ('_vm_page_free_count:4', '_vm_page_free_target:4',
+                           '_vm_page_free_min:4', '_vm_page_free_wanted:4',
+                           '_vm_page_free_wanted_privileged:4'):
+                self.assertIn(symbol, symbol_reads)
+            self.assertEqual(len(symbol_reads), len(set(symbol_reads)))
             self.assertIn('--log-syscalls-after', command)
             self.assertEqual(command[command.index('--log-syscalls-after') + 1], '_load_init_program')
             self.assertIn('--log-syscall-return-mib', command)

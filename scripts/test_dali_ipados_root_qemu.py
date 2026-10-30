@@ -671,6 +671,31 @@ def gate_holder_thread_diagnostic(snapshots, trace_events, callsite, read_reques
     return result
 
 
+def vm_page_counters_diagnostic(requested_symbols):
+    names = {
+        '_vm_page_free_count': 'free_pages',
+        '_vm_page_free_target': 'free_page_target',
+        '_vm_page_free_min': 'free_page_minimum',
+        '_vm_page_free_wanted': 'threads_waiting_for_memory',
+        '_vm_page_free_wanted_privileged': 'privileged_threads_waiting_for_memory',
+    }
+    result = dict(observed=False, counters={},
+                  scope='source-typed unsigned-int VM counters from one paused QEMU stop; no guest writes')
+    unavailable = []
+    if not isinstance(requested_symbols, dict):
+        return {**result, 'unavailable': 'kernel symbol snapshot is missing'}
+    for symbol, label in names.items():
+        raw = requested_symbols.get(symbol)
+        if not isinstance(raw, str) or not re.fullmatch(r'[0-9a-fA-F]{8}', raw):
+            unavailable.append(symbol)
+            continue
+        result['counters'][label] = int.from_bytes(bytes.fromhex(raw), 'little')
+    result['observed'] = not unavailable
+    if unavailable:
+        result['unavailable_symbols'] = unavailable
+    return result
+
+
 def launchd_thread_snapshot_diagnostic(snapshots):
     if not isinstance(snapshots, dict):
         return None
@@ -881,6 +906,11 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--timeout', '180', '--qemu-memory-mib', '2048',
                '--read-kernel-symbol', f'_verified_root_key:{OWNER_KEY_BYTES}',
                '--read-kernel-symbol', '_trust_cache_static_loaded:1',
+               '--read-kernel-symbol', '_vm_page_free_count:4',
+               '--read-kernel-symbol', '_vm_page_free_target:4',
+               '--read-kernel-symbol', '_vm_page_free_min:4',
+               '--read-kernel-symbol', '_vm_page_free_wanted:4',
+               '--read-kernel-symbol', '_vm_page_free_wanted_privileged:4',
                '--trace-symbol', '_vfs_mountroot', '--trace-symbol', '_native_owner_root_checkpoint',
                '--trace-symbol', '_native_owner_root_accepted_checkpoint',
                '--trace-symbol', '_load_static_trust_cache',
@@ -907,6 +937,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                         if isinstance(event, dict) and event.get('pc') == gate_wait_callsite['address']]
         for event in trace_events:
             event['symbol'] = 'AppleImage4 gate-wait callsite'
+        report['vm_page_counters'] = vm_page_counters_diagnostic(
+            report.get('requested_kernel_symbols'))
         report['launchd_gate_wait_callsite'] = {
             **gate_wait_callsite, 'observed': bool(trace_events),
             'trace_event_count': len(trace_events), 'trace_events': trace_events,
@@ -924,6 +956,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
             diagnostics['launchd_syscall_pc_mapping'] = report['launchd_syscall_pc_mapping']
         if report and report.get('syscall_return_checkpoint'):
             diagnostics['syscall_return_checkpoint'] = report['syscall_return_checkpoint']
+        if report and report.get('vm_page_counters'):
+            diagnostics['vm_page_counters'] = report['vm_page_counters']
         if report and isinstance(report.get('process_list'), list):
             diagnostics['pid1_process'] = next(
                 (entry for entry in report['process_list']
