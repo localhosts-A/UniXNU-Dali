@@ -406,6 +406,7 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                 'ui_thread_snapshots': {
                     'native_sha256': '8' * 64, 'read_only': True, 'kernel_stack_size_bytes': 16384,
                     'kernel_task_threads_included': True,
+                    'kernel_task_first_context_included': True,
                     'processes': [{
                         'process': {'address': '0xfffffff000000100', 'pid': 1, 'name': 'launchd'},
                         'complete': True, 'thread_count': 1,
@@ -421,6 +422,13 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                         'threads': [{
                             'thread': '0xfffffff000003008', 'thread_id': 777, 'state': 4,
                             'continuation': '0x0', 'wait_event': '0x0',
+                            'saved_kernel_context': {
+                                'saved_pc_available': False, 'saved_fp': '0xfffffff000004000',
+                                'saved_lr': '0xfffffff00b9792ec', 'saved_sp': '0xfffffff000003ff0',
+                                'frames': [{'fp': '0xfffffff000004000', 'next_fp': '0x0',
+                                            'lr': '0xfffffff00b8a71a4'}],
+                                'frames_complete': True, 'scope': 'bounded synthetic context',
+                            },
                         }],
                     }],
                 },
@@ -470,9 +478,14 @@ class DaliQemuRootProfileTests(unittest.TestCase):
         self.assertTrue(holder['gate_waiters'])
         self.assertEqual(holder['holder_thread_pointer_candidate'], '0xfffffff000003008')
         self.assertTrue(holder['kernel_task_threads_included'])
+        self.assertTrue(holder['kernel_task_first_context_included'])
         self.assertTrue(holder['kernel_task_snapshot_complete'])
         self.assertEqual(holder['thread_matches'][0]['process_pid'], 0)
         self.assertEqual(holder['thread_matches'][0]['thread_id'], 777)
+        context = holder['thread_matches'][0]['saved_kernel_context']
+        self.assertEqual(context['saved_lr'], '0xfffffff00b9792ec')
+        self.assertTrue(context['frames_complete'])
+        self.assertNotIn('wait_event', context)
         self.assertIn('no pointer dereference', holder['scope'])
         self.assertIn('fields are not decoded', gate_trace['argument_memory_scope'])
         self.assertEqual(gate_trace['trace_read_register_offsets'], [
@@ -567,7 +580,7 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertFalse(options - declared, options - declared)
             for option in ('--follow-target-main', '--target-main-executable', '--inspect-owner-root',
                            '--inspect-process-list', '--inspect-ui-threads', '--include-kernel-task-threads',
-                           '--process-layout-object-dir',
+                           '--include-kernel-task-first-context', '--process-layout-object-dir',
                            '--check-commpage', '--trace-address', '--trace-read-register-offset',
                            '--qemu-vmm-present', '--trust-cache'):
                 self.assertIn(option, command)

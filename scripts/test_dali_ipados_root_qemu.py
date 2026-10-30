@@ -636,7 +636,9 @@ def gate_holder_thread_diagnostic(snapshots, trace_events, callsite, read_reques
                   gate_waiters=bool(gt_data & GATE_WAITERS),
                   holder_thread_pointer_candidate=hex(holder) if holder else None,
                   holder_pointer_valid=holder_valid,
-                  kernel_task_threads_included=snapshots.get('kernel_task_threads_included') is True)
+                  kernel_task_threads_included=snapshots.get('kernel_task_threads_included') is True,
+                  kernel_task_first_context_included=(
+                      snapshots.get('kernel_task_first_context_included') is True))
     if not holder_valid or not holder:
         result['thread_matches'] = []
         return result
@@ -658,10 +660,20 @@ def gate_holder_thread_diagnostic(snapshots, trace_events, callsite, read_reques
                     address = int(thread.get('thread'), 16)
                 except (TypeError, ValueError):
                     continue
-                if address == holder:
-                    matches.append(dict(process_pid=process.get('pid'), process_name=process.get('name'),
-                                        process_snapshot_complete=row.get('complete'),
-                                        thread_id=thread.get('thread_id'), state=thread.get('state')))
+                if address != holder:
+                    continue
+                match = dict(process_pid=process.get('pid'), process_name=process.get('name'),
+                             process_snapshot_complete=row.get('complete'),
+                             thread_id=thread.get('thread_id'), state=thread.get('state'))
+                context = thread.get('saved_kernel_context')
+                if isinstance(context, dict):
+                    fields = ('saved_pc_available', 'saved_fp', 'saved_lr', 'saved_sp',
+                              'frames', 'frames_complete', 'frames_error', 'scope')
+                    match['saved_kernel_context'] = {
+                        key: context[key] for key in fields if key in context}
+                elif thread.get('saved_kernel_context_error'):
+                    match['saved_kernel_context_error'] = thread['saved_kernel_context_error']
+                matches.append(match)
     kernel_rows = [row for row in process_rows if isinstance(row, dict) and
                    isinstance(row.get('process'), dict) and row['process'].get('pid') == 0 and
                    row['process'].get('name') == 'kernel_task'] if isinstance(process_rows, list) else []
@@ -897,7 +909,7 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--nvram-proxy', '--crypto-hash-method', 'sha2-384', '--amfi-platform-only',
                '--require-crypto14', '--follow-target-main', '--target-main-executable', str(Path(launchd).resolve()),
                '--inspect-owner-root', '--inspect-process-list', '--inspect-ui-threads',
-               '--include-kernel-task-threads',
+               '--include-kernel-task-threads', '--include-kernel-task-first-context',
                '--process-layout-object-dir', str(process_layout_objects), '--check-commpage',
                '--trace-address', gate_wait_callsite['address'],
                '--trace-read-register-offset', gate_wait_register_reads[0],
