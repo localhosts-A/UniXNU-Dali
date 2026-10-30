@@ -382,23 +382,40 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                 'trace_events': [{'pc': '0xfffffff004a94994', 'x0': '0xfffffff000001000',
                                   'x1': '0xfffffff000001000', 'x2': '0x0', 'x3': '0x1', 'x4': '0x0',
                                   'register_memory_reads': {
-                                      'fffffff004a94994:x0:0:10': {'raw_hex': '00112233445566778899aabbccddeeff'},
-                                      'fffffff004a94994:x1:0:10': {'raw_hex': 'ffeeddccbbaa99887766554433221100'},
+                                      'fffffff004a94994:x0:0:10': {
+                                          'register': 'x0', 'base': '0xfffffff000001000', 'offset': '0x0',
+                                          'length': 16, 'address': '0xfffffff000001000',
+                                          'raw_hex': '00112233445566778899aabbccddeeff'},
+                                      'fffffff004a94994:x1:0:10': {
+                                          'register': 'x1', 'base': '0xfffffff000001000', 'offset': '0x0',
+                                          'length': 16, 'address': '0xfffffff000001000',
+                                          'raw_hex': '0a300000f0ffffff0000000000000000'},
                                   }}],
                 'syscall_return_checkpoint': {
                     'observed': True, 'syscall_number': 202, 'x0': '0x0',
                     'old_length_before': 0, 'old_length_after': 128,
                     'scope': 'one exact sysctl return; output bytes are never read',
                 },
-                'process_list': [{'pid': 1, 'name': 'launchd', 'state': 2}],
+                'process_list': [{'pid': 1, 'name': 'launchd', 'state': 2},
+                                 {'pid': 0, 'name': 'kernel_task', 'state': 2}],
                 'ui_thread_snapshots': {
                     'native_sha256': '8' * 64, 'read_only': True, 'kernel_stack_size_bytes': 16384,
+                    'kernel_task_threads_included': True,
                     'processes': [{
-                        'process': {'pid': 1, 'name': 'launchd'}, 'complete': True, 'thread_count': 1,
+                        'process': {'address': '0xfffffff000000100', 'pid': 1, 'name': 'launchd'},
+                        'complete': True, 'thread_count': 1,
                         'threads': [{
-                            'thread_id': 228, 'state': 1, 'continuation': '0x0', 'wait_event': '0xfffffff000001000',
+                            'thread': '0xfffffff000002000', 'thread_id': 228, 'state': 1,
+                            'continuation': '0x0', 'wait_event': '0xfffffff000001000',
                             'saved_kernel_context': {'saved_pc_available': False, 'saved_lr': '0xfffffff000002000',
                                                      'frames': [{'lr': '0xfffffff000003000'}]},
+                        }],
+                    }, {
+                        'process': {'address': '0xfffffff000000200', 'pid': 0, 'name': 'kernel_task'},
+                        'complete': True, 'thread_count': 1,
+                        'threads': [{
+                            'thread': '0xfffffff000003008', 'thread_id': 777, 'state': 4,
+                            'continuation': '0x0', 'wait_event': '0x0',
                         }],
                     }],
                 },
@@ -434,7 +451,18 @@ class DaliQemuRootProfileTests(unittest.TestCase):
         self.assertEqual(thread['wait_event'], gate_trace['trace_events'][0]['x1'])
         reads = gate_trace['trace_events'][0]['register_memory_reads']
         self.assertEqual(reads['fffffff004a94994:x0:0:10']['raw_hex'], '00112233445566778899aabbccddeeff')
-        self.assertEqual(reads['fffffff004a94994:x1:0:10']['raw_hex'], 'ffeeddccbbaa99887766554433221100')
+        self.assertEqual(reads['fffffff004a94994:x1:0:10']['raw_hex'],
+                         '0a300000f0ffffff0000000000000000')
+        holder = gate_trace['gate_holder_thread_snapshot']
+        self.assertEqual(holder['gt_data'], '0xfffffff00000300a')
+        self.assertFalse(holder['gate_interlock'])
+        self.assertTrue(holder['gate_waiters'])
+        self.assertEqual(holder['holder_thread_pointer_candidate'], '0xfffffff000003008')
+        self.assertTrue(holder['kernel_task_threads_included'])
+        self.assertTrue(holder['kernel_task_snapshot_complete'])
+        self.assertEqual(holder['thread_matches'][0]['process_pid'], 0)
+        self.assertEqual(holder['thread_matches'][0]['thread_id'], 777)
+        self.assertIn('no pointer dereference', holder['scope'])
         self.assertIn('fields are not decoded', gate_trace['argument_memory_scope'])
         self.assertEqual(gate_trace['trace_read_register_offsets'], [
             'fffffff004a94994:x0:0:10', 'fffffff004a94994:x1:0:10'])
@@ -506,7 +534,8 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             options = {value for value in command if value.startswith('--')}
             self.assertFalse(options - declared, options - declared)
             for option in ('--follow-target-main', '--target-main-executable', '--inspect-owner-root',
-                           '--inspect-process-list', '--inspect-ui-threads', '--process-layout-object-dir',
+                           '--inspect-process-list', '--inspect-ui-threads', '--include-kernel-task-threads',
+                           '--process-layout-object-dir',
                            '--check-commpage', '--trace-address', '--trace-read-register-offset',
                            '--qemu-vmm-present', '--trust-cache'):
                 self.assertIn(option, command)

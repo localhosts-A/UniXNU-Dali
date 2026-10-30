@@ -592,6 +592,85 @@ def resolve_image4_gate_wait_callsite(kernel, prelink_report_path):
                 scope='candidate-bound one-shot callsite trace; no guest memory or register writes')
 
 
+GATE_ILOCK = 1
+GATE_WAITERS = 2
+GATE_THREAD_MASK = ((1 << 64) - 1) ^ (GATE_ILOCK | GATE_WAITERS)
+
+
+def gate_holder_thread_diagnostic(snapshots, trace_events, callsite, read_request):
+    result = dict(observed=False, read_request=read_request,
+                  scope='source-defined gate holder candidate matched only against bounded task-owned thread records; no pointer dereference')
+    if not trace_events:
+        return result
+    result['observed'] = True
+    if len(trace_events) != 1:
+        result['unavailable'] = 'expected exactly one one-shot gate trace event'
+        return result
+    if not isinstance(snapshots, dict):
+        result['unavailable'] = 'compiler-qualified thread snapshot missing'
+        return result
+    event = trace_events[0]
+    reads = event.get('register_memory_reads')
+    read = reads.get(read_request) if isinstance(reads, dict) else None
+    if not isinstance(read, dict):
+        result['unavailable'] = 'bounded x1 gate-header read missing'
+        return result
+    raw = read.get('raw_hex')
+    try:
+        gate_pointer = int(event['x1'], 16)
+    except (KeyError, TypeError, ValueError):
+        result['unavailable'] = 'gate argument register is unavailable'
+        return result
+    if (read.get('register') != 'x1' or read.get('base') != hex(gate_pointer) or
+            read.get('offset') != '0x0' or read.get('address') != hex(gate_pointer) or
+            read.get('length') != 16 or not isinstance(raw, str) or
+            not re.fullmatch(r'[0-9a-fA-F]{32}', raw)):
+        result['unavailable'] = 'bounded x1 read does not match the source-typed gate argument'
+        return result
+    header = bytes.fromhex(raw)
+    gt_data = int.from_bytes(header[:8], 'little')
+    holder = gt_data & GATE_THREAD_MASK
+    holder_valid = holder == 0 or (0xfffffff000000000 <= holder < 1 << 64 and holder & 3 == 0)
+    result.update(gate_pointer=hex(gate_pointer), gate_header_raw_hex=raw,
+                  gt_data=hex(gt_data), gate_interlock=bool(gt_data & GATE_ILOCK),
+                  gate_waiters=bool(gt_data & GATE_WAITERS),
+                  holder_thread_pointer_candidate=hex(holder) if holder else None,
+                  holder_pointer_valid=holder_valid,
+                  kernel_task_threads_included=snapshots.get('kernel_task_threads_included') is True)
+    if not holder_valid or not holder:
+        result['thread_matches'] = []
+        return result
+
+    matches = []
+    process_rows = snapshots.get('processes')
+    if isinstance(process_rows, list):
+        for row in process_rows:
+            if not isinstance(row, dict):
+                continue
+            process = row.get('process')
+            threads = row.get('threads')
+            if not isinstance(process, dict) or not isinstance(threads, list):
+                continue
+            for thread in threads:
+                if not isinstance(thread, dict):
+                    continue
+                try:
+                    address = int(thread.get('thread'), 16)
+                except (TypeError, ValueError):
+                    continue
+                if address == holder:
+                    matches.append(dict(process_pid=process.get('pid'), process_name=process.get('name'),
+                                        process_snapshot_complete=row.get('complete'),
+                                        thread_id=thread.get('thread_id'), state=thread.get('state')))
+    kernel_rows = [row for row in process_rows if isinstance(row, dict) and
+                   isinstance(row.get('process'), dict) and row['process'].get('pid') == 0 and
+                   row['process'].get('name') == 'kernel_task'] if isinstance(process_rows, list) else []
+    result['kernel_task_snapshot_complete'] = bool(kernel_rows and kernel_rows[0].get('complete') is True)
+    result['thread_matches'] = matches
+    result['thread_match_count'] = len(matches)
+    return result
+
+
 def launchd_thread_snapshot_diagnostic(snapshots):
     if not isinstance(snapshots, dict):
         return None
@@ -793,6 +872,7 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--nvram-proxy', '--crypto-hash-method', 'sha2-384', '--amfi-platform-only',
                '--require-crypto14', '--follow-target-main', '--target-main-executable', str(Path(launchd).resolve()),
                '--inspect-owner-root', '--inspect-process-list', '--inspect-ui-threads',
+               '--include-kernel-task-threads',
                '--process-layout-object-dir', str(process_layout_objects), '--check-commpage',
                '--trace-address', gate_wait_callsite['address'],
                '--trace-read-register-offset', gate_wait_register_reads[0],
@@ -833,6 +913,9 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
             'trace_read_register_offsets': gate_wait_register_reads,
             'argument_memory_scope': ('optional bounded raw 16-byte reads at source-typed x0 lock and x1 gate '
                                       'arguments; unavailable reads are recorded and fields are not decoded'),
+            'gate_holder_thread_snapshot': gate_holder_thread_diagnostic(
+                report.get('ui_thread_snapshots'), trace_events, gate_wait_callsite,
+                gate_wait_register_reads[1]),
         }
         report_path.write_text(json.dumps(report, indent=2) + '\n')
     if result.returncode:
