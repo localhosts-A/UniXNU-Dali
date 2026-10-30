@@ -385,6 +385,17 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                     'scope': 'one exact sysctl return; output bytes are never read',
                 },
                 'process_list': [{'pid': 1, 'name': 'launchd', 'state': 2}],
+                'ui_thread_snapshots': {
+                    'native_sha256': '8' * 64, 'read_only': True, 'kernel_stack_size_bytes': 16384,
+                    'processes': [{
+                        'process': {'pid': 1, 'name': 'launchd'}, 'complete': True, 'thread_count': 1,
+                        'threads': [{
+                            'thread_id': 228, 'state': 1, 'continuation': '0x0', 'wait_event': '0xfffffff000001000',
+                            'saved_kernel_context': {'saved_pc_available': False, 'saved_lr': '0xfffffff000002000',
+                                                     'frames': [{'lr': '0xfffffff000003000'}]},
+                        }],
+                    }],
+                },
             }
 
             def run(command, **kwargs):
@@ -399,6 +410,9 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                                              base / 'efi', base / 'fdt', launchd_path, output)
             self.assertIn('syscall_return_checkpoint', str(error.exception))
             self.assertIn('pid1_process', str(error.exception))
+            self.assertIn('launchd_thread_snapshot', str(error.exception))
+            self.assertIn('saved_kernel_context', str(error.exception))
+            self.assertNotIn('wait_event', str(error.exception))
             report = json.loads((output / 'gdb-stop.json').read_bytes())
         self.assertTrue(report['launchd_syscall_pc_mapping']['events'][0]['user_pc']
                         ['mapped_to_launchd_executable'])

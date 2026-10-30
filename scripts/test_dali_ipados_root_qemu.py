@@ -475,6 +475,40 @@ def map_launchd_syscall_pcs(report, launchd):
     }
 
 
+def launchd_thread_snapshot_diagnostic(snapshots):
+    if not isinstance(snapshots, dict):
+        return None
+    rows = snapshots.get('processes')
+    launchd_rows = []
+    if isinstance(rows, list):
+        for row in rows:
+            process = row.get('process', {}) if isinstance(row, dict) else {}
+            if not isinstance(process, dict) or process.get('pid') != 1 or process.get('name') != 'launchd':
+                continue
+            threads = []
+            thread_rows = row.get('threads', [])
+            if not isinstance(thread_rows, list):
+                thread_rows = []
+            for thread in thread_rows[:4]:
+                if not isinstance(thread, dict):
+                    continue
+                fields = ('thread_id', 'state', 'continuation', 'saved_state', 'user_pc', 'user_lr',
+                          'saved_kernel_context', 'saved_kernel_context_error')
+                threads.append({key: thread[key] for key in fields if key in thread})
+            launchd_rows.append(dict(complete=row.get('complete'), thread_count=row.get('thread_count'),
+                                     error=row.get('error'), threads=threads))
+            if len(launchd_rows) == 1:
+                break
+    result = dict(read_only=snapshots.get('read_only'), native_sha256=snapshots.get('native_sha256'),
+                  kernel_stack_size_bytes=snapshots.get('kernel_stack_size_bytes'),
+                  kernel_stack_size_error=snapshots.get('kernel_stack_size_error'),
+                  launchd_processes=launchd_rows)
+    if not launchd_rows:
+        result['available'] = False
+        result['error'] = snapshots.get('error', 'PID 1 launchd snapshot is absent')
+    return result
+
+
 def validate_launchd_report(report, inputs, launchd):
     if (report.get('stop_symbol') != 'original-launchd-main' or
             report.get('original_launchd_main_executed') is not True or
@@ -673,6 +707,9 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
             diagnostics['pid1_process'] = next(
                 (entry for entry in report['process_list']
                  if isinstance(entry, dict) and entry.get('pid') == 1), None)
+        if report and isinstance(report.get('ui_thread_snapshots'), dict):
+            diagnostics['launchd_thread_snapshot'] = launchd_thread_snapshot_diagnostic(
+                report['ui_thread_snapshots'])
         suffix = ('\nBounded launchd syscall diagnostics:\n' + json.dumps(diagnostics, indent=2)
                   if diagnostics else '')
         raise RuntimeError('QEMU launchd probe stopped before validated LC_MAIN: ' +
