@@ -379,6 +379,8 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                                         'observed': False, 'first_instruction_completed': False},
                 'syscall_events': [{'number': 4, 'user_pc': hex(header + 140),
                                     'user_lr': hex(header + 148)}],
+                'trace_events': [{'pc': '0xfffffff004a94994', 'x0': '0x11', 'x1': '0x22',
+                                  'x2': '0x0', 'x3': '0x1', 'x4': '0x0'}],
                 'syscall_return_checkpoint': {
                     'observed': True, 'syscall_number': 202, 'x0': '0x0',
                     'old_length_before': 0, 'old_length_after': 128,
@@ -403,6 +405,10 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 1, 'timeout before validated LC_MAIN')
 
             with patch.object(module, 'LAUNCHD_SHA256', hashlib.sha256(data).hexdigest()), \
+                    patch.object(module, 'resolve_image4_gate_wait_callsite',
+                                 return_value={'address': '0xfffffff004a94994',
+                                               'candidate_sha256': '9' * 64,
+                                               'target_symbol': '_lck_mtx_gate_wait'}), \
                     patch.object(module.subprocess, 'run', side_effect=run):
                 with self.assertRaisesRegex(RuntimeError, 'stopped before validated LC_MAIN') as error:
                     module.run_launchd_probe(ROOT.parent / 'UniXNU', base / 'kernel', base / 'prelink',
@@ -412,8 +418,14 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertIn('pid1_process', str(error.exception))
             self.assertIn('launchd_thread_snapshot', str(error.exception))
             self.assertIn('saved_kernel_context', str(error.exception))
+            self.assertIn('launchd_gate_wait_callsite', str(error.exception))
             self.assertNotIn('wait_event', str(error.exception))
             report = json.loads((output / 'gdb-stop.json').read_bytes())
+        gate_trace = report['launchd_gate_wait_callsite']
+        self.assertTrue(gate_trace['observed'])
+        self.assertEqual(gate_trace['target_symbol'], '_lck_mtx_gate_wait')
+        self.assertEqual(gate_trace['trace_events'][0]['x0'], '0x11')
+        self.assertEqual(gate_trace['trace_events'][0]['x4'], '0x0')
         self.assertTrue(report['launchd_syscall_pc_mapping']['events'][0]['user_pc']
                         ['mapped_to_launchd_executable'])
         self.assertFalse(report['launchd_syscall_pc_mapping']['lc_main_observed'])
@@ -471,7 +483,9 @@ class DaliQemuRootProfileTests(unittest.TestCase):
                 (output / 'gdb-stop.json').write_text('{}')
                 return subprocess.CompletedProcess(command, 0, 'synthetic launchd observer fixture')
 
-            with patch.object(module.subprocess, 'run', side_effect=run) as execute:
+            with patch.object(module, 'resolve_image4_gate_wait_callsite',
+                              return_value={'address': '0xfffffff004a94994'}), \
+                    patch.object(module.subprocess, 'run', side_effect=run) as execute:
                 module.run_launchd_probe(generic.parents[1], base / 'kernel', base / 'prelink', base / 'trust',
                                          base / 'os.dmg', base / 'systemos.dmg', base / 'efi', base / 'fdt',
                                          base / 'launchd', output)
@@ -481,8 +495,9 @@ class DaliQemuRootProfileTests(unittest.TestCase):
             self.assertFalse(options - declared, options - declared)
             for option in ('--follow-target-main', '--target-main-executable', '--inspect-owner-root',
                            '--inspect-process-list', '--inspect-ui-threads', '--process-layout-object-dir',
-                           '--check-commpage', '--qemu-vmm-present', '--trust-cache'):
+                           '--check-commpage', '--trace-address', '--qemu-vmm-present', '--trust-cache'):
                 self.assertIn(option, command)
+            self.assertEqual(command[command.index('--trace-address') + 1], '0xfffffff004a94994')
             object_dir = Path(base / 'kernel').resolve().parent.parent / 'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
             self.assertEqual(command[command.index('--process-layout-object-dir') + 1], str(object_dir))
             self.assertIn('_trust_cache_static_loaded:1', command)

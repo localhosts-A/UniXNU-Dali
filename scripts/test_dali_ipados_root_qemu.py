@@ -475,6 +475,123 @@ def map_launchd_syscall_pcs(report, launchd):
     }
 
 
+APPLEIMAGE4_GATE_WAIT_CALLSITE_OFFSET = 0x8994
+
+
+def resolve_image4_gate_wait_callsite(kernel, prelink_report_path):
+    kernel = Path(kernel).resolve(strict=True)
+    report = json.loads(Path(prelink_report_path).read_bytes())
+    candidate_sha256 = digest(kernel)
+    if report.get('candidate_sha256') != candidate_sha256:
+        raise ValueError('Gate-wait trace requires the exact prelink candidate')
+    extents = [extent for extent in report.get('extents', [])
+               if extent.get('module') == 'com.apple.security.AppleImage4' and
+               extent.get('segment') == '__TEXT_EXEC']
+    if len(extents) != 1:
+        raise ValueError('Exact candidate must have one AppleImage4 executable extent')
+    extent = extents[0]
+    start, size = extent.get('va'), extent.get('size')
+    if (not isinstance(start, int) or isinstance(start, bool) or
+            not isinstance(size, int) or isinstance(size, bool) or size <= APPLEIMAGE4_GATE_WAIT_CALLSITE_OFFSET + 4 or
+            start < 0 or start + size > 1 << 64):
+        raise ValueError('AppleImage4 candidate text extent is invalid')
+    callsite = start + APPLEIMAGE4_GATE_WAIT_CALLSITE_OFFSET
+    if callsite & 3:
+        raise ValueError('AppleImage4 gate-wait callsite is not instruction aligned')
+
+    image_size = kernel.stat().st_size
+    segments = []
+    with kernel.open('rb') as image:
+        header = image.read(32)
+        if len(header) != 32:
+            raise ValueError('Candidate Mach-O header is truncated')
+        magic, cpu, _, filetype, ncmds, sizeofcmds, _, _ = struct.unpack('<IiiIIIII', header)
+        commands_end = 32 + sizeofcmds
+        if (magic != 0xfeedfacf or cpu != 0x100000c or filetype != 2 or
+                commands_end > image_size or ncmds > sizeofcmds // 8):
+            raise ValueError('Gate-wait trace requires a complete ARM64 MH_EXECUTE candidate')
+        offset = 32
+        for _ in range(ncmds):
+            if offset + 8 > commands_end:
+                raise ValueError('Candidate Mach-O load command is truncated')
+            image.seek(offset)
+            command_header = image.read(8)
+            command, command_size = struct.unpack('<II', command_header)
+            if command_size < 8 or offset + command_size > commands_end:
+                raise ValueError('Candidate Mach-O load command has invalid bounds')
+            if command == 0x19:
+                if command_size < 72:
+                    raise ValueError('Candidate LC_SEGMENT_64 command is truncated')
+                raw_segment = image.read(64)
+                name_bytes, vmaddr, vmsize, fileoff, filesize, maxprot, initprot, _, _ = struct.unpack(
+                    '<16sQQQQiiII', raw_segment)
+                if (filesize > vmsize or fileoff + filesize > image_size or
+                        vmaddr + vmsize > 1 << 64):
+                    raise ValueError('Candidate Mach-O segment bounds are invalid')
+                try:
+                    name = name_bytes.split(b'\0', 1)[0].decode('ascii')
+                except UnicodeDecodeError as error:
+                    raise ValueError('Candidate Mach-O segment name is not ASCII') from error
+                if vmsize:
+                    segments.append({'name': name, 'vmaddr': vmaddr, 'vmsize': vmsize,
+                                     'fileoff': fileoff, 'filesize': filesize,
+                                     'maxprot': maxprot, 'initprot': initprot})
+            offset += command_size
+        if offset != commands_end:
+            raise ValueError('Candidate Mach-O load-command size does not match its header')
+
+        def read_candidate_va(address, length, required_protection=0, forbidden_protection=0):
+            if (not isinstance(address, int) or not isinstance(length, int) or length <= 0 or
+                    address < 0 or address + length > 1 << 64):
+                raise ValueError('Invalid candidate VA read')
+            matches = [segment for segment in segments
+                       if segment['vmaddr'] <= address and
+                       address + length <= segment['vmaddr'] + segment['filesize'] and
+                       segment['initprot'] & required_protection == required_protection and
+                       not segment['initprot'] & forbidden_protection]
+            if len(matches) != 1:
+                raise ValueError('Candidate VA is not uniquely backed with the required protection')
+            segment = matches[0]
+            image.seek(segment['fileoff'] + address - segment['vmaddr'])
+            raw = image.read(length)
+            if len(raw) != length:
+                raise ValueError('Candidate VA read is truncated')
+            return raw
+
+        call_instruction = int.from_bytes(read_candidate_va(callsite, 4, required_protection=4), 'little')
+        if call_instruction & 0xfc000000 != 0x94000000:
+            raise ValueError('AppleImage4 gate-wait callsite is not a direct BL in this candidate')
+        displacement = call_instruction & 0x03ffffff
+        if displacement & (1 << 25):
+            displacement -= 1 << 26
+        stub = callsite + (displacement << 2)
+        if not start <= stub < start + size:
+            raise ValueError('AppleImage4 gate-wait import stub left its pinned text extent')
+        stub_bytes = read_candidate_va(stub, 12, required_protection=4)
+        adrp, ldr, branch = struct.unpack('<3I', stub_bytes)
+        if adrp & 0x9f00001f != 0x90000010:
+            raise ValueError('AppleImage4 gate-wait stub is not ADRP x16')
+        if ldr & 0xffc003ff != 0xf9400210 or branch != 0xd61f0200:
+            raise ValueError('AppleImage4 gate-wait stub is not the pinned LDR/BR x16 form')
+        page_delta = (((adrp >> 5) & 0x7ffff) << 2) | ((adrp >> 29) & 3)
+        if page_delta & (1 << 20):
+            page_delta -= 1 << 21
+        slot = (stub & ~0xfff) + (page_delta << 12) + (((ldr >> 10) & 0xfff) << 3)
+        slot_target = int.from_bytes(read_candidate_va(
+            slot, 8, required_protection=1, forbidden_protection=2 | 4), 'little')
+        symbols = subprocess.check_output(['xcrun', 'nm', '-U', kernel], text=True)
+        matches = re.findall(r'^([0-9a-fA-F]+)\s+\S\s+_lck_mtx_gate_wait$', symbols, re.M)
+        if len(matches) != 1 or int(matches[0], 16) != slot_target:
+            raise ValueError('AppleImage4 gate-wait slot does not resolve uniquely to _lck_mtx_gate_wait')
+        read_candidate_va(slot_target, 4, required_protection=4)
+
+    return dict(candidate_sha256=candidate_sha256, module='com.apple.security.AppleImage4',
+                segment='__TEXT_EXEC', module_offset=hex(APPLEIMAGE4_GATE_WAIT_CALLSITE_OFFSET),
+                address=hex(callsite), import_stub=hex(stub), slot=hex(slot),
+                target_symbol='_lck_mtx_gate_wait', target=hex(slot_target), read_only=True,
+                scope='candidate-bound one-shot callsite trace; no guest memory or register writes')
+
+
 def launchd_thread_snapshot_diagnostic(snapshots):
     if not isinstance(snapshots, dict):
         return None
@@ -659,6 +776,7 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
     probe = Path(unixnu).resolve() / 'scripts/probe-darwinboot-xnu.py'
     process_layout_objects = (Path(kernel).resolve().parent.parent /
                               'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837')
+    gate_wait_callsite = resolve_image4_gate_wait_callsite(kernel, prelink_report)
     command = [sys.executable, '-I', '-B', str(probe),
                '--kernel', str(Path(kernel).resolve()), '--uefi-efi', str(Path(efi).resolve()),
                '--prelink-report', str(Path(prelink_report).resolve()),
@@ -670,7 +788,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
                '--nvram-proxy', '--crypto-hash-method', 'sha2-384', '--amfi-platform-only',
                '--require-crypto14', '--follow-target-main', '--target-main-executable', str(Path(launchd).resolve()),
                '--inspect-owner-root', '--inspect-process-list', '--inspect-ui-threads',
-               '--process-layout-object-dir', str(process_layout_objects), '--check-commpage', '--break-symbol', '_panic',
+               '--process-layout-object-dir', str(process_layout_objects), '--check-commpage',
+               '--trace-address', gate_wait_callsite['address'], '--break-symbol', '_panic',
                '--timeout', '180', '--qemu-memory-mib', '2048',
                '--read-kernel-symbol', f'_verified_root_key:{OWNER_KEY_BYTES}',
                '--read-kernel-symbol', '_trust_cache_static_loaded:1',
@@ -696,7 +815,15 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
         if report.get('syscall_events') and report.get('followed_main_entry'):
             launchd_input = validate_launchd_target(launchd)
             report['launchd_syscall_pc_mapping'] = map_launchd_syscall_pcs(report, launchd_input)
-            report_path.write_text(json.dumps(report, indent=2) + '\n')
+        trace_events = [event for event in report.get('trace_events', [])
+                        if isinstance(event, dict) and event.get('pc') == gate_wait_callsite['address']]
+        for event in trace_events:
+            event['symbol'] = 'AppleImage4 gate-wait callsite'
+        report['launchd_gate_wait_callsite'] = {
+            **gate_wait_callsite, 'observed': bool(trace_events),
+            'trace_event_count': len(trace_events), 'trace_events': trace_events,
+        }
+        report_path.write_text(json.dumps(report, indent=2) + '\n')
     if result.returncode:
         diagnostics = {}
         if report and report.get('launchd_syscall_pc_mapping'):
@@ -710,6 +837,8 @@ def run_launchd_probe(unixnu, kernel, prelink_report, trust_cache_path,
         if report and isinstance(report.get('ui_thread_snapshots'), dict):
             diagnostics['launchd_thread_snapshot'] = launchd_thread_snapshot_diagnostic(
                 report['ui_thread_snapshots'])
+        if report and report.get('launchd_gate_wait_callsite'):
+            diagnostics['launchd_gate_wait_callsite'] = report['launchd_gate_wait_callsite']
         suffix = ('\nBounded launchd syscall diagnostics:\n' + json.dumps(diagnostics, indent=2)
                   if diagnostics else '')
         raise RuntimeError('QEMU launchd probe stopped before validated LC_MAIN: ' +
